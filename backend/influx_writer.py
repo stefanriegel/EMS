@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 from influxdb_client import Point
 from influxdb_client.client.influxdb_client_async import InfluxDBClientAsync
 
+from backend.schedule_models import ChargeSchedule
 from backend.unified_model import UnifiedPoolState
 
 logger = logging.getLogger(__name__)
@@ -125,3 +126,43 @@ class InfluxMetricsWriter:
             await self._write_api.write(bucket=self._bucket, record=point)
         except Exception as exc:  # noqa: BLE001
             logger.warning("influx write failed: %s", exc)
+
+    async def write_charge_schedule(self, schedule: "ChargeSchedule") -> None:
+        """Write a single ``ems_schedule`` Point from *schedule*.
+
+        Tags encode staleness; fields carry SoC targets, charge energy, cost
+        estimate, and slot count.  Slot ordering convention: index 0 = Huawei
+        (LUNA), index 1 = Victron (efficiency order D010).
+
+        Fire-and-forget: any ``Exception`` is caught and logged as WARNING —
+        never raised to the caller.  InfluxDB outages must never prevent the
+        scheduler from returning a schedule.
+
+        Args:
+            schedule: The :class:`~backend.schedule_models.ChargeSchedule`
+                produced by :meth:`~backend.scheduler.Scheduler.compute_schedule`.
+        """
+        try:
+            huawei_target = (
+                float(schedule.slots[0].target_soc_pct)
+                if len(schedule.slots) >= 1 and schedule.slots[0].battery == "huawei"
+                else 0.0
+            )
+            victron_target = (
+                float(schedule.slots[1].target_soc_pct)
+                if len(schedule.slots) >= 2 and schedule.slots[1].battery == "victron"
+                else 0.0
+            )
+            point = (
+                Point("ems_schedule")
+                .tag("stale", "true" if schedule.stale else "false")
+                .field("huawei_target_soc_pct", huawei_target)
+                .field("victron_target_soc_pct", victron_target)
+                .field("charge_energy_kwh", float(schedule.reasoning.charge_energy_kwh))
+                .field("cost_estimate_eur", float(schedule.reasoning.cost_estimate_eur))
+                .field("slot_count", int(len(schedule.slots)))
+                .time(datetime.now(tz=timezone.utc))
+            )
+            await self._write_api.write(bucket=self._bucket, record=point)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("influx write_charge_schedule failed: %s", exc)

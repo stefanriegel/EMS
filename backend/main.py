@@ -46,12 +46,14 @@ from fastapi import FastAPI
 from starlette.staticfiles import StaticFiles
 
 from backend.api import api_router
-from backend.config import HuaweiConfig, InfluxConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig
+from backend.config import HuaweiConfig, InfluxConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig, EvccConfig, SchedulerConfig
 from backend.drivers.huawei_driver import HuaweiDriver
 from backend.drivers.victron_driver import VictronDriver
+from backend.evcc_client import EvccClient
 from backend.influx_reader import InfluxMetricsReader
 from backend.influx_writer import InfluxMetricsWriter
 from backend.orchestrator import Orchestrator
+from backend.scheduler import Scheduler
 from backend.tariff import CompositeTariffEngine
 from influxdb_client.client.influxdb_client_async import InfluxDBClientAsync
 
@@ -155,6 +157,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     metrics_reader = InfluxMetricsReader(influx_client, influx_cfg.org, influx_cfg.bucket)
     logger.info(
         "InfluxDB client connected — url=%s org=%s", influx_cfg.url, influx_cfg.org
+    )
+
+    # --- Instantiate EVCC client and scheduler ---
+    evcc_cfg = EvccConfig.from_env()
+    sched_cfg = SchedulerConfig.from_env()
+    evcc_client = EvccClient(evcc_cfg)
+    scheduler = Scheduler(evcc_client, metrics_reader, tariff_engine, sys_cfg, orch_cfg)
+    app.state.scheduler = scheduler
+    logger.info(
+        "Scheduler wired — run_hour=%d charge_window=%d–%d min",
+        sched_cfg.run_hour,
+        sched_cfg.grid_charge_start_min,
+        sched_cfg.grid_charge_end_min,
     )
 
     # --- Start orchestrator ---

@@ -253,6 +253,62 @@ class EvccConfig:
 
 
 @dataclass
+class SchedulerConfig:
+    """Timing and charge-window parameters for the daily charge scheduler.
+
+    Attributes:
+        run_hour: Hour of day (local time) at which the scheduler runs
+            (default 23). Set via ``SCHEDULER_RUN_HOUR``.
+        grid_charge_start_min: Start of the allowed grid-charge window in
+            minutes from midnight, in the Octopus timezone (Europe/London).
+            Defaults to 30 (00:30 — start of the Octopus Go off-peak window).
+            Set via ``SCHEDULER_CHARGE_START_MIN``.
+        grid_charge_end_min: End of the allowed grid-charge window in minutes
+            from midnight, in the Octopus timezone (Europe/London). Defaults
+            to 300 (05:00 — end of the Octopus Go off-peak window).
+            Set via ``SCHEDULER_CHARGE_END_MIN``.
+        max_stale_hours: Number of hours after which a schedule is considered
+            too stale to use (default 12). Set via ``SCHEDULER_MAX_STALE_HOURS``.
+    """
+
+    run_hour: int = 23
+    """Hour of day (0–23) at which the scheduler computes a new schedule."""
+
+    grid_charge_start_min: int = 30
+    """Start of the grid-charge window in minutes from midnight (Europe/London).
+    Default 30 = 00:30, the start of the Octopus Go off-peak window.
+    """
+
+    grid_charge_end_min: int = 300
+    """End of the grid-charge window in minutes from midnight (Europe/London).
+    Default 300 = 05:00, the end of the Octopus Go off-peak window.
+    """
+
+    max_stale_hours: int = 12
+    """Hours after which an existing schedule is considered too stale to use."""
+
+    @classmethod
+    def from_env(cls) -> "SchedulerConfig":
+        """Construct a :class:`SchedulerConfig` from environment variables.
+
+        All fields fall back to safe defaults when the corresponding
+        environment variable is absent — **no env vars are required**.
+
+        Optional:
+            ``SCHEDULER_RUN_HOUR``         — hour to run (default 23).
+            ``SCHEDULER_CHARGE_START_MIN`` — charge window start in min (default 30).
+            ``SCHEDULER_CHARGE_END_MIN``   — charge window end in min (default 300).
+            ``SCHEDULER_MAX_STALE_HOURS``  — stale threshold in hours (default 12).
+        """
+        return cls(
+            run_hour=int(os.environ.get("SCHEDULER_RUN_HOUR", "23")),
+            grid_charge_start_min=int(os.environ.get("SCHEDULER_CHARGE_START_MIN", "30")),
+            grid_charge_end_min=int(os.environ.get("SCHEDULER_CHARGE_END_MIN", "300")),
+            max_stale_hours=int(os.environ.get("SCHEDULER_MAX_STALE_HOURS", "12")),
+        )
+
+
+@dataclass
 class TariffConfig:
     """Combined Octopus Go supply tariff and §14a EnWG Modul 3 grid-fee config.
 
