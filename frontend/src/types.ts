@@ -11,7 +11,7 @@
 // Pool state (UnifiedPoolState dataclass)
 // ---------------------------------------------------------------------------
 
-export type ControlState = "IDLE" | "CHARGE" | "DISCHARGE" | "HOLD" | "GRID_CHARGE";
+export type ControlState = "IDLE" | "CHARGE" | "DISCHARGE" | "HOLD" | "GRID_CHARGE" | "DISCHARGE_LOCKED";
 
 export interface PoolState {
   combined_soc_pct: number;
@@ -26,6 +26,8 @@ export interface PoolState {
   huawei_charge_headroom_w: number;
   victron_charge_headroom_w: number;
   timestamp: number;
+  grid_charge_slot_active: boolean;
+  evcc_battery_mode: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -101,6 +103,19 @@ export interface OptimizationPayload {
 }
 
 // ---------------------------------------------------------------------------
+// EVCC snapshot (embedded in WS payload)
+// ---------------------------------------------------------------------------
+
+export interface EvccPayload {
+  battery_mode: string;
+  loadpoint_mode: string;
+  charge_power_w: number;
+  vehicle_soc_pct: number | null;
+  charging: boolean;
+  connected: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // WebSocket push payload (/api/ws/state)
 // ---------------------------------------------------------------------------
 
@@ -109,4 +124,6 @@ export interface WsPayload {
   devices: DevicesPayload;
   tariff: TariffPayload;
   optimization: OptimizationPayload | null;
+  evcc: EvccPayload | null;
+  ha_mqtt_connected: boolean;
 }

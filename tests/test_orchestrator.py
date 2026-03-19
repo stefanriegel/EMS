@@ -1766,3 +1766,91 @@ class TestGridCharge:
         # Build state and verify grid_charge_slot_active
         state = orch._build_unified_state(huawei_w, victron_w)
         assert state.grid_charge_slot_active is True
+
+
+# ===========================================================================
+# TestDischargeLock — DISCHARGE_LOCKED state machine contract (S02/T02)
+# ===========================================================================
+
+
+class TestDischargeLock:
+    """Proves the complete DISCHARGE_LOCKED state machine contract.
+
+    Follows the TestGridCharge pattern exactly: uses _make_orchestrator(),
+    direct attribute manipulation, and synchronous _compute_setpoints() calls.
+    No async required.
+    """
+
+    def test_set_evcc_monitor_stores_reference(self):
+        """set_evcc_monitor() stores the driver on _evcc_monitor."""
+        orch = _make_orchestrator()
+        mock_driver = MagicMock()
+        orch.set_evcc_monitor(mock_driver)
+        assert orch._evcc_monitor is mock_driver
+
+    def test_hold_mode_transitions_to_discharge_locked(self):
+        """batteryMode=hold transitions orchestrator to DISCHARGE_LOCKED."""
+        orch = _make_orchestrator()
+        orch._evcc_battery_mode = "hold"
+        orch._compute_setpoints()
+        assert orch._control_state == ControlState.DISCHARGE_LOCKED
+
+    def test_hold_mode_zeros_both_setpoints(self):
+        """batteryMode=hold returns (0, 0) from _compute_setpoints()."""
+        orch = _make_orchestrator()
+        orch._evcc_battery_mode = "hold"
+        result = orch._compute_setpoints()
+        assert result == (0, 0)
+
+    def test_normal_mode_does_not_lock(self):
+        """batteryMode=normal does NOT produce DISCHARGE_LOCKED state."""
+        orch = _make_orchestrator()
+        orch._evcc_battery_mode = "normal"
+        # Make drivers appear available so normal path executes fully
+        orch._huawei_available = True
+        orch._victron_available = True
+        orch._huawei_last_seen = time.monotonic()
+        orch._victron_last_seen = time.monotonic()
+        orch._compute_setpoints()
+        assert orch._control_state != ControlState.DISCHARGE_LOCKED
+
+    def test_discharge_locked_overrides_active_grid_charge_slot(self):
+        """DISCHARGE_LOCKED has higher priority than an active GRID_CHARGE slot."""
+        orch = _make_orchestrator()
+        # Wire an active scheduler slot at 70% SOC targeting 90%
+        orch._last_battery = _make_battery(total_soc_pct=70.0)
+        slot = _make_charge_slot(battery="huawei", target_soc_pct=90.0)
+        schedule = _make_schedule([slot])
+        orch.set_scheduler(_make_scheduler_mock(active_schedule=schedule))
+        # EVCC hold must override the slot
+        orch._evcc_battery_mode = "hold"
+        result = orch._compute_setpoints()
+        assert orch._control_state == ControlState.DISCHARGE_LOCKED
+        assert result == (0, 0)
+
+    def test_unified_state_evcc_battery_mode_populated(self):
+        """_build_unified_state() propagates evcc_battery_mode to UnifiedPoolState."""
+        orch = _make_orchestrator()
+        orch._evcc_battery_mode = "hold"
+        state = orch._build_unified_state(0, 0.0)
+        assert state.evcc_battery_mode == "hold"
+
+    def test_discharge_locked_releases_on_normal(self):
+        """Lock engages on hold, then releases when mode switches to normal."""
+        orch = _make_orchestrator()
+        # Engage lock
+        orch._evcc_battery_mode = "hold"
+        orch._compute_setpoints()
+        assert orch._control_state == ControlState.DISCHARGE_LOCKED
+        # Release lock — switch to normal with drivers marked available
+        orch._evcc_battery_mode = "normal"
+        orch._huawei_available = True
+        orch._victron_available = True
+        orch._huawei_last_seen = time.monotonic()
+        orch._victron_last_seen = time.monotonic()
+        orch._compute_setpoints()
+        assert orch._control_state != ControlState.DISCHARGE_LOCKED
+
+    def test_control_state_enum_value(self):
+        """ControlState.DISCHARGE_LOCKED.value is the bare string 'DISCHARGE_LOCKED' (K009)."""
+        assert ControlState.DISCHARGE_LOCKED.value == "DISCHARGE_LOCKED"

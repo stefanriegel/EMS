@@ -578,6 +578,45 @@ async def get_devices(
 # ---------------------------------------------------------------------------
 
 
+def _build_evcc_dict(app: Any) -> dict[str, Any]:
+    """Build the ``evcc`` sub-dict from ``app.state.evcc_driver``.
+
+    Returns a dict with all six EVCC fields.  Falls back to safe defaults
+    when ``evcc_driver`` is not yet set on ``app.state`` (e.g. in tests that
+    don't wire up the EVCC driver).
+    """
+    driver = getattr(app.state, "evcc_driver", None)
+    if driver is None:
+        return {
+            "battery_mode": "normal",
+            "loadpoint_mode": "off",
+            "charge_power_w": 0.0,
+            "vehicle_soc_pct": None,
+            "charging": False,
+            "connected": False,
+        }
+    lp = driver.evcc_loadpoint_state
+    return {
+        "battery_mode": driver.evcc_battery_mode,
+        "loadpoint_mode": lp.mode,
+        "charge_power_w": lp.charge_power_w,
+        "vehicle_soc_pct": lp.vehicle_soc_pct,
+        "charging": lp.charging,
+        "connected": lp.connected,
+    }
+
+
+def _get_ha_mqtt_connected(app: Any) -> bool:
+    """Return the HA MQTT connection state from ``app.state.ha_mqtt_client``.
+
+    Falls back to ``False`` when ``ha_mqtt_client`` is not set (e.g. in tests).
+    """
+    client = getattr(app.state, "ha_mqtt_client", None)
+    if client is None:
+        return False
+    return bool(client._connected)
+
+
 @api_router.websocket("/ws/state")
 async def ws_state(
     ws: WebSocket,
@@ -659,6 +698,8 @@ async def ws_state(
                 "devices": devices_dict,
                 "tariff": tariff_dict,
                 "optimization": optimization_dict,
+                "evcc": _build_evcc_dict(ws.app),
+                "ha_mqtt_connected": _get_ha_mqtt_connected(ws.app),
             }
 
             try:

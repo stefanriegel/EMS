@@ -46,12 +46,15 @@ from fastapi import FastAPI
 from starlette.staticfiles import StaticFiles
 
 from backend.api import api_router
-from backend.config import HuaweiConfig, InfluxConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig, EvccConfig, SchedulerConfig
+from backend.config import HuaweiConfig, InfluxConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig, EvccConfig, SchedulerConfig, EvccMqttConfig, HaMqttConfig, TelegramConfig
 from backend.drivers.huawei_driver import HuaweiDriver
 from backend.drivers.victron_driver import VictronDriver
 from backend.evcc_client import EvccClient
+from backend.evcc_mqtt_driver import EvccMqttDriver
+from backend.ha_mqtt_client import HomeAssistantMqttClient
 from backend.influx_reader import InfluxMetricsReader
 from backend.influx_writer import InfluxMetricsWriter
+from backend.notifier import TelegramNotifier
 from backend.orchestrator import Orchestrator
 from backend.scheduler import Scheduler
 from backend.tariff import CompositeTariffEngine
@@ -187,11 +190,50 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.orchestrator = orchestrator
     app.state.metrics_reader = metrics_reader
 
+    # --- EVCC MQTT driver ---
+    evcc_mqtt_cfg = EvccMqttConfig.from_env()
+    evcc_driver = EvccMqttDriver(host=evcc_mqtt_cfg.host, port=evcc_mqtt_cfg.port)
+    await evcc_driver.connect()
+    orchestrator.set_evcc_monitor(evcc_driver)
+    app.state.evcc_driver = evcc_driver
+    logger.info(
+        "EVCC MQTT driver connected — host=%s:%d", evcc_mqtt_cfg.host, evcc_mqtt_cfg.port
+    )
+
+    # --- HA MQTT client ---
+    ha_mqtt_cfg = HaMqttConfig.from_env()
+    ha_client = HomeAssistantMqttClient(
+        host=ha_mqtt_cfg.host,
+        port=ha_mqtt_cfg.port,
+        username=ha_mqtt_cfg.username,
+        password=ha_mqtt_cfg.password,
+    )
+    await ha_client.connect()
+    app.state.ha_mqtt_client = ha_client
+    logger.info(
+        "HA MQTT client connecting — host=%s:%d", ha_mqtt_cfg.host, ha_mqtt_cfg.port
+    )
+
+    # --- Telegram notifier ---
+    telegram_cfg = TelegramConfig.from_env()
+    notifier: TelegramNotifier | None = None
+    if telegram_cfg.token and telegram_cfg.chat_id:
+        notifier = TelegramNotifier(
+            token=telegram_cfg.token,
+            chat_id=telegram_cfg.chat_id,
+        )
+        logger.info("Telegram notifier configured")
+    else:
+        logger.info("Telegram notifier disabled — TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set")
+    app.state.notifier = notifier
+
     yield  # application is running
 
     # --- Shutdown ---
     logger.info("EMS shutting down — stopping orchestrator")
     await orchestrator.stop()
+    await evcc_driver.close()
+    await ha_client.disconnect()
     await influx_client.close()
     logger.info("Disconnecting Victron driver")
     await victron.close()

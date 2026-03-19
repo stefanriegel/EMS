@@ -341,6 +341,79 @@ class SchedulerConfig:
 
 
 @dataclass
+class HaMqttConfig:
+    """Connection config for the Home Assistant MQTT broker.
+
+    Used by :class:`~backend.ha_mqtt_client.HomeAssistantMqttClient` to
+    publish EMS telemetry to Home Assistant via MQTT discovery.
+
+    Attributes:
+        host:     Hostname or IP of the MQTT broker (default ``192.168.0.10``).
+        port:     TCP port (default ``1883``).
+        username: Optional MQTT username.
+        password: Optional MQTT password.
+
+    Environment variables:
+        ``HA_MQTT_HOST``     — hostname or IP (default ``192.168.0.10``).
+        ``HA_MQTT_PORT``     — TCP port (default ``1883``).
+        ``HA_MQTT_USERNAME`` — MQTT username (optional).
+        ``HA_MQTT_PASSWORD`` — MQTT password (optional).
+    """
+
+    host: str = "192.168.0.10"
+    port: int = 1883
+    username: str | None = None
+    password: str | None = None
+
+    @classmethod
+    def from_env(cls) -> "HaMqttConfig":
+        """Construct a :class:`HaMqttConfig` from environment variables.
+
+        All fields fall back to safe defaults when the corresponding
+        environment variable is absent — **no env vars are required**.
+        """
+        return cls(
+            host=os.environ.get("HA_MQTT_HOST", "192.168.0.10"),
+            port=int(os.environ.get("HA_MQTT_PORT", "1883")),
+            username=os.environ.get("HA_MQTT_USERNAME"),
+            password=os.environ.get("HA_MQTT_PASSWORD"),
+        )
+
+
+@dataclass
+class TelegramConfig:
+    """Config for the Telegram Bot alert notifier.
+
+    Used by :class:`~backend.notifier.TelegramNotifier` to send EMS alerts.
+    When both ``token`` and ``chat_id`` are non-empty the notifier is active;
+    when either is empty the notifier is disabled.
+
+    Attributes:
+        token:   Telegram Bot API token from BotFather.
+        chat_id: Target chat or channel ID.
+
+    Environment variables:
+        ``TELEGRAM_BOT_TOKEN`` — Bot API token (default empty → disabled).
+        ``TELEGRAM_CHAT_ID``   — Chat ID (default empty → disabled).
+    """
+
+    token: str = ""
+    chat_id: str = ""
+
+    @classmethod
+    def from_env(cls) -> "TelegramConfig":
+        """Construct a :class:`TelegramConfig` from environment variables.
+
+        Both fields fall back to empty strings when absent — an empty token
+        or chat_id means the notifier will not be instantiated.
+        """
+        return cls(
+            token=os.environ.get("TELEGRAM_BOT_TOKEN", ""),
+            chat_id=os.environ.get("TELEGRAM_CHAT_ID", ""),
+        )
+
+
+@dataclass
 class TariffConfig:
     """Combined Octopus Go supply tariff and §14a EnWG Modul 3 grid-fee config.
 

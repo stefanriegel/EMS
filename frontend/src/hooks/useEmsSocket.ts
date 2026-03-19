@@ -31,6 +31,8 @@ export function useEmsSocket(url: string): EmsSocketState {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const unmountedRef = useRef(false);
 
+  const connectRef = useRef<(() => void) | null>(null);
+
   const connect = useCallback(() => {
     if (unmountedRef.current) return;
 
@@ -77,7 +79,7 @@ export function useEmsSocket(url: string): EmsSocketState {
       setRetryCount(retryCountRef.current);
 
       console.log(`[useEmsSocket] scheduling reconnect in ${delay}ms (attempt ${retryCountRef.current})`);
-      timerRef.current = setTimeout(connect, delay);
+      timerRef.current = setTimeout(() => connectRef.current?.(), delay);
     };
 
     ws.onerror = () => {
@@ -85,6 +87,10 @@ export function useEmsSocket(url: string): EmsSocketState {
       console.warn(`[useEmsSocket] socket error at ${new Date().toISOString()}`);
     };
   }, [url]); // url is stable (passed from App top-level)
+
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
 
   useEffect(() => {
     unmountedRef.current = false;

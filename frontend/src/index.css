@@ -463,3 +463,48 @@ html, body {
   color: var(--text-secondary);
   font-size: 0.78rem;
 }
+
+/* ── EVCC card ─────────────────────────────────────────────────────────── */
+
+.evcc-lock-badge {
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.5);
+  color: #f59e0b;
+  border-radius: 4px;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+  letter-spacing: 0.03em;
+}
+
+.evcc-mode-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.evcc-mode-label {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.evcc-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.25rem;
+}
+
+.evcc-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.evcc-lp-mode {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+}
+
