@@ -52,6 +52,9 @@ class ControlState(str, Enum):
     GRID_CHARGE = "GRID_CHARGE"
     """Pool is actively charging from the grid during a scheduled cheap-tariff window."""
 
+    DISCHARGE_LOCKED = "DISCHARGE_LOCKED"
+    """Both battery systems locked at zero discharge — EVCC fast-charge mode active (batteryMode=hold)."""
+
 
 @dataclass
 class UnifiedPoolState:
@@ -121,6 +124,9 @@ class UnifiedPoolState:
     # --- GRID_CHARGE flag ---
     grid_charge_slot_active: bool = False
     """True when the orchestrator is in GRID_CHARGE state (a cheap-tariff slot is active)."""
+
+    evcc_battery_mode: str = "normal"
+    """Current EVCC batteryMode string. 'hold' when EVCC fast-charge mode is active."""
 
     # ------------------------------------------------------------------
     # Factory

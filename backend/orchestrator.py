@@ -38,6 +38,7 @@ from backend.unified_model import ControlState, UnifiedPoolState
 if TYPE_CHECKING:
     from backend.drivers.huawei_driver import HuaweiDriver
     from backend.drivers.victron_driver import VictronDriver
+    from backend.evcc_mqtt_driver import EvccMqttDriver
     from backend.influx_writer import InfluxMetricsWriter
     from backend.scheduler import Scheduler
     from backend.tariff import CompositeTariffEngine
@@ -153,6 +154,10 @@ class Orchestrator:
         self._scheduler: "Scheduler | None" = None
         self._prev_control_state: ControlState | None = None
 
+        # --- EVCC MQTT driver reference (injected via set_evcc_monitor) ---
+        self._evcc_monitor: "EvccMqttDriver | None" = None
+        self._evcc_battery_mode: str = "normal"
+
         # --- Phase imbalance detection ---
         # Counts consecutive cycles where any phase deviates > 500W from setpoint
         self._phase_imbalance_cycles: int = 0
@@ -210,6 +215,11 @@ class Orchestrator:
         """Inject the Scheduler reference for GRID_CHARGE slot detection."""
         self._scheduler = scheduler
         logger.info("Orchestrator.set_scheduler: scheduler wired")
+
+    def set_evcc_monitor(self, driver: "EvccMqttDriver") -> None:
+        """Inject the EvccMqttDriver for batteryMode monitoring."""
+        self._evcc_monitor = driver
+        logger.info("Orchestrator.set_evcc_monitor: EVCC MQTT driver wired")
 
     # ------------------------------------------------------------------
     # GRID_CHARGE slot detection
@@ -460,6 +470,15 @@ class Orchestrator:
         6. If only one driver available: assign full P_target to that system.
         """
         now = time.monotonic()
+
+        # --- DISCHARGE_LOCKED: EVCC batteryMode=hold overrides everything ---
+        # Priority is highest — a plugged-in EV in fast-charge mode must override
+        # even a scheduled grid charge slot.
+        if self._evcc_battery_mode == "hold":
+            self._transition_state(
+                ControlState.DISCHARGE_LOCKED, "EVCC batteryMode=hold"
+            )
+            return (0, 0)
 
         # --- GRID_CHARGE: scheduled cheap-tariff window ---
         # This check is FIRST — before both-offline guard and P_target calculation.
@@ -861,6 +880,7 @@ class Orchestrator:
             victron_available=self._victron_available,
             control_state=self._control_state,
             grid_charge_slot_active=(self._control_state == ControlState.GRID_CHARGE),
+            evcc_battery_mode=self._evcc_battery_mode,
             huawei_discharge_setpoint_w=self._last_huawei_setpoint,
             victron_discharge_setpoint_w=int(self._last_victron_setpoint),
             combined_power_w=combined_power,
