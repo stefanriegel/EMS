@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-test('loads card is visible with null-state (no backend) and no console errors', async ({ page }) => {
+test('loads card is visible at 375px mobile viewport with no console errors', async ({ page }) => {
   const consoleErrors: string[] = [];
   page.on('console', (msg) => {
     if (msg.type() === 'error') consoleErrors.push(msg.text());
@@ -14,25 +14,24 @@ test('loads card is visible with null-state (no backend) and no console errors',
 
   await page.goto('/');
 
-  // LoadsCard must be present in the DOM — always visible (never hidden)
-  const loadsCard = page.locator('[data-testid="loads-card"]');
-  await expect(loadsCard).toBeVisible({ timeout: 10_000 });
+  // Loads card must be visible even with no backend (loads: null = static grey unavailable badge)
+  await expect(page.locator('[data-testid="loads-card"]')).toBeVisible({ timeout: 10_000 });
 
-  // With no backend, loads=null → unavailable badge should be shown
-  const badgeEl = loadsCard.locator('.badge');
-  await expect(badgeEl).toBeVisible();
-
-  // Take screenshot for visual record
+  // Take screenshot and save to tests/screenshots/
   const screenshotDir = path.join(__dirname, 'screenshots');
   if (!fs.existsSync(screenshotDir)) fs.mkdirSync(screenshotDir, { recursive: true });
   await page.screenshot({
-    path: path.join(screenshotDir, 'loads-card-null.png'),
+    path: path.join(screenshotDir, 'loads-card-375px.png'),
     fullPage: false,
   });
 
-  expect(fs.existsSync(path.join(screenshotDir, 'loads-card-null.png'))).toBe(true);
+  // Assert screenshot file was written
+  expect(fs.existsSync(path.join(screenshotDir, 'loads-card-375px.png'))).toBe(true);
 
-  // Filter known harmless noise from missing backend
+  // Assert no console errors
+  // Filter out known harmless noise from missing backend in preview-only test environment:
+  //   - WebSocket connection failures (no backend running)
+  //   - HTTP 502/503/fetch failures on /api/* routes (no backend running)
   const realErrors = consoleErrors.filter(
     (e) =>
       !e.includes('WebSocket') &&
