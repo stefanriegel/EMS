@@ -414,6 +414,47 @@ class TelegramConfig:
 
 
 @dataclass
+class HaRestConfig:
+    """Connection config for the Home Assistant REST API.
+
+    Used by :class:`~backend.ha_rest_client.HomeAssistantClient` to poll
+    HA sensor states via the REST API.  All fields default to empty strings
+    so unit tests run without any environment variables set.
+
+    When both ``url`` and ``token`` are non-empty the client is active;
+    when either is empty the client is not instantiated.
+
+    Attributes:
+        url:                  Base URL of the HA instance (e.g. ``http://homeassistant.local:8123``).
+        token:                Long-lived access token — never logged.
+        heat_pump_entity_id:  HA entity ID for the heat pump power sensor.
+
+    Environment variables:
+        ``HA_URL``                   — HA base URL (default empty → disabled).
+        ``HA_TOKEN``                 — Long-lived access token (default empty → disabled).
+        ``HA_HEAT_PUMP_ENTITY_ID``   — Entity ID for heat pump power (default empty).
+    """
+
+    url: str = ""
+    token: str = ""
+    heat_pump_entity_id: str = ""
+
+    @classmethod
+    def from_env(cls) -> "HaRestConfig":
+        """Construct a :class:`HaRestConfig` from environment variables.
+
+        All fields fall back to empty strings when absent — **no env vars
+        are required**.  An empty ``url`` or ``token`` means the client
+        will not be instantiated.
+        """
+        return cls(
+            url=os.environ.get("HA_URL", ""),
+            token=os.environ.get("HA_TOKEN", ""),
+            heat_pump_entity_id=os.environ.get("HA_HEAT_PUMP_ENTITY_ID", ""),
+        )
+
+
+@dataclass
 class TariffConfig:
     """Combined Octopus Go supply tariff and §14a EnWG Modul 3 grid-fee config.
 

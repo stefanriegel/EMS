@@ -46,7 +46,8 @@ from fastapi import FastAPI
 from starlette.staticfiles import StaticFiles
 
 from backend.api import api_router
-from backend.config import HuaweiConfig, InfluxConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig, EvccConfig, SchedulerConfig, EvccMqttConfig, HaMqttConfig, TelegramConfig
+from backend.config import HuaweiConfig, InfluxConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig, EvccConfig, SchedulerConfig, EvccMqttConfig, HaMqttConfig, TelegramConfig, HaRestConfig
+from backend.ha_rest_client import HomeAssistantClient
 from backend.drivers.huawei_driver import HuaweiDriver
 from backend.drivers.victron_driver import VictronDriver
 from backend.evcc_client import EvccClient
@@ -227,6 +228,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info("Telegram notifier disabled — TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set")
     app.state.notifier = notifier
 
+    # --- HA REST client ---
+    ha_rest_cfg = HaRestConfig.from_env()
+    if ha_rest_cfg.url and ha_rest_cfg.token:
+        ha_rest_client = HomeAssistantClient(
+            ha_rest_cfg.url,
+            ha_rest_cfg.token,
+            ha_rest_cfg.heat_pump_entity_id,
+        )
+        await ha_rest_client.start()
+        app.state.ha_rest_client = ha_rest_client
+        logger.info(
+            "HA REST client configured — entity_id=%s", ha_rest_cfg.heat_pump_entity_id
+        )
+    else:
+        app.state.ha_rest_client = None
+        logger.info("HA REST client not configured — HA_URL / HA_TOKEN not set")
+
     yield  # application is running
 
     # --- Shutdown ---
@@ -234,6 +252,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await orchestrator.stop()
     await evcc_driver.close()
     await ha_client.disconnect()
+    if app.state.ha_rest_client is not None:
+        await app.state.ha_rest_client.stop()
     await influx_client.close()
     logger.info("Disconnecting Victron driver")
     await victron.close()

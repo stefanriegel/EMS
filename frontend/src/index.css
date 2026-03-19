@@ -573,3 +573,38 @@ html, body {
   margin-top: 0.5rem;
 }
 
+/* ── LoadsCard ─────────────────────────────────────────────────────────── */
+
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.loads-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.loads-label {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  min-width: 6rem;
+}
+
+.loads-value {
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  flex: 1;
+}
+

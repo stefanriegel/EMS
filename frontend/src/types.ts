@@ -116,6 +116,15 @@ export interface EvccPayload {
 }
 
 // ---------------------------------------------------------------------------
+// Loads snapshot (embedded in WS payload — sourced from HA REST API)
+// ---------------------------------------------------------------------------
+
+export interface LoadsPayload {
+  heat_pump_power_w: number | null;
+  available: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // WebSocket push payload (/api/ws/state)
 // ---------------------------------------------------------------------------
 
@@ -126,4 +135,5 @@ export interface WsPayload {
   optimization: OptimizationPayload | null;
   evcc: EvccPayload | null;
   ha_mqtt_connected: boolean;
+  loads: LoadsPayload | null;
 }

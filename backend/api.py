@@ -578,6 +578,27 @@ async def get_devices(
 # ---------------------------------------------------------------------------
 
 
+def _build_loads_dict(app: Any) -> dict[str, Any] | None:
+    """Build the ``loads`` sub-dict from ``app.state.ha_rest_client``.
+
+    Returns ``None`` when the HA REST client is absent or unconfigured
+    (``loads: null`` in WS payload = client not running).
+
+    When the client is present but the last poll failed (value is ``None``),
+    returns ``{"heat_pump_power_w": null, "available": false}`` — this is the
+    inspectable failure state that distinguishes "no client" from "client
+    running but HA sensor unavailable".
+    """
+    client = getattr(app.state, "ha_rest_client", None)
+    if client is None:
+        return None
+    value = client.get_cached_value()
+    return {
+        "heat_pump_power_w": value,
+        "available": value is not None,
+    }
+
+
 def _build_evcc_dict(app: Any) -> dict[str, Any]:
     """Build the ``evcc`` sub-dict from ``app.state.evcc_driver``.
 
@@ -700,6 +721,7 @@ async def ws_state(
                 "optimization": optimization_dict,
                 "evcc": _build_evcc_dict(ws.app),
                 "ha_mqtt_connected": _get_ha_mqtt_connected(ws.app),
+                "loads": _build_loads_dict(ws.app),
             }
 
             try:

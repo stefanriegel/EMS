@@ -884,3 +884,25 @@ def test_ws_state_includes_optimization_key() -> None:
     assert "optimization" in data, f"Missing 'optimization' key in WS frame: {data}"
     # Value is null because active_schedule is None
     assert data["optimization"] is None
+
+
+def test_ws_state_includes_loads_key() -> None:
+    """WS /api/ws/state frame includes 'loads' key; value is null when no HA REST client."""
+    from starlette.testclient import TestClient
+
+    from fastapi import FastAPI
+
+    orch = MockOrchestrator(state=_make_state())
+    app = FastAPI(title="EMS-test")
+    app.include_router(api_router)
+    app.dependency_overrides[get_orchestrator] = lambda: orch
+    app.state.orchestrator = orch
+    # No ha_rest_client on app.state → _build_loads_dict returns None
+
+    with TestClient(app).websocket_connect("/api/ws/state") as ws:
+        data = ws.receive_json()
+
+    assert "loads" in data, f"Missing 'loads' key in WS frame: {data}"
+    # Value is null because ha_rest_client is absent
+    assert data["loads"] is None
+

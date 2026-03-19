@@ -19,6 +19,7 @@ import { DeviceDetail } from "./components/DeviceDetail";
 import { TariffCard } from "./components/TariffCard";
 import { OptimizationCard } from "./components/OptimizationCard";
 import { EvccCard } from "./components/EvccCard";
+import { LoadsCard } from "./components/LoadsCard";
 import type { PoolState, DevicesPayload } from "./types";
 
 // In production, location.host resolves to the FastAPI server address.
@@ -69,6 +70,7 @@ export default function App() {
   const optimization = ws.data?.optimization ?? null;
   const evcc = ws.data?.evcc ?? null;
   const haMqttConnected = ws.data?.ha_mqtt_connected ?? false;
+  const loads = ws.data?.loads ?? null;
 
   return (
     <div className="app">
@@ -95,6 +97,7 @@ export default function App() {
 
         <div className="dashboard-grid">
           <EnergyFlowCard pool={pool} devices={devices} />
+          <LoadsCard loads={loads} />
           <PoolOverview pool={pool ?? null} connected={ws.connected} />
           <DeviceDetail devices={devices} />
           <TariffCard tariff={tariff} />
