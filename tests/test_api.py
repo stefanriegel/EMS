@@ -57,12 +57,16 @@ class MockOrchestrator:
         self._state = state
         self._last_error: str | None = None
         self.sys_config = SystemConfig()
+        self._device_snapshot: dict = _make_device_snapshot()
 
     def get_state(self) -> UnifiedPoolState | None:
         return self._state
 
     def get_last_error(self) -> str | None:
         return self._last_error
+
+    def get_device_snapshot(self) -> dict:
+        return self._device_snapshot
 
 
 def _make_state(**overrides: Any) -> UnifiedPoolState:
@@ -86,6 +90,43 @@ def _make_state(**overrides: Any) -> UnifiedPoolState:
     )
     defaults.update(overrides)
     return UnifiedPoolState(**defaults)
+
+
+def _make_device_snapshot(
+    *,
+    huawei_available: bool = True,
+    victron_available: bool = True,
+    master_pv_power_w: int | None = 3500,
+    pack2_soc_pct: float | None = 72.0,
+    pack2_power_w: int | None = -800,
+) -> dict:
+    """Return a fully-populated device snapshot dict with sensible defaults."""
+    return {
+        "huawei": {
+            "available": huawei_available,
+            "pack1_soc_pct": 55.0,
+            "pack1_power_w": -1200,
+            "pack2_soc_pct": pack2_soc_pct,
+            "pack2_power_w": pack2_power_w,
+            "total_soc_pct": 62.0,
+            "total_power_w": -2000,
+            "max_charge_w": 10000,
+            "max_discharge_w": 10000,
+            "master_pv_power_w": master_pv_power_w,
+            "slave_pv_power_w": None,
+        },
+        "victron": {
+            "available": victron_available,
+            "soc_pct": 68.75,
+            "battery_power_w": -500.0,
+            "l1_power_w": -166.7,
+            "l2_power_w": -166.7,
+            "l3_power_w": -166.6,
+            "l1_voltage_v": 230.1,
+            "l2_voltage_v": 230.2,
+            "l3_voltage_v": 230.0,
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -555,3 +596,127 @@ async def test_metrics_latest_returns_503_when_reader_none() -> None:
 
     assert resp.status_code == 503
     assert "not available" in resp.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# GET /api/devices
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_get_devices_both_available() -> None:
+    """GET /api/devices returns 200 with huawei.available and victron.available True."""
+    orch = MockOrchestrator(state=_make_state())
+    app = _build_test_app(orch)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/devices")
+
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert data["huawei"]["available"] is True
+    assert data["victron"]["available"] is True
+
+    # All required huawei keys present
+    huawei_keys = {
+        "available", "pack1_soc_pct", "pack1_power_w",
+        "pack2_soc_pct", "pack2_power_w",
+        "total_soc_pct", "total_power_w",
+        "max_charge_w", "max_discharge_w",
+        "master_pv_power_w", "slave_pv_power_w",
+    }
+    assert huawei_keys.issubset(data["huawei"].keys()), (
+        f"Missing huawei keys: {huawei_keys - set(data['huawei'].keys())}"
+    )
+
+    # All required victron keys present
+    victron_keys = {
+        "available", "soc_pct", "battery_power_w",
+        "l1_power_w", "l2_power_w", "l3_power_w",
+        "l1_voltage_v", "l2_voltage_v", "l3_voltage_v",
+    }
+    assert victron_keys.issubset(data["victron"].keys()), (
+        f"Missing victron keys: {victron_keys - set(data['victron'].keys())}"
+    )
+
+    # slave_pv_power_w is always null
+    assert data["huawei"]["slave_pv_power_w"] is None
+
+
+@pytest.mark.anyio
+async def test_get_devices_huawei_unavailable() -> None:
+    """GET /api/devices returns huawei.available=False when mock returns it unavailable."""
+    orch = MockOrchestrator(state=_make_state())
+    orch._device_snapshot = _make_device_snapshot(huawei_available=False)
+    app = _build_test_app(orch)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/devices")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["huawei"]["available"] is False
+    assert data["victron"]["available"] is True
+
+
+@pytest.mark.anyio
+async def test_get_devices_master_none() -> None:
+    """GET /api/devices returns master_pv_power_w=null and slave_pv_power_w=null when master is None."""
+    orch = MockOrchestrator(state=_make_state())
+    orch._device_snapshot = _make_device_snapshot(master_pv_power_w=None)
+    app = _build_test_app(orch)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/devices")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["huawei"]["master_pv_power_w"] is None
+    assert data["huawei"]["slave_pv_power_w"] is None
+
+
+# ---------------------------------------------------------------------------
+# WebSocket /api/ws/state
+# ---------------------------------------------------------------------------
+
+
+def test_ws_state_sends_first_frame() -> None:
+    """Sync WS test: client receives first JSON frame from /api/ws/state within 8s.
+
+    Uses ``starlette.testclient.TestClient`` (sync, no anyio) per plan contract.
+    The frame must contain keys ``pool``, ``devices``, and ``tariff``.
+    """
+    from starlette.testclient import TestClient
+
+    orch = MockOrchestrator(state=_make_state())
+    # Build app with real ws route — need app.state.orchestrator accessible
+    from fastapi import FastAPI
+
+    app = FastAPI(title="EMS-test")
+    app.include_router(api_router)
+    app.dependency_overrides[get_orchestrator] = lambda: orch
+    # Inject orchestrator into app.state for the WS handler (it reads app.state directly)
+    app.state.orchestrator = orch
+
+    with TestClient(app).websocket_connect("/api/ws/state") as ws:
+        data = ws.receive_json()
+
+    assert "pool" in data, f"Missing 'pool' key in WS frame: {data}"
+    assert "devices" in data, f"Missing 'devices' key in WS frame: {data}"
+    assert "tariff" in data, f"Missing 'tariff' key in WS frame: {data}"
+
+    # Verify device sub-structure is present
+    assert "huawei" in data["devices"]
+    assert "victron" in data["devices"]
+
+    # Tariff fields present (null is expected when no engine configured)
+    assert "effective_rate_eur_kwh" in data["tariff"]
+    assert "octopus_rate_eur_kwh" in data["tariff"]
+    assert "modul3_rate_eur_kwh" in data["tariff"]

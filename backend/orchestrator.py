@@ -201,6 +201,50 @@ class Orchestrator:
             return self._huawei_error
         return self._victron_error
 
+    def get_device_snapshot(self) -> dict:
+        """Return a per-device telemetry snapshot for the ``/api/devices`` endpoint.
+
+        Returns a plain dict with two top-level keys: ``huawei`` and
+        ``victron``.  Fields are sourced exclusively from cached poll
+        results already stored on ``self`` — no driver I/O is performed.
+
+        Null handling:
+        * ``_last_master is None`` → ``master_pv_power_w`` is ``None``.
+        * ``_last_battery.pack2_soc_pct is None`` → pack2 fields are ``None``.
+        * ``slave_pv_power_w`` is always ``None`` (slave not polled by orchestrator).
+        """
+        battery = self._last_battery
+        victron = self._last_victron
+        master = self._last_master
+
+        huawei_dict: dict = {
+            "available": self._huawei_available,
+            "pack1_soc_pct": battery.pack1_soc_pct,
+            "pack1_power_w": battery.pack1_charge_discharge_power_w,
+            "pack2_soc_pct": battery.pack2_soc_pct,
+            "pack2_power_w": battery.pack2_charge_discharge_power_w,
+            "total_soc_pct": battery.total_soc_pct,
+            "total_power_w": battery.total_charge_discharge_power_w,
+            "max_charge_w": battery.max_charge_power_w,
+            "max_discharge_w": battery.max_discharge_power_w,
+            "master_pv_power_w": master.pv_input_power_w if master is not None else None,
+            "slave_pv_power_w": None,
+        }
+
+        victron_dict: dict = {
+            "available": self._victron_available,
+            "soc_pct": victron.battery_soc_pct,
+            "battery_power_w": victron.battery_power_w,
+            "l1_power_w": victron.l1.power_w,
+            "l2_power_w": victron.l2.power_w,
+            "l3_power_w": victron.l3.power_w,
+            "l1_voltage_v": victron.l1.voltage_v,
+            "l2_voltage_v": victron.l2.voltage_v,
+            "l3_voltage_v": victron.l3.voltage_v,
+        }
+
+        return {"huawei": huawei_dict, "victron": victron_dict}
+
     @property
     def sys_config(self) -> SystemConfig:
         """Return the current system configuration (SoC limits, feed-in rules)."""

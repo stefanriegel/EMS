@@ -36,19 +36,24 @@ All endpoints depend on :func:`get_orchestrator` (reads from
 """
 from __future__ import annotations
 
+import asyncio
 import dataclasses
+import logging
 import time
 from datetime import datetime as dt_type
 from datetime import date as date_type
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from backend.config import SystemConfig
 from backend.influx_reader import InfluxMetricsReader
 from backend.orchestrator import Orchestrator
 from backend.tariff import CompositeTariffEngine
+from backend.ws_manager import manager
+
+logger = logging.getLogger(__name__)
 
 api_router = APIRouter(prefix="/api")
 
@@ -441,3 +446,141 @@ async def get_metrics_latest(
     if reader is None:
         raise HTTPException(status_code=503, detail="Metrics reader not available")
     return await reader.query_latest(measurement)
+
+
+# ---------------------------------------------------------------------------
+# Devices route
+# ---------------------------------------------------------------------------
+
+
+@api_router.get("/devices")
+async def get_devices(
+    orchestrator: Orchestrator = Depends(get_orchestrator),
+) -> dict[str, Any]:
+    """Return a per-device telemetry snapshot.
+
+    Response shape mirrors ``Orchestrator.get_device_snapshot()``:
+
+    .. code-block:: json
+
+        {
+            "huawei": {
+                "available": bool,
+                "pack1_soc_pct": float,
+                "pack1_power_w": int,
+                "pack2_soc_pct": float | null,
+                "pack2_power_w": int | null,
+                "total_soc_pct": float,
+                "total_power_w": int,
+                "max_charge_w": int,
+                "max_discharge_w": int,
+                "master_pv_power_w": int | null,
+                "slave_pv_power_w": null
+            },
+            "victron": {
+                "available": bool,
+                "soc_pct": float,
+                "battery_power_w": float,
+                "l1_power_w": float,
+                "l2_power_w": float,
+                "l3_power_w": float,
+                "l1_voltage_v": float,
+                "l2_voltage_v": float,
+                "l3_voltage_v": float
+            }
+        }
+    """
+    return orchestrator.get_device_snapshot()
+
+
+# ---------------------------------------------------------------------------
+# WebSocket real-time push
+# ---------------------------------------------------------------------------
+
+
+@api_router.websocket("/ws/state")
+async def ws_state(
+    ws: WebSocket,
+) -> None:
+    """Push combined pool + devices + tariff JSON to the client every 5 s.
+
+    The payload shape::
+
+        {
+            "pool": <UnifiedPoolState as dict, or null>,
+            "devices": <device snapshot dict>,
+            "tariff": {
+                "effective_rate_eur_kwh": float | null,
+                "octopus_rate_eur_kwh": float | null,
+                "modul3_rate_eur_kwh": float | null
+            }
+        }
+
+    The client is removed from the active set on disconnect.  ``WebSocketDisconnect``
+    raised inside the loop exits the handler cleanly (manager.disconnect called
+    in the finally block).
+    """
+    orchestrator: Orchestrator = ws.app.state.orchestrator
+    tariff_engine = getattr(ws.app.state, "tariff_engine", None)
+
+    await manager.connect(ws)
+    try:
+        while True:
+            # --- Build pool snapshot ---
+            pool_state = orchestrator.get_state()
+            pool_dict = dataclasses.asdict(pool_state) if pool_state is not None else None
+
+            # --- Build device snapshot ---
+            devices_dict = orchestrator.get_device_snapshot()
+
+            # --- Build tariff snapshot ---
+            if tariff_engine is not None:
+                try:
+                    from datetime import datetime, timezone
+                    from zoneinfo import ZoneInfo
+                    now = datetime.now(tz=timezone.utc)
+                    oct_tz = ZoneInfo(tariff_engine._octopus.timezone)
+                    m3_tz = ZoneInfo(tariff_engine._modul3.timezone)
+                    now_oct = now.astimezone(oct_tz)
+                    now_m3 = now.astimezone(m3_tz)
+                    oct_min = now_oct.hour * 60 + now_oct.minute
+                    m3_min = now_m3.hour * 60 + now_m3.minute
+                    oct_rate = tariff_engine._octopus_rate_at(oct_min)
+                    m3_rate = tariff_engine._modul3_rate_at(m3_min)
+                    tariff_dict: dict[str, Any] = {
+                        "effective_rate_eur_kwh": round(oct_rate + m3_rate, 6),
+                        "octopus_rate_eur_kwh": oct_rate,
+                        "modul3_rate_eur_kwh": m3_rate,
+                    }
+                except Exception:
+                    tariff_dict = {
+                        "effective_rate_eur_kwh": None,
+                        "octopus_rate_eur_kwh": None,
+                        "modul3_rate_eur_kwh": None,
+                    }
+            else:
+                tariff_dict = {
+                    "effective_rate_eur_kwh": None,
+                    "octopus_rate_eur_kwh": None,
+                    "modul3_rate_eur_kwh": None,
+                }
+
+            payload: dict[str, Any] = {
+                "pool": pool_dict,
+                "devices": devices_dict,
+                "tariff": tariff_dict,
+            }
+
+            try:
+                await ws.send_json(payload)
+            except WebSocketDisconnect:
+                break
+            except Exception:
+                logger.warning("ws send failed — client disconnected")
+                break
+
+            await asyncio.sleep(5)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        manager.disconnect(ws)
