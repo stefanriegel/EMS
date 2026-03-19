@@ -265,3 +265,38 @@ class ChargeSchedule:
     reasoning: OptimizationReasoning
     computed_at: datetime
     stale: bool = False
+
+
+@dataclass
+class ConsumptionForecast:
+    """Weekday-aware household consumption forecast from InfluxDB history.
+
+    Produced by ``InfluxMetricsReader.query_consumption_history()`` (S02) and
+    consumed by the Scheduler (S03) to set charge targets.
+
+    Observability notes
+    -------------------
+    - ``fallback_used=True`` signals cold-start or InfluxDB failure; callers
+      (S03 Scheduler) should treat ``today_expected_kwh`` as a rough estimate.
+    - ``days_of_history`` drives the ``WARNING "consumption history: only N
+      days of data, using seasonal fallback"`` log when ``< 7``.
+    - A returned instance with ``fallback_used=False`` and a populated
+      ``kwh_by_weekday`` is the happy-path signal — no additional grep needed.
+
+    Attributes:
+        kwh_by_weekday:     Mean daily consumption in kWh per weekday
+                            (0=Monday … 6=Sunday). Empty dict when
+                            fewer than 7 days of data are available.
+        today_expected_kwh: kwh_by_weekday[today.weekday()], or the
+                            seasonal fallback constant when data is
+                            insufficient.
+        days_of_history:    Number of distinct calendar days with data
+                            in the query window.
+        fallback_used:      True when today_expected_kwh is a seasonal
+                            constant (< 7 days of data or query error).
+    """
+
+    kwh_by_weekday: dict[int, float]   # 0=Mon … 6=Sun
+    today_expected_kwh: float
+    days_of_history: int
+    fallback_used: bool
