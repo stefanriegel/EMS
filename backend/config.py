@@ -219,6 +219,40 @@ class InfluxConfig:
 
 
 @dataclass
+class EvccConfig:
+    """Connection config for the EVCC energy-management / EVopt HTTP API.
+
+    All fields have safe defaults so unit tests run without any environment
+    variables set.
+
+    Attributes:
+        host:      Hostname or IP of the EVCC instance (default ``192.168.0.10``).
+        port:      HTTP port (default 7070).
+        timeout_s: Per-request timeout in seconds (default 10.0).
+
+    Environment variables:
+        ``EVCC_HOST`` — hostname or IP (default ``192.168.0.10``).
+        ``EVCC_PORT`` — HTTP port (default ``7070``).
+    """
+
+    host: str = "192.168.0.10"
+    port: int = 7070
+    timeout_s: float = 10.0
+
+    @classmethod
+    def from_env(cls) -> "EvccConfig":
+        """Construct an :class:`EvccConfig` from environment variables.
+
+        Both fields fall back to safe defaults when the corresponding
+        environment variable is absent — **no env vars are required**.
+        """
+        return cls(
+            host=os.environ.get("EVCC_HOST", "192.168.0.10"),
+            port=int(os.environ.get("EVCC_PORT", "7070")),
+        )
+
+
+@dataclass
 class TariffConfig:
     """Combined Octopus Go supply tariff and §14a EnWG Modul 3 grid-fee config.
 

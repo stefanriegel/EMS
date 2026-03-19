@@ -1,0 +1,267 @@
+"""Shared typed dataclasses for the EMS schedule pipeline (S01–S05).
+
+These types flow from the EVCC/EVopt data pipeline (S01) through the
+Scheduler (S03) and down to the control drivers (S02/S04).  No runtime
+dependencies beyond stdlib ``dataclasses`` and ``datetime``.
+
+Observability notes
+-------------------
+- ``EvccState.evopt_status`` carries the raw ``"Optimal"`` / ``"Infeasible"``
+  string from EVopt for dashboard display and log filtering.
+- ``ChargeSchedule.stale`` is set ``True`` by the Scheduler (S03) when
+  ``EvccClient.get_state()`` returns ``None``.
+"""
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from datetime import datetime
+
+logger = logging.getLogger("ems.evcc")
+
+# ---------------------------------------------------------------------------
+# EVCC / EVopt data layer (produced by EvccClient.get_state)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class EvoptBatteryTimeseries:
+    """Per-battery charging/discharging power and SoC timeseries from EVopt.
+
+    All list fields have equal length (``n_slots``).  Slot duration is 15 min.
+
+    Attributes:
+        title:               Battery display name, e.g. ``"Emma Akku 1"``.
+        charging_power_w:    Scheduled charging power in watts per slot.
+        discharging_power_w: Scheduled discharging power in watts per slot.
+        soc_fraction:        State-of-charge fraction (0.0–1.0) per slot.
+        slot_timestamps_utc: UTC start timestamp for each slot.  Slot 0 is
+                             *now*, not midnight — derived from
+                             ``evopt.res.details.timestamp[0]``.
+    """
+
+    title: str
+    charging_power_w: list[float]
+    discharging_power_w: list[float]
+    soc_fraction: list[float]
+    slot_timestamps_utc: list[datetime]
+
+
+@dataclass
+class EvoptResult:
+    """Top-level EVopt optimisation result for the current horizon.
+
+    Attributes:
+        status:          Solver status string, e.g. ``"Optimal"``.
+        objective_value: Solver objective (cost) value.
+        batteries:       Per-battery timeseries in the same order as EVCC returns.
+    """
+
+    status: str
+    objective_value: float
+    batteries: list[EvoptBatteryTimeseries]
+
+    # ------------------------------------------------------------------
+    # Huawei LUNA2000 target SoC
+    # ------------------------------------------------------------------
+
+    def get_huawei_target_soc_pct(
+        self,
+        huawei_capacity_kwh: float,
+        initial_soc_pct: float = 0.0,
+    ) -> float:
+        """Return the projected Huawei LUNA2000 SoC after the next 24 h.
+
+        Filters batteries whose title is ``"Emma Akku 1"`` or
+        ``"Emma Akku 2"`` (runtime name match, never by index), sums the
+        net charge energy over the first 96 slots (24 h at 15-min resolution),
+        and converts to a SoC percentage clamped to [10.0, 95.0].
+
+        Parameters
+        ----------
+        huawei_capacity_kwh:
+            Usable capacity of both LUNA packs combined, in kWh.
+        initial_soc_pct:
+            Starting SoC percentage (default 0.0 — useful for delta tests).
+
+        Returns
+        -------
+        float
+            Projected target SoC percentage, clamped to [10.0, 95.0].
+            Returns *initial_soc_pct* (clamped) if no Emma packs are found.
+        """
+        huawei_titles = {"Emma Akku 1", "Emma Akku 2"}
+        packs = [b for b in self.batteries if b.title in huawei_titles]
+
+        if not packs:
+            logger.warning(
+                "get_huawei_target_soc_pct: no Emma Akku batteries found in EVopt result"
+            )
+            return float(initial_soc_pct)
+
+        net_energy_wh = 0.0
+        for bat in packs:
+            slots = list(zip(bat.charging_power_w[:96], bat.discharging_power_w[:96]))
+            net_energy_wh += sum((c - d) * (15 / 60) for c, d in slots)
+
+        target = initial_soc_pct + (net_energy_wh / (huawei_capacity_kwh * 1000)) * 100
+        return float(max(10.0, min(95.0, target)))
+
+    # ------------------------------------------------------------------
+    # Victron MPII target SoC
+    # ------------------------------------------------------------------
+
+    def get_victron_target_soc_pct(
+        self,
+        victron_capacity_kwh: float,
+        initial_soc_pct: float = 0.0,
+    ) -> float:
+        """Return the projected Victron MPII SoC after the next 24 h.
+
+        Filters batteries whose title is exactly ``"Victron"``.
+
+        Parameters
+        ----------
+        victron_capacity_kwh:
+            Usable capacity of the Victron battery, in kWh.
+        initial_soc_pct:
+            Starting SoC percentage (default 0.0).
+
+        Returns
+        -------
+        float
+            Projected target SoC percentage, clamped to [10.0, 95.0].
+            Returns *initial_soc_pct* (clamped) if no Victron pack is found.
+        """
+        packs = [b for b in self.batteries if b.title == "Victron"]
+
+        if not packs:
+            logger.warning(
+                "get_victron_target_soc_pct: no Victron battery found in EVopt result"
+            )
+            return float(initial_soc_pct)
+
+        net_energy_wh = 0.0
+        for bat in packs:
+            slots = list(zip(bat.charging_power_w[:96], bat.discharging_power_w[:96]))
+            net_energy_wh += sum((c - d) * (15 / 60) for c, d in slots)
+
+        target = initial_soc_pct + (net_energy_wh / (victron_capacity_kwh * 1000)) * 100
+        return float(max(10.0, min(95.0, target)))
+
+
+@dataclass
+class SolarForecast:
+    """Solar generation forecast data from EVCC.
+
+    Attributes:
+        timeseries_w:         Per-slot power forecast in watts.
+        slot_timestamps_utc:  UTC start timestamp for each slot.
+        tomorrow_energy_wh:   Total forecasted energy for tomorrow in Wh.
+        day_after_energy_wh:  Total forecasted energy for the day after tomorrow in Wh.
+    """
+
+    timeseries_w: list[float]
+    slot_timestamps_utc: list[datetime]
+    tomorrow_energy_wh: float
+    day_after_energy_wh: float
+
+
+@dataclass
+class GridPriceSeries:
+    """Grid import and feed-in price timeseries from EVCC.
+
+    Attributes:
+        import_eur_kwh:      Import price in €/kWh per slot.
+        export_eur_kwh:      Feed-in (export) price in €/kWh per slot.
+        slot_timestamps_utc: UTC start timestamp for each slot.
+    """
+
+    import_eur_kwh: list[float]
+    export_eur_kwh: list[float]
+    slot_timestamps_utc: list[datetime]
+
+
+@dataclass
+class EvccState:
+    """Parsed snapshot of the EVCC ``/api/state`` endpoint.
+
+    Sub-fields are ``None`` when the corresponding section is absent from the
+    EVCC response (e.g. EVopt solver not yet run, forecast unavailable).
+
+    Attributes:
+        evopt:        EVopt optimisation result, or ``None``.
+        solar:        Solar generation forecast, or ``None``.
+        grid_prices:  Grid price timeseries, or ``None``.
+        evopt_status: Raw solver status string (``"Optimal"``, ``"Infeasible"``,
+                      ``"unknown"``), always present for dashboard display.
+    """
+
+    evopt: EvoptResult | None
+    solar: SolarForecast | None
+    grid_prices: GridPriceSeries | None
+    evopt_status: str
+
+
+# ---------------------------------------------------------------------------
+# Schedule pipeline (produced by Scheduler in S03, consumed by S02/S04)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ChargeSlot:
+    """A single scheduled battery charge window.
+
+    Attributes:
+        battery:             Battery identifier, e.g. ``"huawei"`` or ``"victron"``.
+        target_soc_pct:      Desired SoC at slot end, as a percentage.
+        start_utc:           Slot start in UTC.
+        end_utc:             Slot end in UTC.
+        grid_charge_power_w: Grid charge power budget in watts.
+    """
+
+    battery: str
+    target_soc_pct: float
+    start_utc: datetime
+    end_utc: datetime
+    grid_charge_power_w: int
+
+
+@dataclass
+class OptimizationReasoning:
+    """Human-readable and structured reasoning for a charge schedule.
+
+    Attributes:
+        text:                     Free-text explanation for dashboard display.
+        tomorrow_solar_kwh:       Forecasted solar energy for tomorrow in kWh.
+        expected_consumption_kwh: Expected household consumption in kWh.
+        charge_energy_kwh:        Total energy to charge from grid in kWh.
+        cost_estimate_eur:        Estimated cost of the schedule in euros.
+    """
+
+    text: str
+    tomorrow_solar_kwh: float
+    expected_consumption_kwh: float
+    charge_energy_kwh: float
+    cost_estimate_eur: float
+
+
+@dataclass
+class ChargeSchedule:
+    """A complete optimised charge schedule for the battery pool.
+
+    Produced by the Scheduler (S03) and consumed by the control drivers
+    (S02/S04).  ``stale`` is set ``True`` when ``EvccClient.get_state()``
+    returns ``None`` and the schedule could not be refreshed.
+
+    Attributes:
+        slots:       Ordered list of charge windows.
+        reasoning:   Explanation and cost estimate for this schedule.
+        computed_at: UTC timestamp when this schedule was generated.
+        stale:       ``True`` if the schedule could not be refreshed from EVCC.
+    """
+
+    slots: list[ChargeSlot]
+    reasoning: OptimizationReasoning
+    computed_at: datetime
+    stale: bool = False
