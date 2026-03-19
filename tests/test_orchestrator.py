@@ -1481,3 +1481,288 @@ class TestGridCharge:
         state = orch._build_unified_state(2000, 1000.0)
 
         assert state.grid_charge_slot_active is False
+
+    # ------------------------------------------------------------------
+    # _apply_grid_charge_setpoints: write path tests (T02)
+    # ------------------------------------------------------------------
+
+    async def test_apply_grid_charge_setpoints_huawei_write_ac_charging_and_power(self):
+        """_apply_grid_charge_setpoints calls write_ac_charging(True) then write_max_charge_power when huawei_w > 0."""
+        huawei_mock = MagicMock()
+        huawei_mock.read_master = AsyncMock(return_value=_make_master())
+        huawei_mock.read_battery = AsyncMock(return_value=_make_battery())
+        huawei_mock.write_max_discharge_power = AsyncMock()
+        huawei_mock.write_ac_charging = AsyncMock()
+        huawei_mock.write_max_charge_power = AsyncMock()
+
+        orch = _make_orchestrator(huawei_mock=huawei_mock)
+        await orch._poll()
+        orch._huawei_available = True
+
+        await orch._apply_grid_charge_setpoints(5000, 0.0)
+
+        huawei_mock.write_ac_charging.assert_awaited_once_with(True)
+        huawei_mock.write_max_charge_power.assert_awaited_once_with(5000)
+
+    async def test_apply_grid_charge_setpoints_victron_positive_per_phase(self):
+        """_apply_grid_charge_setpoints uses POSITIVE per-phase watts for Victron (import, not export)."""
+        victron_mock = MagicMock()
+        victron_mock.read_system_state = MagicMock(return_value=_make_victron())
+        victron_mock.write_ac_power_setpoint = MagicMock()
+
+        orch = _make_orchestrator(victron_mock=victron_mock)
+        await orch._poll()
+        orch._victron_available = True
+        # Force huawei offline so only Victron path is taken
+        orch._huawei_available = False
+
+        await orch._apply_grid_charge_setpoints(0, 3000.0)
+
+        calls = victron_mock.write_ac_power_setpoint.call_args_list
+        assert len(calls) == 3
+        for call in calls:
+            phase, watts = call.args
+            assert watts > 0, (
+                f"Victron GRID_CHARGE must use POSITIVE (import) watts, got {watts} on phase {phase}"
+            )
+        # Each phase should be 1000.0 W (3000 / 3)
+        phase1 = next(c for c in calls if c.args[0] == 1)
+        assert phase1.args[1] == pytest.approx(1000.0)
+
+    async def test_apply_grid_charge_setpoints_victron_not_negative(self):
+        """Anti-regression: Victron setpoint must NOT be negative during GRID_CHARGE."""
+        victron_mock = MagicMock()
+        victron_mock.read_system_state = MagicMock(return_value=_make_victron())
+        victron_mock.write_ac_power_setpoint = MagicMock()
+
+        orch = _make_orchestrator(victron_mock=victron_mock)
+        await orch._poll()
+        orch._victron_available = True
+        orch._huawei_available = False
+
+        await orch._apply_grid_charge_setpoints(0, 6000.0)
+
+        for call in victron_mock.write_ac_power_setpoint.call_args_list:
+            _, watts = call.args
+            assert watts > 0, f"Victron must NOT use negative watts during GRID_CHARGE, got {watts}"
+
+    async def test_apply_grid_charge_setpoints_huawei_w_zero_disables_ac_charging(self):
+        """When huawei_w == 0 (LUNA target met), write_ac_charging(False) is called, not write_max_charge_power."""
+        huawei_mock = MagicMock()
+        huawei_mock.read_master = AsyncMock(return_value=_make_master())
+        huawei_mock.read_battery = AsyncMock(return_value=_make_battery())
+        huawei_mock.write_max_discharge_power = AsyncMock()
+        huawei_mock.write_ac_charging = AsyncMock()
+        huawei_mock.write_max_charge_power = AsyncMock()
+
+        orch = _make_orchestrator(huawei_mock=huawei_mock)
+        await orch._poll()
+        orch._huawei_available = True
+        orch._victron_available = False
+
+        await orch._apply_grid_charge_setpoints(0, 0.0)
+
+        huawei_mock.write_ac_charging.assert_awaited_once_with(False)
+        huawei_mock.write_max_charge_power.assert_not_called()
+
+    async def test_apply_grid_charge_setpoints_huawei_offline_no_huawei_writes(self):
+        """When Huawei is offline, _apply_grid_charge_setpoints skips all Huawei writes."""
+        huawei_mock = MagicMock()
+        huawei_mock.read_master = AsyncMock(return_value=_make_master())
+        huawei_mock.read_battery = AsyncMock(return_value=_make_battery())
+        huawei_mock.write_ac_charging = AsyncMock()
+        huawei_mock.write_max_charge_power = AsyncMock()
+
+        victron_mock = MagicMock()
+        victron_mock.read_system_state = MagicMock(return_value=_make_victron())
+        victron_mock.write_ac_power_setpoint = MagicMock()
+
+        orch = _make_orchestrator(huawei_mock=huawei_mock, victron_mock=victron_mock)
+        await orch._poll()
+        orch._huawei_available = False
+        orch._victron_available = True
+
+        await orch._apply_grid_charge_setpoints(0, 3000.0)
+
+        huawei_mock.write_ac_charging.assert_not_called()
+        huawei_mock.write_max_charge_power.assert_not_called()
+        assert victron_mock.write_ac_power_setpoint.call_count == 3
+
+    async def test_apply_grid_charge_setpoints_victron_offline_no_victron_writes(self):
+        """When Victron is offline, _apply_grid_charge_setpoints skips all Victron writes."""
+        huawei_mock = MagicMock()
+        huawei_mock.read_master = AsyncMock(return_value=_make_master())
+        huawei_mock.read_battery = AsyncMock(return_value=_make_battery())
+        huawei_mock.write_max_discharge_power = AsyncMock()
+        huawei_mock.write_ac_charging = AsyncMock()
+        huawei_mock.write_max_charge_power = AsyncMock()
+
+        victron_mock = MagicMock()
+        victron_mock.read_system_state = MagicMock(return_value=_make_victron())
+        victron_mock.write_ac_power_setpoint = MagicMock()
+
+        orch = _make_orchestrator(huawei_mock=huawei_mock, victron_mock=victron_mock)
+        await orch._poll()
+        orch._huawei_available = True
+        orch._victron_available = False
+
+        await orch._apply_grid_charge_setpoints(5000, 3000.0)
+
+        huawei_mock.write_ac_charging.assert_awaited_once_with(True)
+        huawei_mock.write_max_charge_power.assert_awaited_once_with(5000)
+        victron_mock.write_ac_power_setpoint.assert_not_called()
+
+    # ------------------------------------------------------------------
+    # _cleanup_grid_charge: slot-exit tests (T02)
+    # ------------------------------------------------------------------
+
+    async def test_cleanup_grid_charge_disables_ac_charging(self):
+        """_cleanup_grid_charge() calls write_ac_charging(False) when Huawei available."""
+        huawei_mock = MagicMock()
+        huawei_mock.read_master = AsyncMock(return_value=_make_master())
+        huawei_mock.read_battery = AsyncMock(return_value=_make_battery(max_charge_power_w=7200))
+        huawei_mock.write_max_discharge_power = AsyncMock()
+        huawei_mock.write_ac_charging = AsyncMock()
+        huawei_mock.write_max_charge_power = AsyncMock()
+
+        orch = _make_orchestrator(huawei_mock=huawei_mock)
+        await orch._poll()
+        orch._huawei_available = True
+        orch._victron_available = False
+
+        await orch._cleanup_grid_charge()
+
+        huawei_mock.write_ac_charging.assert_awaited_once_with(False)
+
+    async def test_cleanup_grid_charge_restores_max_charge_power(self):
+        """_cleanup_grid_charge() restores write_max_charge_power to battery.max_charge_power_w."""
+        bms_max = 7200
+        huawei_mock = MagicMock()
+        huawei_mock.read_master = AsyncMock(return_value=_make_master())
+        huawei_mock.read_battery = AsyncMock(return_value=_make_battery(max_charge_power_w=bms_max))
+        huawei_mock.write_max_discharge_power = AsyncMock()
+        huawei_mock.write_ac_charging = AsyncMock()
+        huawei_mock.write_max_charge_power = AsyncMock()
+
+        orch = _make_orchestrator(huawei_mock=huawei_mock)
+        await orch._poll()
+        orch._huawei_available = True
+        orch._victron_available = False
+
+        await orch._cleanup_grid_charge()
+
+        huawei_mock.write_max_charge_power.assert_awaited_once_with(bms_max)
+
+    async def test_cleanup_grid_charge_zeros_victron_setpoints(self):
+        """_cleanup_grid_charge() writes 0.0 to all three Victron phases."""
+        victron_mock = MagicMock()
+        victron_mock.read_system_state = MagicMock(return_value=_make_victron())
+        victron_mock.write_ac_power_setpoint = MagicMock()
+
+        orch = _make_orchestrator(victron_mock=victron_mock)
+        await orch._poll()
+        orch._huawei_available = False
+        orch._victron_available = True
+
+        await orch._cleanup_grid_charge()
+
+        calls = victron_mock.write_ac_power_setpoint.call_args_list
+        assert len(calls) == 3
+        phases_called = {c.args[0] for c in calls}
+        assert phases_called == {1, 2, 3}
+        for c in calls:
+            assert c.args[1] == pytest.approx(0.0), f"Expected 0.0 W on cleanup, got {c.args[1]}"
+
+    async def test_cleanup_triggered_on_grid_charge_to_idle_transition(self):
+        """_cleanup_grid_charge() is called when state transitions from GRID_CHARGE → IDLE."""
+        huawei_mock = MagicMock()
+        huawei_mock.read_master = AsyncMock(return_value=_make_master())
+        huawei_mock.read_battery = AsyncMock(return_value=_make_battery())
+        huawei_mock.write_max_discharge_power = AsyncMock()
+        huawei_mock.write_ac_charging = AsyncMock()
+        huawei_mock.write_max_charge_power = AsyncMock()
+
+        victron_mock = MagicMock()
+        victron_mock.read_system_state = MagicMock(return_value=_make_victron())
+        victron_mock.write_ac_power_setpoint = MagicMock()
+
+        orch = _make_orchestrator(huawei_mock=huawei_mock, victron_mock=victron_mock)
+        await orch._poll()
+        orch._huawei_available = True
+        orch._victron_available = True
+
+        # Simulate: previously in GRID_CHARGE, now transitioning to IDLE
+        orch._prev_control_state = ControlState.GRID_CHARGE
+        orch._control_state = ControlState.IDLE
+
+        await orch._apply_setpoints(0, 0.0)
+
+        # Cleanup must have fired: write_ac_charging(False) must be called
+        huawei_mock.write_ac_charging.assert_awaited_once_with(False)
+
+    async def test_cleanup_not_triggered_when_staying_in_idle(self):
+        """_cleanup_grid_charge() is NOT called when transitioning from IDLE → IDLE."""
+        huawei_mock = MagicMock()
+        huawei_mock.read_master = AsyncMock(return_value=_make_master())
+        huawei_mock.read_battery = AsyncMock(return_value=_make_battery())
+        huawei_mock.write_max_discharge_power = AsyncMock()
+        huawei_mock.write_ac_charging = AsyncMock()
+        huawei_mock.write_max_charge_power = AsyncMock()
+
+        orch = _make_orchestrator(huawei_mock=huawei_mock)
+        await orch._poll()
+        orch._huawei_available = True
+        orch._prev_control_state = ControlState.IDLE
+        orch._control_state = ControlState.IDLE
+
+        await orch._apply_setpoints(0, 0.0)
+
+        huawei_mock.write_ac_charging.assert_not_called()
+
+    # ------------------------------------------------------------------
+    # get_state().grid_charge_slot_active and full integration (T02)
+    # ------------------------------------------------------------------
+
+    async def test_get_state_grid_charge_slot_active_true_during_grid_charge(self):
+        """get_state().grid_charge_slot_active is True when orchestrator is in GRID_CHARGE."""
+        orch = _make_orchestrator()
+        await orch._poll()
+        orch._control_state = ControlState.GRID_CHARGE
+
+        state = orch._build_unified_state(5000, 0.0)
+
+        assert state.grid_charge_slot_active is True
+
+    async def test_full_integration_grid_charge_writes_correct_setpoints(self):
+        """Integration: poll + compute + apply with active slot writes write_ac_charging(True) + positive Victron."""
+        huawei_mock = MagicMock()
+        huawei_mock.read_master = AsyncMock(return_value=_make_master())
+        huawei_mock.read_battery = AsyncMock(return_value=_make_battery(total_soc_pct=70.0))
+        huawei_mock.write_max_discharge_power = AsyncMock()
+        huawei_mock.write_ac_charging = AsyncMock()
+        huawei_mock.write_max_charge_power = AsyncMock()
+
+        victron_mock = MagicMock()
+        victron_mock.read_system_state = MagicMock(return_value=_make_victron(battery_soc_pct=50.0))
+        victron_mock.write_ac_power_setpoint = MagicMock()
+
+        orch = _make_orchestrator(huawei_mock=huawei_mock, victron_mock=victron_mock)
+
+        slot = _make_charge_slot(battery="huawei", target_soc_pct=90.0, grid_charge_power_w=5000)
+        schedule = _make_schedule([slot])
+        orch.set_scheduler(_make_scheduler_mock(active_schedule=schedule))
+
+        await orch._poll()
+        huawei_w, victron_w = orch._compute_setpoints()
+        await orch._apply_setpoints(huawei_w, victron_w)
+
+        # Should have entered GRID_CHARGE with huawei_w=5000, victron_w=0
+        assert orch._control_state == ControlState.GRID_CHARGE
+        huawei_mock.write_ac_charging.assert_awaited_once_with(True)
+        huawei_mock.write_max_charge_power.assert_awaited_once_with(5000)
+        # Victron is available but victron_w == 0, so no Victron write
+        victron_mock.write_ac_power_setpoint.assert_not_called()
+
+        # Build state and verify grid_charge_slot_active
+        state = orch._build_unified_state(huawei_w, victron_w)
+        assert state.grid_charge_slot_active is True

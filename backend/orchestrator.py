@@ -625,10 +625,18 @@ class Orchestrator:
         huawei_delta = abs(huawei_w - self._last_huawei_setpoint)
         victron_delta = abs(victron_w - self._last_victron_setpoint)
 
+        # Capture previous state for slot-exit cleanup detection
+        prev_state = self._prev_control_state
+
         # GRID_CHARGE: bypass hysteresis, use dedicated apply method
         if self._control_state == ControlState.GRID_CHARGE:
             await self._apply_grid_charge_setpoints(huawei_w, victron_w)
+            self._prev_control_state = self._control_state  # track before early return
             return
+
+        # Slot-exit cleanup: fired on the first cycle after leaving GRID_CHARGE
+        if prev_state == ControlState.GRID_CHARGE and self._control_state != ControlState.GRID_CHARGE:
+            await self._cleanup_grid_charge()
 
         if (
             huawei_delta < self._cfg.hysteresis_w
@@ -672,10 +680,62 @@ class Orchestrator:
 
         # --- Phase imbalance check ---
         self._check_phase_imbalance(victron_w)
+        self._prev_control_state = self._control_state
 
     async def _apply_grid_charge_setpoints(self, huawei_w: int, victron_w: float) -> None:
-        """Apply grid charge setpoints to both drivers. (Implemented in T02.)"""
-        pass
+        """Write grid charge setpoints: Huawei AC enable + power limit, Victron import."""
+        # Huawei: enable grid charging + set power limit every cycle (BMS may reset flag)
+        if self._huawei_available:
+            if huawei_w > 0:
+                try:
+                    await self._huawei.write_ac_charging(True)
+                    await self._huawei.write_max_charge_power(huawei_w)
+                    logger.debug("GRID_CHARGE Huawei: ac_charging=True power=%d W", huawei_w)
+                except Exception as exc:
+                    logger.warning("GRID_CHARGE Huawei write failed (%s): %s", type(exc).__name__, exc)
+            else:
+                # LUNA target met — disable AC charging for Huawei
+                try:
+                    await self._huawei.write_ac_charging(False)
+                    logger.debug("GRID_CHARGE Huawei: ac_charging=False (target met)")
+                except Exception as exc:
+                    logger.warning("GRID_CHARGE Huawei disable failed (%s): %s", type(exc).__name__, exc)
+
+        # Victron: positive per-phase setpoint = import from grid (NOT negative)
+        if self._victron_available and victron_w > 0:
+            per_phase_w = +(victron_w / 3.0)   # POSITIVE = grid import
+            try:
+                for phase in (1, 2, 3):
+                    self._victron.write_ac_power_setpoint(phase, per_phase_w)
+                logger.debug(
+                    "GRID_CHARGE Victron: per_phase=+%.0f W (total %.0f W import)",
+                    per_phase_w,
+                    victron_w,
+                )
+            except Exception as exc:
+                logger.warning("GRID_CHARGE Victron write failed (%s): %s", type(exc).__name__, exc)
+
+    async def _cleanup_grid_charge(self) -> None:
+        """Disable grid charging and restore default limits on slot exit."""
+        logger.info("GRID_CHARGE slot ended — disabling AC charging and restoring limits")
+        if self._huawei_available:
+            try:
+                await self._huawei.write_ac_charging(False)
+                # Restore BMS-reported max charge power limit
+                await self._huawei.write_max_charge_power(self._last_battery.max_charge_power_w)
+                logger.debug(
+                    "GRID_CHARGE cleanup: Huawei ac_charging=False, max_charge=%d W restored",
+                    self._last_battery.max_charge_power_w,
+                )
+            except Exception as exc:
+                logger.warning("GRID_CHARGE cleanup Huawei failed (%s): %s", type(exc).__name__, exc)
+        if self._victron_available:
+            try:
+                for phase in (1, 2, 3):
+                    self._victron.write_ac_power_setpoint(phase, 0.0)
+                logger.debug("GRID_CHARGE cleanup: Victron setpoints zeroed")
+            except Exception as exc:
+                logger.warning("GRID_CHARGE cleanup Victron failed (%s): %s", type(exc).__name__, exc)
 
     def _check_phase_imbalance(self, victron_setpoint_w: float) -> None:
         """Detect and log phase imbalance after writing Victron setpoints.

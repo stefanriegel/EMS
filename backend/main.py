@@ -180,6 +180,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     await orchestrator.start()
     logger.info("Orchestrator control loop started")
+    orchestrator.set_scheduler(scheduler)
+    logger.info("Orchestrator: scheduler wired for GRID_CHARGE slot detection")
 
     # Store on app.state so the DI layer can retrieve it
     app.state.orchestrator = orchestrator
