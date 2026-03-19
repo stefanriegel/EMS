@@ -43,6 +43,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 from fastapi import FastAPI
+from starlette.staticfiles import StaticFiles
 
 from backend.api import api_router
 from backend.config import HuaweiConfig, InfluxConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig
@@ -126,8 +127,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     await huawei.connect()
     logger.info("Huawei driver connected")
-    await victron.connect()
-    logger.info("Victron driver connected")
+    try:
+        await victron.connect()
+        logger.info("Victron driver connected")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Victron driver failed to connect — running without Victron: %s", exc)
 
     # --- Instantiate tariff engine ---
     tariff_cfg = TariffConfig.from_env()
@@ -204,6 +208,18 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     app.include_router(api_router)
+
+    # Mount the React SPA build artifacts.  The os.path.exists guard is
+    # mandatory: without it, uvicorn raises RuntimeError at startup in CI or
+    # dev environments where `npm run build` hasn't been run yet.  The mount
+    # MUST come after include_router so /api/* and /ws/* routes take
+    # precedence over the catch-all SPA fallback.
+    if os.path.exists("frontend/dist"):
+        app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="static")
+        logger.info("StaticFiles mounted — serving React SPA from frontend/dist")
+    else:
+        logger.warning("frontend/dist not found — React SPA not mounted (run `cd frontend && npm run build`)")
+
     return app
 
 
