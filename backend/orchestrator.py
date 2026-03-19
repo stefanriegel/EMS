@@ -147,20 +147,9 @@ class Orchestrator:
         self._phase_imbalance_cycles: int = 0
 
         # --- Published state snapshot ---
-        self._current_state: UnifiedPoolState = UnifiedPoolState(
-            combined_soc_pct=0.0,
-            huawei_soc_pct=0.0,
-            victron_soc_pct=0.0,
-            huawei_available=False,
-            victron_available=False,
-            control_state=ControlState.IDLE,
-            huawei_discharge_setpoint_w=0,
-            victron_discharge_setpoint_w=0,
-            combined_power_w=0.0,
-            huawei_charge_headroom_w=0,
-            victron_charge_headroom_w=0.0,
-            timestamp=time.monotonic(),
-        )
+        # Initialised to None — get_state() returns None until the first poll
+        # cycle completes.  The API layer returns HTTP 503 while this is None.
+        self._current_state: UnifiedPoolState | None = None
 
         # --- Background task ---
         self._task: asyncio.Task | None = None  # type: ignore[type-arg]
@@ -195,8 +184,9 @@ class Orchestrator:
         await self._apply_safe_setpoints()
         logger.info("Orchestrator stopped; safe setpoints applied")
 
-    def get_state(self) -> UnifiedPoolState:
-        """Return the most recent unified pool state snapshot."""
+    def get_state(self) -> UnifiedPoolState | None:
+        """Return the most recent unified pool state snapshot, or None if the
+        first poll cycle has not yet completed."""
         return self._current_state
 
     def get_last_error(self) -> str | None:
@@ -204,6 +194,20 @@ class Orchestrator:
         if self._huawei_error:
             return self._huawei_error
         return self._victron_error
+
+    @property
+    def sys_config(self) -> SystemConfig:
+        """Return the current system configuration (SoC limits, feed-in rules)."""
+        return self._sys
+
+    @sys_config.setter
+    def sys_config(self, value: SystemConfig) -> None:
+        """Update the system configuration at runtime.
+
+        Takes effect on the next control cycle.  Thread-safe for read/write
+        of a single Python reference (GIL-protected assignment).
+        """
+        self._sys = value
 
     # ------------------------------------------------------------------
     # Control loop

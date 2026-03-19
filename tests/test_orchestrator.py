@@ -832,12 +832,10 @@ class TestVictronWriteConvention:
 # ---------------------------------------------------------------------------
 
 class TestPublicInterface:
-    def test_get_state_returns_unified_pool_state(self):
-        """get_state() must return a UnifiedPoolState at all times."""
-        from backend.unified_model import UnifiedPoolState
+    def test_get_state_returns_none_before_first_cycle(self):
+        """get_state() returns None before the first poll cycle completes."""
         orch = _make_orchestrator()
-        state = orch.get_state()
-        assert isinstance(state, UnifiedPoolState)
+        assert orch.get_state() is None
 
     def test_get_last_error_none_initially(self):
         """get_last_error() is None before any driver failure."""

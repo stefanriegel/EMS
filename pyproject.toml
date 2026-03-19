@@ -16,6 +16,7 @@ dev = [
     "anyio[trio]",
     "pytest-anyio",
     "pytest-mock",
+    "httpx",
 ]
 
 [tool.pytest.ini_options]
