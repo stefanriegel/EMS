@@ -13,6 +13,7 @@
 import React, { useState } from "react";
 import { useEmsSocket } from "./hooks/useEmsSocket";
 import { useEmsState } from "./hooks/useEmsState";
+import { EnergyFlowCard } from "./components/EnergyFlowCard";
 import { PoolOverview } from "./components/PoolOverview";
 import { DeviceDetail } from "./components/DeviceDetail";
 import { TariffCard } from "./components/TariffCard";
@@ -93,6 +94,7 @@ export default function App() {
         )}
 
         <div className="dashboard-grid">
+          <EnergyFlowCard pool={pool} devices={devices} />
           <PoolOverview pool={pool ?? null} connected={ws.connected} />
           <DeviceDetail devices={devices} />
           <TariffCard tariff={tariff} />

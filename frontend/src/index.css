@@ -516,3 +516,60 @@ html, body {
   font-size: 0.82rem;
 }
 
+/* ── EnergyFlowCard ────────────────────────────────────────────────────── */
+
+/* Full-width on every viewport size — energy flow is the hero card */
+.energy-flow-card {
+  grid-column: 1 / -1;
+}
+
+@keyframes flow-particle {
+  from { stroke-dashoffset: 0; }
+  to   { stroke-dashoffset: -24; }
+}
+
+.flow-path {
+  fill: none;
+  stroke: var(--bg-card-border);
+  stroke-width: 2;
+  stroke-dasharray: 4 12;
+  opacity: 0.4;
+}
+
+.flow-path--active {
+  opacity: 1;
+  animation: flow-particle 0.9s linear infinite;
+}
+
+/* stroke colour for active paths is applied inline via the stroke attribute */
+
+.soc-arc {
+  fill: none;
+  stroke: var(--color-battery);
+  stroke-width: 4;
+  transition: stroke-dashoffset 0.6s ease;
+}
+
+.node-label {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  fill: var(--text-secondary);
+  text-anchor: middle;
+}
+
+.node-value {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
+  fill: var(--text-primary);
+  text-anchor: middle;
+}
+
+.energy-flow-connecting {
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-style: italic;
+  margin-top: 0.5rem;
+}
+
