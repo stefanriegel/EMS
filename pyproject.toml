@@ -8,6 +8,7 @@ dependencies = [
     "fastapi",
     "uvicorn[standard]",
     "paho-mqtt>=2.1",
+    "influxdb-client[async]>=1.45",
 ]
 
 [project.optional-dependencies]

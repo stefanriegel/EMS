@@ -178,6 +178,47 @@ class OrchestratorConfig:
 
 
 @dataclass
+class InfluxConfig:
+    """Connection config for the InfluxDB time-series database.
+
+    All fields have safe defaults so unit tests run without any environment
+    variables set.  The token default ``"test-token"`` is intentionally
+    non-functional for a real InfluxDB instance — tests mock the client.
+
+    Attributes:
+        url:    HTTP(S) base URL of the InfluxDB instance (default: localhost).
+        token:  Authentication token — never logged.
+        org:    InfluxDB organisation name.
+        bucket: Target bucket for EMS measurements.
+
+    Environment variables:
+        ``INFLUXDB_URL``    — base URL (default ``http://localhost:8086``).
+        ``INFLUXDB_TOKEN``  — auth token (default ``test-token``).
+        ``INFLUXDB_ORG``    — organisation (default ``ems``).
+        ``INFLUXDB_BUCKET`` — bucket (default ``ems``).
+    """
+
+    url: str = "http://localhost:8086"
+    token: str = "test-token"
+    org: str = "ems"
+    bucket: str = "ems"
+
+    @classmethod
+    def from_env(cls) -> "InfluxConfig":
+        """Construct an :class:`InfluxConfig` from environment variables.
+
+        All fields fall back to safe defaults when the corresponding
+        environment variable is absent — **no env vars are required**.
+        """
+        return cls(
+            url=os.environ.get("INFLUXDB_URL", "http://localhost:8086"),
+            token=os.environ.get("INFLUXDB_TOKEN", "test-token"),
+            org=os.environ.get("INFLUXDB_ORG", "ems"),
+            bucket=os.environ.get("INFLUXDB_BUCKET", "ems"),
+        )
+
+
+@dataclass
 class TariffConfig:
     """Combined Octopus Go supply tariff and §14a EnWG Modul 3 grid-fee config.
 
