@@ -45,11 +45,13 @@ from typing import AsyncGenerator
 from fastapi import FastAPI
 
 from backend.api import api_router
-from backend.config import HuaweiConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig
+from backend.config import HuaweiConfig, InfluxConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig
 from backend.drivers.huawei_driver import HuaweiDriver
 from backend.drivers.victron_driver import VictronDriver
+from backend.influx_writer import InfluxMetricsWriter
 from backend.orchestrator import Orchestrator
 from backend.tariff import CompositeTariffEngine
+from influxdb_client.client.influxdb_client_async import InfluxDBClientAsync
 
 logger = logging.getLogger(__name__)
 
@@ -126,14 +128,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await victron.connect()
     logger.info("Victron driver connected")
 
-    # --- Start orchestrator ---
-    orchestrator = Orchestrator(huawei, victron, sys_cfg, orch_cfg)
-    await orchestrator.start()
-    logger.info("Orchestrator control loop started")
-
-    # Store on app.state so the DI layer can retrieve it
-    app.state.orchestrator = orchestrator
-
     # --- Instantiate tariff engine ---
     tariff_cfg = TariffConfig.from_env()
     tariff_engine = CompositeTariffEngine(
@@ -147,11 +141,35 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         len(tariff_cfg.modul3.windows),
     )
 
+    # --- Instantiate InfluxDB client and metrics writer ---
+    influx_cfg = InfluxConfig.from_env()
+    influx_client = InfluxDBClientAsync(
+        url=influx_cfg.url, token=influx_cfg.token, org=influx_cfg.org
+    )
+    metrics_writer = InfluxMetricsWriter(influx_client, influx_cfg.bucket)
+    logger.info(
+        "InfluxDB client connected — url=%s org=%s", influx_cfg.url, influx_cfg.org
+    )
+
+    # --- Start orchestrator ---
+    orchestrator = Orchestrator(
+        huawei, victron, sys_cfg, orch_cfg,
+        writer=metrics_writer,
+        tariff_engine=tariff_engine,
+    )
+    await orchestrator.start()
+    logger.info("Orchestrator control loop started")
+
+    # Store on app.state so the DI layer can retrieve it
+    app.state.orchestrator = orchestrator
+    app.state.metrics_reader = None  # placeholder for T03
+
     yield  # application is running
 
     # --- Shutdown ---
     logger.info("EMS shutting down — stopping orchestrator")
     await orchestrator.stop()
+    await influx_client.close()
     logger.info("Disconnecting Victron driver")
     await victron.close()
     logger.info("Disconnecting Huawei driver")
