@@ -49,3 +49,43 @@ class HuaweiConfig:
             master_slave_id=int(os.environ.get("HUAWEI_MASTER_SLAVE_ID", "0")),
             slave_slave_id=int(os.environ.get("HUAWEI_SLAVE_SLAVE_ID", "2")),
         )
+
+
+@dataclass
+class VictronConfig:
+    """Connection config for the Victron Multiplus II MQTT broker.
+
+    Attributes:
+        host: IP or hostname of the Venus OS MQTT broker.
+        port: TCP port (default 1883).
+        timeout_s: Per-operation timeout in seconds (default 10.0).
+        discovery_timeout_s: Maximum time to wait for portalId/instanceId
+            discovery via the MQTT keep-alive topic (default 15.0).
+
+    Environment variables:
+        ``VICTRON_HOST`` — hostname or IP address of the MQTT broker (required).
+        ``VICTRON_PORT`` — TCP port (optional, default 1883).
+    """
+
+    host: str
+    port: int = 1883
+    timeout_s: float = 10.0
+    discovery_timeout_s: float = 15.0
+
+    @classmethod
+    def from_env(cls) -> "VictronConfig":
+        """Construct a :class:`VictronConfig` from environment variables.
+
+        Required:
+            ``VICTRON_HOST`` — hostname or IP of the Venus OS MQTT broker.
+
+        Optional (with defaults):
+            ``VICTRON_PORT`` — TCP port (default 1883).
+
+        Raises:
+            KeyError: if ``VICTRON_HOST`` is not set.
+        """
+        return cls(
+            host=os.environ["VICTRON_HOST"],
+            port=int(os.environ.get("VICTRON_PORT", "1883")),
+        )
