@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING
 from backend.config import OrchestratorConfig, SystemConfig
 from backend.drivers.huawei_models import HuaweiBatteryData
 from backend.drivers.victron_models import VictronSystemData
+from backend.notifier import ALERT_COMM_FAILURE, ALERT_DISCHARGE_LOCKED, ALERT_DISCHARGE_RELEASED
 from backend.unified_model import ControlState, UnifiedPoolState
 
 if TYPE_CHECKING:
@@ -40,6 +41,7 @@ if TYPE_CHECKING:
     from backend.drivers.victron_driver import VictronDriver
     from backend.evcc_mqtt_driver import EvccMqttDriver
     from backend.influx_writer import InfluxMetricsWriter
+    from backend.notifier import TelegramNotifier
     from backend.scheduler import Scheduler
     from backend.tariff import CompositeTariffEngine
 
@@ -158,6 +160,9 @@ class Orchestrator:
         self._evcc_monitor: "EvccMqttDriver | None" = None
         self._evcc_battery_mode: str = "normal"
 
+        # --- Telegram notifier reference (injected via set_notifier) ---
+        self._notifier: "TelegramNotifier | None" = None
+
         # --- Phase imbalance detection ---
         # Counts consecutive cycles where any phase deviates > 500W from setpoint
         self._phase_imbalance_cycles: int = 0
@@ -220,6 +225,11 @@ class Orchestrator:
         """Inject the EvccMqttDriver for batteryMode monitoring."""
         self._evcc_monitor = driver
         logger.info("Orchestrator.set_evcc_monitor: EVCC MQTT driver wired")
+
+    def set_notifier(self, notifier: "TelegramNotifier") -> None:
+        """Inject the TelegramNotifier for state-transition alerts."""
+        self._notifier = notifier
+        logger.info("Orchestrator.set_notifier: notifier wired")
 
     # ------------------------------------------------------------------
     # GRID_CHARGE slot detection
@@ -316,15 +326,48 @@ class Orchestrator:
     # Control loop
     # ------------------------------------------------------------------
 
+    async def _notify_state_transition(
+        self, prev: ControlState | None, current: ControlState
+    ) -> None:
+        """Fire a Telegram alert on meaningful state transitions.
+
+        Called once per cycle after ``_build_unified_state()``.  Silent when
+        ``_notifier`` is None (notifier not wired).
+        """
+        if self._notifier is None:
+            return
+        if prev != ControlState.DISCHARGE_LOCKED and current == ControlState.DISCHARGE_LOCKED:
+            await self._notifier.send_alert(
+                ALERT_DISCHARGE_LOCKED,
+                "⚡ <b>Discharge LOCKED</b> — EVCC batteryMode=hold. Battery discharging suspended.",
+            )
+        elif prev == ControlState.DISCHARGE_LOCKED and current != ControlState.DISCHARGE_LOCKED:
+            await self._notifier.send_alert(
+                ALERT_DISCHARGE_RELEASED,
+                "✅ <b>Discharge RELEASED</b> — EVCC batteryMode no longer hold. Normal operation resumed.",
+            )
+        elif (
+            current == ControlState.HOLD
+            and prev != ControlState.HOLD
+            and not self._huawei_available
+            and not self._victron_available
+        ):
+            await self._notifier.send_alert(
+                ALERT_COMM_FAILURE,
+                "🔴 <b>Comm failure</b> — both Huawei and Victron drivers offline. Pool in HOLD.",
+            )
+
     async def _run(self) -> None:
         """Main async control loop — runs until cancelled."""
         while True:
             cycle_start = time.monotonic()
             try:
                 await self._poll()
+                prev_state = self._control_state          # capture before compute
                 huawei_w, victron_w = self._compute_setpoints()
                 await self._apply_setpoints(huawei_w, victron_w)
                 self._current_state = self._build_unified_state(huawei_w, victron_w)
+                await self._notify_state_transition(prev_state, self._control_state)
 
                 if self._writer is not None:
                     await self._writer.write_system_state(self._current_state)

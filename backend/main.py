@@ -227,6 +227,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     else:
         logger.info("Telegram notifier disabled — TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set")
     app.state.notifier = notifier
+    if notifier is not None:
+        orchestrator.set_notifier(notifier)
+        logger.info("Orchestrator: Telegram notifier wired")
 
     # --- HA REST client ---
     ha_rest_cfg = HaRestConfig.from_env()

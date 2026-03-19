@@ -1854,3 +1854,126 @@ class TestDischargeLock:
     def test_control_state_enum_value(self):
         """ControlState.DISCHARGE_LOCKED.value is the bare string 'DISCHARGE_LOCKED' (K009)."""
         assert ControlState.DISCHARGE_LOCKED.value == "DISCHARGE_LOCKED"
+
+
+# ---------------------------------------------------------------------------
+# Tests: Telegram notifier wiring
+# ---------------------------------------------------------------------------
+
+class TestTelegramWiring:
+    """Verify TelegramNotifier injection and state-transition alert firing.
+
+    Tests call ``_notify_state_transition()`` directly to avoid timing
+    complexity of running full ``_run()`` loops.
+    """
+
+    def test_set_notifier_stores_reference(self):
+        """set_notifier() stores the notifier on _notifier."""
+        orch = _make_orchestrator()
+        mock_notifier = AsyncMock()
+        orch.set_notifier(mock_notifier)
+        assert orch._notifier is mock_notifier
+
+    async def test_notifier_none_does_not_raise(self):
+        """When _notifier is None, _notify_state_transition() is silent."""
+        orch = _make_orchestrator()
+        # _notifier is None by default — must not raise
+        await orch._notify_state_transition(None, ControlState.DISCHARGE_LOCKED)
+        await orch._notify_state_transition(ControlState.IDLE, ControlState.DISCHARGE_LOCKED)
+
+    async def test_discharge_locked_transition_sends_alert(self):
+        """Transitioning to DISCHARGE_LOCKED fires ALERT_DISCHARGE_LOCKED."""
+        from backend.notifier import ALERT_DISCHARGE_LOCKED
+
+        orch = _make_orchestrator()
+        mock_notifier = AsyncMock()
+        orch.set_notifier(mock_notifier)
+
+        await orch._notify_state_transition(ControlState.IDLE, ControlState.DISCHARGE_LOCKED)
+
+        mock_notifier.send_alert.assert_called_once()
+        call_args = mock_notifier.send_alert.call_args
+        assert call_args[0][0] == ALERT_DISCHARGE_LOCKED
+
+    async def test_discharge_released_transition_sends_alert(self):
+        """Transitioning out of DISCHARGE_LOCKED fires ALERT_DISCHARGE_RELEASED."""
+        from backend.notifier import ALERT_DISCHARGE_RELEASED
+
+        orch = _make_orchestrator()
+        mock_notifier = AsyncMock()
+        orch.set_notifier(mock_notifier)
+
+        await orch._notify_state_transition(ControlState.DISCHARGE_LOCKED, ControlState.IDLE)
+
+        mock_notifier.send_alert.assert_called_once()
+        call_args = mock_notifier.send_alert.call_args
+        assert call_args[0][0] == ALERT_DISCHARGE_RELEASED
+
+    async def test_comm_failure_transition_sends_alert(self):
+        """Transitioning to HOLD with both drivers unavailable fires ALERT_COMM_FAILURE."""
+        from backend.notifier import ALERT_COMM_FAILURE
+
+        orch = _make_orchestrator()
+        mock_notifier = AsyncMock()
+        orch.set_notifier(mock_notifier)
+        orch._huawei_available = False
+        orch._victron_available = False
+
+        await orch._notify_state_transition(ControlState.IDLE, ControlState.HOLD)
+
+        mock_notifier.send_alert.assert_called_once()
+        call_args = mock_notifier.send_alert.call_args
+        assert call_args[0][0] == ALERT_COMM_FAILURE
+
+    async def test_comm_failure_only_on_transition_not_repeat_hold(self):
+        """No alert when already in HOLD — comm-failure fires only on transition."""
+        orch = _make_orchestrator()
+        mock_notifier = AsyncMock()
+        orch.set_notifier(mock_notifier)
+        orch._huawei_available = False
+        orch._victron_available = False
+
+        # Already in HOLD (prev == HOLD) — no alert expected
+        await orch._notify_state_transition(ControlState.HOLD, ControlState.HOLD)
+
+        mock_notifier.send_alert.assert_not_called()
+
+    async def test_comm_failure_not_fired_when_drivers_available(self):
+        """HOLD transition with drivers still available does NOT fire comm-failure alert."""
+        orch = _make_orchestrator()
+        mock_notifier = AsyncMock()
+        orch.set_notifier(mock_notifier)
+        # Drivers are available — HOLD must be from min-SoC, not comm failure
+        orch._huawei_available = True
+        orch._victron_available = False
+
+        await orch._notify_state_transition(ControlState.IDLE, ControlState.HOLD)
+
+        mock_notifier.send_alert.assert_not_called()
+
+    async def test_no_alert_for_non_transition_states(self):
+        """Transitions between non-alert states (IDLE→DISCHARGE) fire no alert."""
+        orch = _make_orchestrator()
+        mock_notifier = AsyncMock()
+        orch.set_notifier(mock_notifier)
+
+        await orch._notify_state_transition(ControlState.IDLE, ControlState.DISCHARGE)
+        await orch._notify_state_transition(ControlState.DISCHARGE, ControlState.IDLE)
+        await orch._notify_state_transition(ControlState.IDLE, ControlState.GRID_CHARGE)
+
+        mock_notifier.send_alert.assert_not_called()
+
+    async def test_discharge_locked_alert_not_fired_when_already_locked(self):
+        """No DISCHARGE_LOCKED alert when transitioning DISCHARGE_LOCKED → DISCHARGE_LOCKED."""
+        from backend.notifier import ALERT_DISCHARGE_LOCKED
+
+        orch = _make_orchestrator()
+        mock_notifier = AsyncMock()
+        orch.set_notifier(mock_notifier)
+
+        await orch._notify_state_transition(
+            ControlState.DISCHARGE_LOCKED, ControlState.DISCHARGE_LOCKED
+        )
+
+        mock_notifier.send_alert.assert_not_called()
+
