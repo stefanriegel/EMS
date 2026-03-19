@@ -1038,3 +1038,446 @@ class TestPhaseImbalance:
         orch._check_phase_imbalance(3000.0)
 
         assert orch._phase_imbalance_cycles == 0
+
+
+# ---------------------------------------------------------------------------
+# Helpers for TestGridCharge
+# ---------------------------------------------------------------------------
+
+def _make_charge_slot(
+    battery: str = "huawei",
+    target_soc_pct: float = 90.0,
+    grid_charge_power_w: int = 5000,
+    offset_minutes: float = 30.0,
+    duration_minutes: float = 60.0,
+):
+    """Create a ChargeSlot centred on the current UTC time.
+
+    The slot starts ``offset_minutes`` ago and runs for ``duration_minutes``.
+    Default: started 30 min ago, ends in 30 min -> currently active.
+    """
+    from datetime import datetime, timedelta, timezone
+    from backend.schedule_models import ChargeSlot
+
+    now = datetime.now(tz=timezone.utc)
+    start_utc = now - timedelta(minutes=offset_minutes)
+    end_utc = start_utc + timedelta(minutes=duration_minutes)
+    return ChargeSlot(
+        battery=battery,
+        target_soc_pct=target_soc_pct,
+        start_utc=start_utc,
+        end_utc=end_utc,
+        grid_charge_power_w=grid_charge_power_w,
+    )
+
+
+def _make_schedule(slots: list, stale: bool = False):
+    """Create a minimal ChargeSchedule for testing."""
+    from datetime import datetime, timezone
+    from backend.schedule_models import ChargeSchedule, OptimizationReasoning
+
+    reasoning = OptimizationReasoning(
+        text="test schedule",
+        tomorrow_solar_kwh=0.0,
+        expected_consumption_kwh=0.0,
+        charge_energy_kwh=0.0,
+        cost_estimate_eur=0.0,
+    )
+    return ChargeSchedule(
+        slots=slots,
+        reasoning=reasoning,
+        computed_at=datetime.now(tz=timezone.utc),
+        stale=stale,
+    )
+
+
+def _make_scheduler_mock(active_schedule=None, stale: bool = False) -> MagicMock:
+    """Return a MagicMock mimicking a Scheduler instance."""
+    scheduler = MagicMock()
+    scheduler.active_schedule = active_schedule
+    scheduler.schedule_stale = stale
+    return scheduler
+
+
+# ---------------------------------------------------------------------------
+# Tests: GRID_CHARGE state machine
+# ---------------------------------------------------------------------------
+
+class TestGridCharge:
+    """Unit tests for _active_charge_slot(), set_scheduler(), and the
+    GRID_CHARGE branch in _compute_setpoints() / _apply_setpoints()."""
+
+    # ------------------------------------------------------------------
+    # set_scheduler
+    # ------------------------------------------------------------------
+
+    def test_set_scheduler_stores_reference(self):
+        """set_scheduler() must store the scheduler on self._scheduler."""
+        orch = _make_orchestrator()
+        scheduler = _make_scheduler_mock()
+        orch.set_scheduler(scheduler)
+        assert orch._scheduler is scheduler
+
+    def test_set_scheduler_overwrites_previous(self):
+        """Calling set_scheduler() twice replaces the previous reference."""
+        orch = _make_orchestrator()
+        s1 = _make_scheduler_mock()
+        s2 = _make_scheduler_mock()
+        orch.set_scheduler(s1)
+        orch.set_scheduler(s2)
+        assert orch._scheduler is s2
+
+    # ------------------------------------------------------------------
+    # _active_charge_slot: guard cases returning None
+    # ------------------------------------------------------------------
+
+    def test_active_charge_slot_returns_none_when_no_scheduler(self):
+        """_active_charge_slot() returns None when scheduler not injected."""
+        orch = _make_orchestrator()
+        assert orch._scheduler is None
+        assert orch._active_charge_slot() is None
+
+    def test_active_charge_slot_returns_none_when_schedule_is_none(self):
+        """_active_charge_slot() returns None when active_schedule is None."""
+        orch = _make_orchestrator()
+        scheduler = _make_scheduler_mock(active_schedule=None)
+        orch.set_scheduler(scheduler)
+        assert orch._active_charge_slot() is None
+
+    def test_active_charge_slot_returns_none_when_schedule_is_stale(self):
+        """_active_charge_slot() returns None when schedule.stale is True."""
+        orch = _make_orchestrator()
+        slot = _make_charge_slot()
+        schedule = _make_schedule([slot], stale=True)
+        scheduler = _make_scheduler_mock(active_schedule=schedule)
+        orch.set_scheduler(scheduler)
+        assert orch._active_charge_slot() is None
+
+    def test_active_charge_slot_returns_none_when_slot_not_yet_started(self):
+        """_active_charge_slot() returns None when current time is before slot.start_utc."""
+        from datetime import datetime, timedelta, timezone
+        from backend.schedule_models import ChargeSlot
+
+        orch = _make_orchestrator()
+        now = datetime.now(tz=timezone.utc)
+        future_start = now + timedelta(minutes=10)
+        future_end = now + timedelta(minutes=70)
+        slot = ChargeSlot(
+            battery="huawei",
+            target_soc_pct=90.0,
+            start_utc=future_start,
+            end_utc=future_end,
+            grid_charge_power_w=5000,
+        )
+        schedule = _make_schedule([slot])
+        orch.set_scheduler(_make_scheduler_mock(active_schedule=schedule))
+        assert orch._active_charge_slot() is None
+
+    def test_active_charge_slot_returns_none_when_slot_already_ended(self):
+        """_active_charge_slot() returns None when current time is at or after slot.end_utc."""
+        from datetime import datetime, timedelta, timezone
+        from backend.schedule_models import ChargeSlot
+
+        orch = _make_orchestrator()
+        now = datetime.now(tz=timezone.utc)
+        past_start = now - timedelta(minutes=120)
+        past_end = now - timedelta(minutes=60)
+        slot = ChargeSlot(
+            battery="huawei",
+            target_soc_pct=90.0,
+            start_utc=past_start,
+            end_utc=past_end,
+            grid_charge_power_w=5000,
+        )
+        schedule = _make_schedule([slot])
+        orch.set_scheduler(_make_scheduler_mock(active_schedule=schedule))
+        assert orch._active_charge_slot() is None
+
+    def test_active_charge_slot_returns_none_when_huawei_soc_target_met(self):
+        """_active_charge_slot() returns None when huawei SoC >= slot.target_soc_pct."""
+        orch = _make_orchestrator()
+        orch._last_battery = _make_battery(total_soc_pct=90.0)
+        slot = _make_charge_slot(battery="huawei", target_soc_pct=90.0)
+        schedule = _make_schedule([slot])
+        orch.set_scheduler(_make_scheduler_mock(active_schedule=schedule))
+        assert orch._active_charge_slot() is None
+
+    def test_active_charge_slot_returns_none_when_huawei_soc_above_target(self):
+        """_active_charge_slot() returns None when huawei SoC > target."""
+        orch = _make_orchestrator()
+        orch._last_battery = _make_battery(total_soc_pct=95.0)
+        slot = _make_charge_slot(battery="huawei", target_soc_pct=90.0)
+        schedule = _make_schedule([slot])
+        orch.set_scheduler(_make_scheduler_mock(active_schedule=schedule))
+        assert orch._active_charge_slot() is None
+
+    def test_active_charge_slot_returns_slot_when_within_window_below_target(self):
+        """_active_charge_slot() returns the slot when within window and below target SoC."""
+        orch = _make_orchestrator()
+        orch._last_battery = _make_battery(total_soc_pct=70.0)
+        slot = _make_charge_slot(battery="huawei", target_soc_pct=90.0)
+        schedule = _make_schedule([slot])
+        orch.set_scheduler(_make_scheduler_mock(active_schedule=schedule))
+        result = orch._active_charge_slot()
+        assert result is slot
+
+    def test_active_charge_slot_returns_slot_when_soc_just_below_target(self):
+        """Edge: SoC just below target should still return the slot."""
+        orch = _make_orchestrator()
+        orch._last_battery = _make_battery(total_soc_pct=89.9)
+        slot = _make_charge_slot(battery="huawei", target_soc_pct=90.0)
+        schedule = _make_schedule([slot])
+        orch.set_scheduler(_make_scheduler_mock(active_schedule=schedule))
+        assert orch._active_charge_slot() is slot
+
+    def test_active_charge_slot_victron_slot_returned_when_active(self):
+        """_active_charge_slot() returns a victron slot when within window and below target."""
+        orch = _make_orchestrator()
+        orch._last_victron = _make_victron(battery_soc_pct=50.0)
+        slot = _make_charge_slot(battery="victron", target_soc_pct=90.0)
+        schedule = _make_schedule([slot])
+        orch.set_scheduler(_make_scheduler_mock(active_schedule=schedule))
+        assert orch._active_charge_slot() is slot
+
+    def test_active_charge_slot_victron_returns_none_when_target_met(self):
+        """_active_charge_slot() returns None when victron SoC >= slot target."""
+        orch = _make_orchestrator()
+        orch._last_victron = _make_victron(battery_soc_pct=92.0)
+        slot = _make_charge_slot(battery="victron", target_soc_pct=90.0)
+        schedule = _make_schedule([slot])
+        orch.set_scheduler(_make_scheduler_mock(active_schedule=schedule))
+        assert orch._active_charge_slot() is None
+
+    def test_active_charge_slot_first_met_skipped_second_returned(self):
+        """When first slot target is met, _active_charge_slot() checks the next slot."""
+        orch = _make_orchestrator()
+        orch._last_battery = _make_battery(total_soc_pct=92.0)
+        orch._last_victron = _make_victron(battery_soc_pct=50.0)
+        slot1 = _make_charge_slot(battery="huawei", target_soc_pct=90.0)
+        slot2 = _make_charge_slot(battery="victron", target_soc_pct=90.0)
+        schedule = _make_schedule([slot1, slot2])
+        orch.set_scheduler(_make_scheduler_mock(active_schedule=schedule))
+        result = orch._active_charge_slot()
+        assert result is slot2
+
+    # ------------------------------------------------------------------
+    # _compute_setpoints: GRID_CHARGE branch
+    # ------------------------------------------------------------------
+
+    async def test_compute_setpoints_enters_grid_charge_when_slot_active(self):
+        """_compute_setpoints() enters GRID_CHARGE when a slot is active."""
+        orch = _make_orchestrator()
+        await orch._poll()
+        orch._last_battery = _make_battery(total_soc_pct=70.0)
+        slot = _make_charge_slot(battery="huawei", target_soc_pct=90.0, grid_charge_power_w=5000)
+        schedule = _make_schedule([slot])
+        orch.set_scheduler(_make_scheduler_mock(active_schedule=schedule))
+
+        huawei_w, victron_w = orch._compute_setpoints()
+
+        assert orch._control_state == ControlState.GRID_CHARGE
+        assert huawei_w == 5000
+        assert victron_w == 0.0
+
+    async def test_compute_setpoints_luna_first_huawei_below_target(self):
+        """LUNA-first: huawei_w = grid_charge_power_w, victron_w = 0 when below target."""
+        orch = _make_orchestrator()
+        await orch._poll()
+        orch._last_battery = _make_battery(total_soc_pct=70.0)
+        slot = _make_charge_slot(battery="huawei", target_soc_pct=90.0, grid_charge_power_w=4800)
+        schedule = _make_schedule([slot])
+        orch.set_scheduler(_make_scheduler_mock(active_schedule=schedule))
+
+        huawei_w, victron_w = orch._compute_setpoints()
+
+        assert huawei_w == 4800
+        assert victron_w == 0.0
+
+    async def test_compute_setpoints_luna_done_huawei_offline(self):
+        """LUNA-done: huawei_w = 0, victron_w = grid_charge_power_w when Huawei offline.
+
+        When Huawei is offline, huawei_target_met = True (via `not _huawei_available`),
+        so the LUNA logic routes all charge power to Victron.
+        The battery sentinel (total_soc_pct=0.0) means _active_charge_slot() still
+        returns the slot (below target), and _compute_setpoints sees huawei offline.
+        """
+        orch = _make_orchestrator()
+        await orch._poll()
+        # Drive Huawei offline; sentinel shows SoC=0.0 so slot is returned by guard
+        orch._huawei_available = False
+        orch._last_battery = _make_battery(total_soc_pct=0.0)
+        slot = _make_charge_slot(battery="huawei", target_soc_pct=90.0, grid_charge_power_w=4800)
+        schedule = _make_schedule([slot])
+        orch.set_scheduler(_make_scheduler_mock(active_schedule=schedule))
+
+        huawei_w, victron_w = orch._compute_setpoints()
+
+        assert huawei_w == 0
+        assert victron_w == pytest.approx(4800.0)
+        assert orch._control_state == ControlState.GRID_CHARGE
+
+    async def test_compute_setpoints_luna_done_huawei_offline_above_target_sentinel(self):
+        """LUNA-done: even with a high SoC battery sentinel, offline Huawei routes to Victron."""
+        orch = _make_orchestrator()
+        await orch._poll()
+        orch._huawei_available = False
+        # Even if cached SoC was above target, offline check overrides it
+        orch._last_battery = _make_battery(total_soc_pct=50.0)
+        slot = _make_charge_slot(battery="huawei", target_soc_pct=90.0, grid_charge_power_w=3000)
+        schedule = _make_schedule([slot])
+        orch.set_scheduler(_make_scheduler_mock(active_schedule=schedule))
+
+        huawei_w, victron_w = orch._compute_setpoints()
+
+        assert huawei_w == 0
+        assert victron_w == pytest.approx(3000.0)
+
+    async def test_compute_setpoints_victron_slot_routes_all_power(self):
+        """For a victron slot, all grid charge power goes to Victron."""
+        orch = _make_orchestrator()
+        await orch._poll()
+        orch._last_victron = _make_victron(battery_soc_pct=50.0)
+        slot = _make_charge_slot(battery="victron", target_soc_pct=90.0, grid_charge_power_w=6000)
+        schedule = _make_schedule([slot])
+        orch.set_scheduler(_make_scheduler_mock(active_schedule=schedule))
+
+        huawei_w, victron_w = orch._compute_setpoints()
+
+        assert huawei_w == 0
+        assert victron_w == pytest.approx(6000.0)
+        assert orch._control_state == ControlState.GRID_CHARGE
+
+    async def test_compute_setpoints_grid_charge_fires_before_p_target(self):
+        """GRID_CHARGE branch fires before normal P_target calculation.
+
+        Even with massive PV export (P_target < 0), GRID_CHARGE takes priority.
+        """
+        huawei_mock = MagicMock()
+        huawei_mock.read_master = AsyncMock(
+            return_value=_make_master(active_power_w=10000)  # massive PV export
+        )
+        huawei_mock.read_battery = AsyncMock(return_value=_make_battery(total_soc_pct=70.0))
+        huawei_mock.write_max_discharge_power = AsyncMock()
+
+        victron_mock = MagicMock()
+        victron_mock.read_system_state = MagicMock(return_value=_make_victron())
+        victron_mock.write_ac_power_setpoint = MagicMock()
+
+        orch = _make_orchestrator(huawei_mock=huawei_mock, victron_mock=victron_mock)
+        await orch._poll()
+
+        slot = _make_charge_slot(battery="huawei", target_soc_pct=90.0, grid_charge_power_w=5000)
+        schedule = _make_schedule([slot])
+        orch.set_scheduler(_make_scheduler_mock(active_schedule=schedule))
+
+        huawei_w, victron_w = orch._compute_setpoints()
+
+        assert orch._control_state == ControlState.GRID_CHARGE
+        assert huawei_w == 5000
+        assert victron_w == 0.0
+
+    async def test_compute_setpoints_no_grid_charge_without_scheduler(self):
+        """_compute_setpoints() does NOT enter GRID_CHARGE without a scheduler."""
+        orch = _make_orchestrator()
+        await orch._poll()
+        huawei_w, victron_w = orch._compute_setpoints()
+        assert orch._control_state != ControlState.GRID_CHARGE
+
+    async def test_compute_setpoints_grid_charge_persists_on_consecutive_calls(self):
+        """State stays GRID_CHARGE across consecutive calls when slot is still active."""
+        orch = _make_orchestrator()
+        await orch._poll()
+        orch._last_battery = _make_battery(total_soc_pct=70.0)
+        slot = _make_charge_slot(battery="huawei", target_soc_pct=90.0, grid_charge_power_w=5000)
+        schedule = _make_schedule([slot])
+        orch.set_scheduler(_make_scheduler_mock(active_schedule=schedule))
+
+        orch._compute_setpoints()
+        assert orch._control_state == ControlState.GRID_CHARGE
+
+        orch._compute_setpoints()
+        assert orch._control_state == ControlState.GRID_CHARGE
+
+    async def test_compute_setpoints_huawei_offline_routes_to_victron(self):
+        """When Huawei is offline, huawei_target_met=True -> Victron gets the power."""
+        orch = _make_orchestrator()
+        await orch._poll()
+        orch._huawei_available = False
+        orch._last_battery = _make_battery(total_soc_pct=70.0)
+        slot = _make_charge_slot(battery="huawei", target_soc_pct=90.0, grid_charge_power_w=5000)
+        schedule = _make_schedule([slot])
+        orch.set_scheduler(_make_scheduler_mock(active_schedule=schedule))
+
+        huawei_w, victron_w = orch._compute_setpoints()
+
+        assert huawei_w == 0
+        assert victron_w == pytest.approx(5000.0)
+        assert orch._control_state == ControlState.GRID_CHARGE
+
+    # ------------------------------------------------------------------
+    # _apply_setpoints: GRID_CHARGE stub branch
+    # ------------------------------------------------------------------
+
+    async def test_apply_setpoints_calls_apply_grid_charge_when_in_grid_charge(self):
+        """_apply_setpoints() delegates to _apply_grid_charge_setpoints() in GRID_CHARGE."""
+        orch = _make_orchestrator()
+        await orch._poll()
+        orch._control_state = ControlState.GRID_CHARGE
+
+        called_with = []
+
+        async def _fake_apply_grid_charge(huawei_w, victron_w):
+            called_with.append((huawei_w, victron_w))
+
+        orch._apply_grid_charge_setpoints = _fake_apply_grid_charge
+        await orch._apply_setpoints(5000, 0.0)
+
+        assert called_with == [(5000, 0.0)]
+
+    async def test_apply_setpoints_skips_normal_write_in_grid_charge(self):
+        """_apply_setpoints() skips normal write path (write_max_discharge_power) in GRID_CHARGE."""
+        orch = _make_orchestrator()
+        await orch._poll()
+        orch._control_state = ControlState.GRID_CHARGE
+
+        orch._huawei.write_max_discharge_power = AsyncMock()
+        orch._victron.write_ac_power_setpoint = MagicMock()
+
+        await orch._apply_setpoints(5000, 0.0)
+
+        orch._huawei.write_max_discharge_power.assert_not_called()
+
+    # ------------------------------------------------------------------
+    # _build_unified_state: grid_charge_slot_active field
+    # ------------------------------------------------------------------
+
+    async def test_build_unified_state_grid_charge_slot_active_true(self):
+        """get_state().grid_charge_slot_active is True when in GRID_CHARGE."""
+        orch = _make_orchestrator()
+        await orch._poll()
+        orch._control_state = ControlState.GRID_CHARGE
+
+        state = orch._build_unified_state(5000, 0.0)
+
+        assert state.grid_charge_slot_active is True
+        assert state.control_state == ControlState.GRID_CHARGE
+
+    async def test_build_unified_state_grid_charge_slot_active_false_when_idle(self):
+        """get_state().grid_charge_slot_active is False when control state is IDLE."""
+        orch = _make_orchestrator()
+        await orch._poll()
+        orch._control_state = ControlState.IDLE
+
+        state = orch._build_unified_state(0, 0.0)
+
+        assert state.grid_charge_slot_active is False
+
+    async def test_build_unified_state_grid_charge_slot_active_false_during_discharge(self):
+        """get_state().grid_charge_slot_active is False when control state is DISCHARGE."""
+        orch = _make_orchestrator()
+        await orch._poll()
+        orch._control_state = ControlState.DISCHARGE
+
+        state = orch._build_unified_state(2000, 1000.0)
+
+        assert state.grid_charge_slot_active is False

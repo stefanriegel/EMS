@@ -85,7 +85,7 @@ def _make_system_data(**overrides) -> VictronSystemData:
 class TestControlState:
     def test_all_members_present(self):
         members = {m.name for m in ControlState}
-        assert members == {"IDLE", "DISCHARGE", "CHARGE", "HOLD"}
+        assert members == {"IDLE", "DISCHARGE", "CHARGE", "HOLD", "GRID_CHARGE"}
 
     def test_values_are_strings(self):
         """ControlState inherits str so JSON serialisation works without a custom encoder."""

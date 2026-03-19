@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from backend.drivers.huawei_driver import HuaweiDriver
     from backend.drivers.victron_driver import VictronDriver
     from backend.influx_writer import InfluxMetricsWriter
+    from backend.scheduler import Scheduler
     from backend.tariff import CompositeTariffEngine
 
 logger = logging.getLogger(__name__)
@@ -148,6 +149,10 @@ class Orchestrator:
         self._pending_state: ControlState = ControlState.IDLE
         self._pending_cycles: int = 0
 
+        # --- Scheduler reference (injected via set_scheduler) ---
+        self._scheduler: "Scheduler | None" = None
+        self._prev_control_state: ControlState | None = None
+
         # --- Phase imbalance detection ---
         # Counts consecutive cycles where any phase deviates > 500W from setpoint
         self._phase_imbalance_cycles: int = 0
@@ -200,6 +205,44 @@ class Orchestrator:
         if self._huawei_error:
             return self._huawei_error
         return self._victron_error
+
+    def set_scheduler(self, scheduler: "Scheduler") -> None:
+        """Inject the Scheduler reference for GRID_CHARGE slot detection."""
+        self._scheduler = scheduler
+        logger.info("Orchestrator.set_scheduler: scheduler wired")
+
+    # ------------------------------------------------------------------
+    # GRID_CHARGE slot detection
+    # ------------------------------------------------------------------
+
+    def _active_charge_slot(self):
+        """Return the active ChargeSlot for the current UTC time, or None.
+
+        Returns None when:
+          - scheduler is not set
+          - active_schedule is None
+          - schedule_stale is True (schedule.stale is True)
+          - no slot window covers the current UTC time
+          - the target SoC for the slot's battery is already met
+        """
+        from datetime import datetime, timezone
+
+        if self._scheduler is None:
+            return None
+        schedule = self._scheduler.active_schedule
+        if schedule is None or schedule.stale:
+            return None
+        now_utc = datetime.now(tz=timezone.utc)
+        for slot in schedule.slots:
+            if slot.start_utc <= now_utc < slot.end_utc:
+                if slot.battery == "huawei":
+                    if self._last_battery.total_soc_pct >= slot.target_soc_pct:
+                        continue  # Huawei target met — check next slot
+                elif slot.battery == "victron":
+                    if self._last_victron.battery_soc_pct >= slot.target_soc_pct:
+                        continue  # Victron target met
+                return slot
+        return None
 
     def get_device_snapshot(self) -> dict:
         """Return a per-device telemetry snapshot for the ``/api/devices`` endpoint.
@@ -418,6 +461,25 @@ class Orchestrator:
         """
         now = time.monotonic()
 
+        # --- GRID_CHARGE: scheduled cheap-tariff window ---
+        # This check is FIRST — before both-offline guard and P_target calculation.
+        slot = self._active_charge_slot()
+        if slot is not None:
+            huawei_target_met = (
+                self._last_battery.total_soc_pct >= slot.target_soc_pct
+                or not self._huawei_available
+            )
+            if slot.battery == "huawei":
+                huawei_w = slot.grid_charge_power_w if not huawei_target_met else 0
+                victron_w = 0.0 if not huawei_target_met else float(slot.grid_charge_power_w)
+            else:  # victron slot
+                huawei_w = 0
+                victron_w = float(slot.grid_charge_power_w)
+            self._transition_state(
+                ControlState.GRID_CHARGE, f"slot active battery={slot.battery}"
+            )
+            return (int(huawei_w), victron_w)
+
         # --- Determine both-offline → HOLD ---
         huawei_offline_s = now - self._huawei_last_seen if self._huawei_last_seen else float("inf")
         victron_offline_s = now - self._victron_last_seen if self._victron_last_seen else float("inf")
@@ -563,6 +625,11 @@ class Orchestrator:
         huawei_delta = abs(huawei_w - self._last_huawei_setpoint)
         victron_delta = abs(victron_w - self._last_victron_setpoint)
 
+        # GRID_CHARGE: bypass hysteresis, use dedicated apply method
+        if self._control_state == ControlState.GRID_CHARGE:
+            await self._apply_grid_charge_setpoints(huawei_w, victron_w)
+            return
+
         if (
             huawei_delta < self._cfg.hysteresis_w
             and victron_delta < self._cfg.hysteresis_w
@@ -605,6 +672,10 @@ class Orchestrator:
 
         # --- Phase imbalance check ---
         self._check_phase_imbalance(victron_w)
+
+    async def _apply_grid_charge_setpoints(self, huawei_w: int, victron_w: float) -> None:
+        """Apply grid charge setpoints to both drivers. (Implemented in T02.)"""
+        pass
 
     def _check_phase_imbalance(self, victron_setpoint_w: float) -> None:
         """Detect and log phase imbalance after writing Victron setpoints.
@@ -729,6 +800,7 @@ class Orchestrator:
             huawei_available=self._huawei_available,
             victron_available=self._victron_available,
             control_state=self._control_state,
+            grid_charge_slot_active=(self._control_state == ControlState.GRID_CHARGE),
             huawei_discharge_setpoint_w=self._last_huawei_setpoint,
             victron_discharge_setpoint_w=int(self._last_victron_setpoint),
             combined_power_w=combined_power,

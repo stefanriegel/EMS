@@ -49,6 +49,9 @@ class ControlState(str, Enum):
     """Orchestrator is actively clamping setpoints to prevent movement
     (e.g. one driver offline, SoC limit reached, debounce window)."""
 
+    GRID_CHARGE = "GRID_CHARGE"
+    """Pool is actively charging from the grid during a scheduled cheap-tariff window."""
+
 
 @dataclass
 class UnifiedPoolState:
@@ -114,6 +117,10 @@ class UnifiedPoolState:
     # --- Metadata ---
     timestamp: float
     """``time.monotonic()`` value when this snapshot was constructed."""
+
+    # --- GRID_CHARGE flag ---
+    grid_charge_slot_active: bool = False
+    """True when the orchestrator is in GRID_CHARGE state (a cheap-tariff slot is active)."""
 
     # ------------------------------------------------------------------
     # Factory
