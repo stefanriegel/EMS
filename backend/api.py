@@ -46,6 +46,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from backend.config import SystemConfig
+from backend.influx_reader import InfluxMetricsReader
 from backend.orchestrator import Orchestrator
 from backend.tariff import CompositeTariffEngine
 
@@ -357,3 +358,86 @@ async def get_tariff_schedule(
         }
         for slot in slots
     ]
+
+
+# ---------------------------------------------------------------------------
+# Metrics reader dependency
+# ---------------------------------------------------------------------------
+
+
+def get_metrics_reader(request: Request) -> InfluxMetricsReader | None:
+    """FastAPI dependency that returns the running :class:`InfluxMetricsReader`.
+
+    Reads ``request.app.state.metrics_reader`` via :func:`getattr` so it
+    gracefully returns ``None`` if the attribute was never set (e.g. in tests
+    that don't wire up the reader).  Tests override this via::
+
+        app.dependency_overrides[get_metrics_reader] = lambda: mock_reader
+    """
+    return getattr(request.app.state, "metrics_reader", None)
+
+
+# ---------------------------------------------------------------------------
+# Metrics routes
+# ---------------------------------------------------------------------------
+
+
+@api_router.get("/metrics/range")
+async def get_metrics_range(
+    measurement: str,
+    start: str,
+    stop: str,
+    reader: InfluxMetricsReader | None = Depends(get_metrics_reader),
+) -> list[dict]:
+    """Return time-series records for *measurement* over *[start, stop)*.
+
+    Query parameters
+    ----------------
+    measurement
+        InfluxDB measurement name, e.g. ``ems_system``.
+    start
+        Flux-compatible start, e.g. ``-1h`` or an RFC3339 string.
+    stop
+        Flux-compatible stop, e.g. ``now()`` or an RFC3339 string.
+
+    Returns
+    -------
+    list[dict]
+        Flat list of ``{"time", "field", "value"}`` dicts.
+
+    Raises
+    ------
+    HTTPException(503)
+        If the metrics reader is not available (lifespan failed to construct
+        it or the app is running without InfluxDB).
+    """
+    if reader is None:
+        raise HTTPException(status_code=503, detail="Metrics reader not available")
+    return await reader.query_range(measurement, start, stop)
+
+
+@api_router.get("/metrics/latest")
+async def get_metrics_latest(
+    measurement: str,
+    reader: InfluxMetricsReader | None = Depends(get_metrics_reader),
+) -> dict | None:
+    """Return the most-recent record for *measurement*.
+
+    Query parameters
+    ----------------
+    measurement
+        InfluxDB measurement name, e.g. ``ems_system``.
+
+    Returns
+    -------
+    dict | None
+        Single ``{"time", "field", "value"}`` dict, or ``null`` if no data.
+
+    Raises
+    ------
+    HTTPException(503)
+        If the metrics reader is not available.
+    """
+    if reader is None:
+        raise HTTPException(status_code=503, detail="Metrics reader not available")
+    return await reader.query_latest(measurement)

@@ -379,3 +379,179 @@ def test_create_app_returns_app_with_correct_title() -> None:
 
     application = create_app()
     assert application.title == "EMS"
+
+
+# ---------------------------------------------------------------------------
+# Mock metrics reader stub
+# ---------------------------------------------------------------------------
+
+
+class MockMetricsReader:
+    """Minimal async stub for :class:`~backend.influx_reader.InfluxMetricsReader`.
+
+    Responses are configurable via constructor parameters so tests can inject
+    any data shape without reaching for a full mock library.
+    """
+
+    def __init__(
+        self,
+        range_result: list[dict] | None = None,
+        latest_result: dict | None = None,
+    ) -> None:
+        self._range_result: list[dict] = range_result if range_result is not None else []
+        self._latest_result = latest_result
+
+    async def query_range(self, measurement: str, start: str, stop: str) -> list[dict]:
+        return self._range_result
+
+    async def query_latest(self, measurement: str) -> dict | None:
+        return self._latest_result
+
+
+def _build_test_app_with_reader(
+    mock_orchestrator: MockOrchestrator,
+    mock_reader: MockMetricsReader | None,
+) -> Any:
+    """Build a test FastAPI app with both orchestrator and reader injected."""
+    from backend.api import get_metrics_reader
+    from fastapi import FastAPI
+
+    app = FastAPI(title="EMS-test")
+    app.include_router(api_router)
+    app.dependency_overrides[get_orchestrator] = lambda: mock_orchestrator
+    app.dependency_overrides[get_metrics_reader] = lambda: mock_reader
+    return app
+
+
+# ---------------------------------------------------------------------------
+# GET /api/metrics/range
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_metrics_range_returns_200_and_list() -> None:
+    """GET /api/metrics/range returns 200 with a list of record dicts."""
+    records = [
+        {"time": "2026-01-01T00:00:00+00:00", "field": "combined_soc_pct", "value": 62.5},
+        {"time": "2026-01-01T00:00:05+00:00", "field": "combined_soc_pct", "value": 63.0},
+    ]
+    reader = MockMetricsReader(range_result=records)
+    orch = MockOrchestrator(state=_make_state())
+    app = _build_test_app_with_reader(orch, reader)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(
+            "/api/metrics/range",
+            params={"measurement": "ems_system", "start": "-1h", "stop": "now()"},
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+    assert len(data) == 2
+    assert data[0]["field"] == "combined_soc_pct"
+    assert data[0]["value"] == pytest.approx(62.5)
+
+
+@pytest.mark.anyio
+async def test_metrics_range_returns_empty_list_when_no_data() -> None:
+    """GET /api/metrics/range returns 200 with [] when reader returns no records."""
+    reader = MockMetricsReader(range_result=[])
+    orch = MockOrchestrator(state=_make_state())
+    app = _build_test_app_with_reader(orch, reader)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(
+            "/api/metrics/range",
+            params={"measurement": "ems_system", "start": "-1h", "stop": "now()"},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+@pytest.mark.anyio
+async def test_metrics_range_returns_503_when_reader_none() -> None:
+    """GET /api/metrics/range returns 503 when the reader is not available."""
+    orch = MockOrchestrator(state=_make_state())
+    app = _build_test_app_with_reader(orch, None)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(
+            "/api/metrics/range",
+            params={"measurement": "ems_system", "start": "-1h", "stop": "now()"},
+        )
+
+    assert resp.status_code == 503
+    assert "not available" in resp.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# GET /api/metrics/latest
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_metrics_latest_returns_200_and_dict() -> None:
+    """GET /api/metrics/latest returns 200 with a single record dict."""
+    latest = {"time": "2026-01-01T12:00:00+00:00", "field": "combined_soc_pct", "value": 75.0}
+    reader = MockMetricsReader(latest_result=latest)
+    orch = MockOrchestrator(state=_make_state())
+    app = _build_test_app_with_reader(orch, reader)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(
+            "/api/metrics/latest",
+            params={"measurement": "ems_system"},
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, dict)
+    assert data["field"] == "combined_soc_pct"
+    assert data["value"] == pytest.approx(75.0)
+
+
+@pytest.mark.anyio
+async def test_metrics_latest_returns_200_null_when_no_data() -> None:
+    """GET /api/metrics/latest returns 200 with null when measurement has no data."""
+    reader = MockMetricsReader(latest_result=None)
+    orch = MockOrchestrator(state=_make_state())
+    app = _build_test_app_with_reader(orch, reader)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(
+            "/api/metrics/latest",
+            params={"measurement": "ems_system"},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json() is None
+
+
+@pytest.mark.anyio
+async def test_metrics_latest_returns_503_when_reader_none() -> None:
+    """GET /api/metrics/latest returns 503 when the reader is not available."""
+    orch = MockOrchestrator(state=_make_state())
+    app = _build_test_app_with_reader(orch, None)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(
+            "/api/metrics/latest",
+            params={"measurement": "ems_system"},
+        )
+
+    assert resp.status_code == 503
+    assert "not available" in resp.json()["detail"].lower()

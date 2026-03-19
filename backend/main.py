@@ -48,6 +48,7 @@ from backend.api import api_router
 from backend.config import HuaweiConfig, InfluxConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig
 from backend.drivers.huawei_driver import HuaweiDriver
 from backend.drivers.victron_driver import VictronDriver
+from backend.influx_reader import InfluxMetricsReader
 from backend.influx_writer import InfluxMetricsWriter
 from backend.orchestrator import Orchestrator
 from backend.tariff import CompositeTariffEngine
@@ -147,6 +148,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         url=influx_cfg.url, token=influx_cfg.token, org=influx_cfg.org
     )
     metrics_writer = InfluxMetricsWriter(influx_client, influx_cfg.bucket)
+    metrics_reader = InfluxMetricsReader(influx_client, influx_cfg.org, influx_cfg.bucket)
     logger.info(
         "InfluxDB client connected — url=%s org=%s", influx_cfg.url, influx_cfg.org
     )
@@ -162,7 +164,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Store on app.state so the DI layer can retrieve it
     app.state.orchestrator = orchestrator
-    app.state.metrics_reader = None  # placeholder for T03
+    app.state.metrics_reader = metrics_reader
 
     yield  # application is running
 
