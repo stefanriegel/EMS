@@ -1,5 +1,6 @@
 """EMS FastAPI router — exposes the orchestrator state and config via HTTP (S03),
-and the composite tariff engine via two read-only endpoints (S04).
+and the composite tariff engine via two read-only endpoints (S04),
+and the charge schedule via one read-only endpoint (S05).
 
 Endpoints
 ---------
@@ -27,11 +28,17 @@ Endpoints
     Returns the full day's tariff slot list.  Returns **400** if ``date``
     cannot be parsed.
 
+``GET  /api/optimization/schedule``
+    Returns the active :class:`~backend.schedule_models.ChargeSchedule` as a
+    JSON-safe dict.  Returns **503** if the scheduler is not available or has
+    no active schedule yet.
+
 Dependency injection
 --------------------
 All endpoints depend on :func:`get_orchestrator` (reads from
-``request.app.state.orchestrator``) or :func:`get_tariff_engine` (reads from
-``request.app.state.tariff_engine``).  Tests override these via
+``request.app.state.orchestrator``), :func:`get_tariff_engine` (reads from
+``request.app.state.tariff_engine``), or :func:`get_scheduler` (reads from
+``request.app.state.scheduler``).  Tests override these via
 ``app.dependency_overrides``.
 """
 from __future__ import annotations
@@ -50,6 +57,8 @@ from pydantic import BaseModel, Field
 from backend.config import SystemConfig
 from backend.influx_reader import InfluxMetricsReader
 from backend.orchestrator import Orchestrator
+from backend.schedule_models import ChargeSchedule
+from backend.scheduler import Scheduler
 from backend.tariff import CompositeTariffEngine
 from backend.ws_manager import manager
 
@@ -383,6 +392,44 @@ def get_metrics_reader(request: Request) -> InfluxMetricsReader | None:
 
 
 # ---------------------------------------------------------------------------
+# Scheduler dependency
+# ---------------------------------------------------------------------------
+
+
+def get_scheduler(request: Request) -> Scheduler | None:
+    """FastAPI dependency that returns the running :class:`~backend.scheduler.Scheduler`.
+
+    Reads ``request.app.state.scheduler`` via :func:`getattr` so it gracefully
+    returns ``None`` if the attribute was never set (e.g. tests that don't wire
+    up the scheduler).  Tests override this via::
+
+        app.dependency_overrides[get_scheduler] = lambda: mock_scheduler
+    """
+    return getattr(request.app.state, "scheduler", None)
+
+
+# ---------------------------------------------------------------------------
+# Schedule serialisation helper
+# ---------------------------------------------------------------------------
+
+
+def _schedule_to_dict(schedule: ChargeSchedule) -> dict[str, Any]:
+    """Convert a :class:`~backend.schedule_models.ChargeSchedule` to a JSON-safe dict.
+
+    :func:`dataclasses.asdict` produces raw :class:`datetime` objects for
+    ``computed_at`` and each slot's ``start_utc``/``end_utc``; those are
+    replaced with ISO 8601 strings so the result passes through
+    :func:`json.dumps` without ``TypeError``.
+    """
+    raw = dataclasses.asdict(schedule)
+    raw["computed_at"] = schedule.computed_at.isoformat()
+    for slot_raw, slot_obj in zip(raw["slots"], schedule.slots):
+        slot_raw["start_utc"] = slot_obj.start_utc.isoformat()
+        slot_raw["end_utc"] = slot_obj.end_utc.isoformat()
+    return raw
+
+
+# ---------------------------------------------------------------------------
 # Metrics routes
 # ---------------------------------------------------------------------------
 
@@ -449,6 +496,39 @@ async def get_metrics_latest(
 
 
 # ---------------------------------------------------------------------------
+# Optimization schedule route
+# ---------------------------------------------------------------------------
+
+
+@api_router.get("/optimization/schedule")
+async def get_optimization_schedule(
+    scheduler: Scheduler | None = Depends(get_scheduler),
+) -> dict[str, Any]:
+    """Return the active charge schedule produced by the optimiser.
+
+    Returns
+    -------
+    dict
+        JSON-safe representation of :class:`~backend.schedule_models.ChargeSchedule`
+        with all ``datetime`` fields serialised to ISO 8601 strings.
+        Includes ``stale: true`` when the schedule could not be refreshed
+        from EVCC on the last poll cycle.
+
+    Raises
+    ------
+    HTTPException(503)
+        If ``app.state.scheduler`` is absent (scheduler not yet started).
+    HTTPException(503)
+        If the scheduler has not yet computed its first schedule.
+    """
+    if scheduler is None:
+        raise HTTPException(status_code=503, detail="Scheduler not available")
+    if scheduler.active_schedule is None:
+        raise HTTPException(status_code=503, detail="No active schedule")
+    return _schedule_to_dict(scheduler.active_schedule)
+
+
+# ---------------------------------------------------------------------------
 # Devices route
 # ---------------------------------------------------------------------------
 
@@ -502,7 +582,7 @@ async def get_devices(
 async def ws_state(
     ws: WebSocket,
 ) -> None:
-    """Push combined pool + devices + tariff JSON to the client every 5 s.
+    """Push combined pool + devices + tariff + optimization JSON to the client every 5 s.
 
     The payload shape::
 
@@ -513,7 +593,8 @@ async def ws_state(
                 "effective_rate_eur_kwh": float | null,
                 "octopus_rate_eur_kwh": float | null,
                 "modul3_rate_eur_kwh": float | null
-            }
+            },
+            "optimization": <ChargeSchedule as dict, or null>
         }
 
     The client is removed from the active set on disconnect.  ``WebSocketDisconnect``
@@ -565,10 +646,19 @@ async def ws_state(
                     "modul3_rate_eur_kwh": None,
                 }
 
+            # --- Build optimization snapshot ---
+            ws_scheduler = getattr(ws.app.state, "scheduler", None)
+            optimization_dict: dict[str, Any] | None = (
+                _schedule_to_dict(ws_scheduler.active_schedule)
+                if (ws_scheduler is not None and ws_scheduler.active_schedule is not None)
+                else None
+            )
+
             payload: dict[str, Any] = {
                 "pool": pool_dict,
                 "devices": devices_dict,
                 "tariff": tariff_dict,
+                "optimization": optimization_dict,
             }
 
             try:

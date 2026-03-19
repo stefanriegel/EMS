@@ -16,6 +16,7 @@ import { useEmsState } from "./hooks/useEmsState";
 import { PoolOverview } from "./components/PoolOverview";
 import { DeviceDetail } from "./components/DeviceDetail";
 import { TariffCard } from "./components/TariffCard";
+import { OptimizationCard } from "./components/OptimizationCard";
 import type { PoolState, DevicesPayload } from "./types";
 
 // In production, location.host resolves to the FastAPI server address.
@@ -63,6 +64,7 @@ export default function App() {
   const pool = ws.data?.pool ?? (useFallback ? fbPool : null);
   const devices = ws.data?.devices ?? (useFallback ? fbDevices : null);
   const tariff = ws.data?.tariff ?? null;
+  const optimization = ws.data?.optimization ?? null;
 
   return (
     <div className="app">
@@ -91,6 +93,7 @@ export default function App() {
           <PoolOverview pool={pool ?? null} connected={ws.connected} />
           <DeviceDetail devices={devices} />
           <TariffCard tariff={tariff} />
+          <OptimizationCard optimization={optimization} />
         </div>
       </main>
 

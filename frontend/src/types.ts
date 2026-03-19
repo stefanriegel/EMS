@@ -11,7 +11,7 @@
 // Pool state (UnifiedPoolState dataclass)
 // ---------------------------------------------------------------------------
 
-export type ControlState = "IDLE" | "CHARGE" | "DISCHARGE" | "HOLD";
+export type ControlState = "IDLE" | "CHARGE" | "DISCHARGE" | "HOLD" | "GRID_CHARGE";
 
 export interface PoolState {
   combined_soc_pct: number;
@@ -74,6 +74,33 @@ export interface TariffPayload {
 }
 
 // ---------------------------------------------------------------------------
+// Optimization / charge schedule snapshot (embedded in WS payload)
+// ---------------------------------------------------------------------------
+
+export interface ChargeSlotPayload {
+  battery: string;
+  target_soc_pct: number;
+  start_utc: string;
+  end_utc: string;
+  grid_charge_power_w: number;
+}
+
+export interface OptimizationReasoningPayload {
+  text: string;
+  tomorrow_solar_kwh: number;
+  expected_consumption_kwh: number;
+  charge_energy_kwh: number;
+  cost_estimate_eur: number;
+}
+
+export interface OptimizationPayload {
+  slots: ChargeSlotPayload[];
+  reasoning: OptimizationReasoningPayload;
+  computed_at: string;
+  stale: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // WebSocket push payload (/api/ws/state)
 // ---------------------------------------------------------------------------
 
@@ -81,4 +108,5 @@ export interface WsPayload {
   pool: PoolState | null;
   devices: DevicesPayload;
   tariff: TariffPayload;
+  optimization: OptimizationPayload | null;
 }

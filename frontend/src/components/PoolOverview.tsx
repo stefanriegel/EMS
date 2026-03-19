@@ -20,6 +20,7 @@ const stateColors: Record<string, string> = {
   CHARGE: "#22c55e",
   DISCHARGE: "#f59e0b",
   HOLD: "#3b82f6",
+  GRID_CHARGE: "#06b6d4",
 };
 
 function fmt(value: number | null | undefined, unit: string, decimals = 1): string {

@@ -98,7 +98,7 @@ html, body {
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 1rem;
   max-width: 1400px;
   margin: 0 auto;
@@ -362,4 +362,104 @@ html, body {
   font-family: var(--font-mono);
   font-size: 0.78rem;
   color: var(--text-primary);
+}
+
+/* ── Optimization card ─────────────────────────────────────────────────── */
+
+.unavailable {
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+}
+
+.opt-stale-badge {
+  display: inline-block;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: var(--accent-amber);
+  border-radius: 4px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  margin-bottom: 0.75rem;
+}
+
+.opt-reasoning {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: 0.6rem;
+}
+
+.opt-cost {
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 0.75rem;
+}
+
+.opt-cost-detail {
+  font-weight: 400;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.opt-slots {
+  border-top: 1px solid var(--bg-card-border);
+  padding-top: 0.6rem;
+}
+
+.opt-no-slots {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.opt-slot-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.78rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid rgba(48, 54, 61, 0.5);
+}
+
+.opt-slot-row:last-child {
+  border-bottom: none;
+}
+
+.opt-slot-battery {
+  min-width: 58px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #06b6d4;
+}
+
+.opt-slot-window {
+  flex: 1;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  font-size: 0.78rem;
+}
+
+.opt-slot-target {
+  min-width: 38px;
+  text-align: right;
+  font-family: var(--font-mono);
+  color: var(--accent-green);
+  font-size: 0.78rem;
+}
+
+.opt-slot-power {
+  min-width: 58px;
+  text-align: right;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
 }

@@ -1,0 +1,64 @@
+/**
+ * OptimizationCard — tonight's charge schedule from the optimiser.
+ *
+ * Shows:
+ *   - Stale badge when schedule.stale is true
+ *   - Reasoning text and cost estimate
+ *   - Per-slot rows: battery, local time window, target SoC %, grid power
+ *
+ * Renders "No schedule available" when optimization is null (scheduler not
+ * yet started, or no active schedule computed).
+ */
+import type { OptimizationPayload } from "../types";
+
+interface Props {
+  optimization: OptimizationPayload | null;
+}
+
+function localTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+export function OptimizationCard({ optimization }: Props) {
+  return (
+    <section className="card optimization-card">
+      <h2 className="card-title">Tonight's Schedule</h2>
+
+      {!optimization ? (
+        <p className="unavailable">No schedule available</p>
+      ) : (
+        <>
+          {optimization.stale && (
+            <div className="opt-stale-badge">Schedule may be outdated</div>
+          )}
+
+          <p className="opt-reasoning">{optimization.reasoning.text}</p>
+
+          <p className="opt-cost">
+            Est. cost: €{optimization.reasoning.cost_estimate_eur.toFixed(2)}
+            <span className="opt-cost-detail">
+              &nbsp;·&nbsp;{optimization.reasoning.charge_energy_kwh.toFixed(1)} kWh
+            </span>
+          </p>
+
+          <div className="opt-slots">
+            {optimization.slots.length === 0 ? (
+              <p className="opt-no-slots">No charge windows scheduled</p>
+            ) : (
+              optimization.slots.map((slot, i) => (
+                <div key={i} className="opt-slot-row">
+                  <span className="opt-slot-battery">{slot.battery}</span>
+                  <span className="opt-slot-window">
+                    {localTime(slot.start_utc)}–{localTime(slot.end_utc)}
+                  </span>
+                  <span className="opt-slot-target">{slot.target_soc_pct.toFixed(0)}%</span>
+                  <span className="opt-slot-power">{slot.grid_charge_power_w} W</span>
+                </div>
+              ))
+            )}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}

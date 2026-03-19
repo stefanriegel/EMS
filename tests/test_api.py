@@ -711,6 +711,7 @@ def test_ws_state_sends_first_frame() -> None:
     assert "pool" in data, f"Missing 'pool' key in WS frame: {data}"
     assert "devices" in data, f"Missing 'devices' key in WS frame: {data}"
     assert "tariff" in data, f"Missing 'tariff' key in WS frame: {data}"
+    assert "optimization" in data, f"Missing 'optimization' key in WS frame: {data}"
 
     # Verify device sub-structure is present
     assert "huawei" in data["devices"]
@@ -720,3 +721,166 @@ def test_ws_state_sends_first_frame() -> None:
     assert "effective_rate_eur_kwh" in data["tariff"]
     assert "octopus_rate_eur_kwh" in data["tariff"]
     assert "modul3_rate_eur_kwh" in data["tariff"]
+
+
+# ---------------------------------------------------------------------------
+# Optimization schedule endpoint
+# ---------------------------------------------------------------------------
+
+
+class MockScheduler:
+    """Minimal stub for :class:`~backend.scheduler.Scheduler`."""
+
+    def __init__(self, active_schedule=None) -> None:
+        self.active_schedule = active_schedule
+
+
+def _make_charge_schedule(*, stale: bool = False) -> "ChargeSchedule":
+    """Return a minimal :class:`~backend.schedule_models.ChargeSchedule` for tests."""
+    from datetime import datetime, timezone
+
+    from backend.schedule_models import ChargeSchedule, ChargeSlot, OptimizationReasoning
+
+    slot = ChargeSlot(
+        battery="huawei",
+        target_soc_pct=90.0,
+        start_utc=datetime(2026, 1, 15, 1, 0, tzinfo=timezone.utc),
+        end_utc=datetime(2026, 1, 15, 5, 30, tzinfo=timezone.utc),
+        grid_charge_power_w=3500,
+    )
+    reasoning = OptimizationReasoning(
+        text="Charge overnight using cheap Octopus Go rate.",
+        tomorrow_solar_kwh=12.5,
+        expected_consumption_kwh=8.0,
+        charge_energy_kwh=5.0,
+        cost_estimate_eur=0.84,
+    )
+    return ChargeSchedule(
+        slots=[slot],
+        reasoning=reasoning,
+        computed_at=datetime(2026, 1, 14, 22, 0, tzinfo=timezone.utc),
+        stale=stale,
+    )
+
+
+@pytest.mark.anyio
+async def test_get_optimization_schedule_returns_503_when_no_scheduler() -> None:
+    """GET /api/optimization/schedule returns 503 when scheduler is not wired."""
+    from backend.api import get_scheduler
+    from fastapi import FastAPI
+
+    app = FastAPI(title="EMS-test")
+    app.include_router(api_router)
+    app.dependency_overrides[get_orchestrator] = lambda: MockOrchestrator(state=_make_state())
+    app.dependency_overrides[get_scheduler] = lambda: None
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/optimization/schedule")
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "Scheduler not available"
+
+
+@pytest.mark.anyio
+async def test_get_optimization_schedule_returns_503_when_no_active_schedule() -> None:
+    """GET /api/optimization/schedule returns 503 when scheduler has no schedule yet."""
+    from backend.api import get_scheduler
+    from fastapi import FastAPI
+
+    app = FastAPI(title="EMS-test")
+    app.include_router(api_router)
+    app.dependency_overrides[get_orchestrator] = lambda: MockOrchestrator(state=_make_state())
+    app.dependency_overrides[get_scheduler] = lambda: MockScheduler(active_schedule=None)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/optimization/schedule")
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "No active schedule"
+
+
+@pytest.mark.anyio
+async def test_get_optimization_schedule_returns_200_with_schedule() -> None:
+    """GET /api/optimization/schedule returns 200 with all expected keys when schedule present."""
+    import json
+
+    from backend.api import get_scheduler
+    from fastapi import FastAPI
+
+    schedule = _make_charge_schedule()
+    app = FastAPI(title="EMS-test")
+    app.include_router(api_router)
+    app.dependency_overrides[get_orchestrator] = lambda: MockOrchestrator(state=_make_state())
+    app.dependency_overrides[get_scheduler] = lambda: MockScheduler(active_schedule=schedule)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/optimization/schedule")
+
+    assert resp.status_code == 200
+    data = resp.json()
+
+    # Required top-level keys
+    for key in ("slots", "reasoning", "computed_at", "stale"):
+        assert key in data, f"Missing key '{key}' in response: {data}"
+
+    # computed_at must be a string (ISO format), not a raw datetime
+    assert isinstance(data["computed_at"], str), "computed_at should be an ISO string"
+    assert "2026-01-14" in data["computed_at"]
+
+    # Slot datetime fields must be strings
+    assert len(data["slots"]) == 1
+    slot = data["slots"][0]
+    assert isinstance(slot["start_utc"], str), "start_utc should be an ISO string"
+    assert isinstance(slot["end_utc"], str), "end_utc should be an ISO string"
+
+    # Confirm json.dumps does not raise TypeError (no raw datetime objects)
+    json.dumps(data)  # raises if any value is not JSON-serialisable
+
+
+@pytest.mark.anyio
+async def test_get_optimization_schedule_stale_flag() -> None:
+    """GET /api/optimization/schedule returns stale=True when schedule is stale."""
+    from backend.api import get_scheduler
+    from fastapi import FastAPI
+
+    schedule = _make_charge_schedule(stale=True)
+    app = FastAPI(title="EMS-test")
+    app.include_router(api_router)
+    app.dependency_overrides[get_orchestrator] = lambda: MockOrchestrator(state=_make_state())
+    app.dependency_overrides[get_scheduler] = lambda: MockScheduler(active_schedule=schedule)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/optimization/schedule")
+
+    assert resp.status_code == 200
+    assert resp.json()["stale"] is True
+
+
+def test_ws_state_includes_optimization_key() -> None:
+    """WS /api/ws/state frame includes 'optimization' key (null when no schedule)."""
+    from starlette.testclient import TestClient
+
+    from fastapi import FastAPI
+
+    orch = MockOrchestrator(state=_make_state())
+    app = FastAPI(title="EMS-test")
+    app.include_router(api_router)
+    app.dependency_overrides[get_orchestrator] = lambda: orch
+    app.state.orchestrator = orch
+    # Wire a scheduler with no active schedule — optimization key should be present but null
+    app.state.scheduler = MockScheduler(active_schedule=None)
+
+    with TestClient(app).websocket_connect("/api/ws/state") as ws:
+        data = ws.receive_json()
+
+    assert "optimization" in data, f"Missing 'optimization' key in WS frame: {data}"
+    # Value is null because active_schedule is None
+    assert data["optimization"] is None
