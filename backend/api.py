@@ -1,4 +1,5 @@
-"""EMS FastAPI router — exposes the orchestrator state and config via HTTP (S03).
+"""EMS FastAPI router — exposes the orchestrator state and config via HTTP (S03),
+and the composite tariff engine via two read-only endpoints (S04).
 
 Endpoints
 ---------
@@ -18,17 +19,27 @@ Endpoints
     orchestrator's running config, and returns the updated config.  Returns
     **422** on Pydantic validation failure (FastAPI default).
 
+``GET  /api/tariff/price?dt=ISO8601``
+    Returns the composite electricity price at a given instant.  Returns **400**
+    if ``dt`` cannot be parsed as an ISO 8601 datetime.
+
+``GET  /api/tariff/schedule?date=YYYY-MM-DD``
+    Returns the full day's tariff slot list.  Returns **400** if ``date``
+    cannot be parsed.
+
 Dependency injection
 --------------------
-All endpoints depend on :func:`get_orchestrator`, which reads the
-:class:`~backend.orchestrator.Orchestrator` instance from
-``request.app.state.orchestrator``.  Tests override this via
-``app.dependency_overrides[get_orchestrator] = lambda: mock``.
+All endpoints depend on :func:`get_orchestrator` (reads from
+``request.app.state.orchestrator``) or :func:`get_tariff_engine` (reads from
+``request.app.state.tariff_engine``).  Tests override these via
+``app.dependency_overrides``.
 """
 from __future__ import annotations
 
 import dataclasses
 import time
+from datetime import datetime as dt_type
+from datetime import date as date_type
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -36,6 +47,7 @@ from pydantic import BaseModel, Field
 
 from backend.config import SystemConfig
 from backend.orchestrator import Orchestrator
+from backend.tariff import CompositeTariffEngine
 
 api_router = APIRouter(prefix="/api")
 
@@ -221,3 +233,127 @@ async def post_config(
     )
     orchestrator.sys_config = new_cfg
     return _config_to_dict(new_cfg)
+
+
+# ---------------------------------------------------------------------------
+# Tariff engine dependency
+# ---------------------------------------------------------------------------
+
+
+def get_tariff_engine(request: Request) -> CompositeTariffEngine:
+    """FastAPI dependency that returns the running :class:`CompositeTariffEngine`.
+
+    Reads ``request.app.state.tariff_engine``.  Tests override this via::
+
+        app.dependency_overrides[get_tariff_engine] = lambda: engine
+    """
+    return request.app.state.tariff_engine  # type: ignore[no-any-return]
+
+
+# ---------------------------------------------------------------------------
+# Tariff routes
+# ---------------------------------------------------------------------------
+
+
+@api_router.get("/tariff/price")
+async def get_tariff_price(
+    dt: str,
+    engine: CompositeTariffEngine = Depends(get_tariff_engine),
+) -> dict[str, Any]:
+    """Return the composite electricity price at a given instant.
+
+    Query parameters
+    ----------------
+    dt
+        ISO 8601 datetime string, e.g. ``2026-01-15T02:00:00`` or
+        ``2026-01-15T02:00:00+00:00``.  Naive strings are interpreted as
+        wall-clock time in the Octopus Go timezone.
+
+    Returns
+    -------
+    dict
+        ``dt``, ``effective_rate_eur_kwh``, ``octopus_rate_eur_kwh``,
+        ``modul3_rate_eur_kwh``.
+
+    Raises
+    ------
+    HTTPException(400)
+        If ``dt`` cannot be parsed as an ISO 8601 datetime.
+    """
+    try:
+        parsed_dt = dt_type.fromisoformat(dt)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid datetime '{dt}': {exc}",
+        ) from exc
+
+    from zoneinfo import ZoneInfo
+
+    oct_tz = ZoneInfo(engine._octopus.timezone)
+    m3_tz = ZoneInfo(engine._modul3.timezone)
+
+    if parsed_dt.tzinfo is None:
+        dt_oct = parsed_dt.replace(tzinfo=oct_tz)
+    else:
+        dt_oct = parsed_dt.astimezone(oct_tz)
+    dt_m3 = dt_oct.astimezone(m3_tz)
+
+    oct_minute = dt_oct.hour * 60 + dt_oct.minute
+    m3_minute = dt_m3.hour * 60 + dt_m3.minute
+
+    octopus_rate = engine._octopus_rate_at(oct_minute)
+    modul3_rate = engine._modul3_rate_at(m3_minute)
+
+    return {
+        "dt": dt,
+        "effective_rate_eur_kwh": round(octopus_rate + modul3_rate, 6),
+        "octopus_rate_eur_kwh": octopus_rate,
+        "modul3_rate_eur_kwh": modul3_rate,
+    }
+
+
+@api_router.get("/tariff/schedule")
+async def get_tariff_schedule(
+    date: str,
+    engine: CompositeTariffEngine = Depends(get_tariff_engine),
+) -> list[dict[str, Any]]:
+    """Return the full composite tariff schedule for a given date.
+
+    Query parameters
+    ----------------
+    date
+        ISO 8601 date string, e.g. ``2026-01-15``.
+
+    Returns
+    -------
+    list[dict]
+        Ordered list of slot dicts with keys ``start``, ``end``,
+        ``octopus_rate_eur_kwh``, ``modul3_rate_eur_kwh``,
+        ``effective_rate_eur_kwh``.  Slots are contiguous and cover
+        00:00–24:00 in the Octopus timezone.
+
+    Raises
+    ------
+    HTTPException(400)
+        If ``date`` cannot be parsed as ``YYYY-MM-DD``.
+    """
+    try:
+        parsed_date = date_type.fromisoformat(date)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid date '{date}': {exc}",
+        ) from exc
+
+    slots = engine.get_price_schedule(parsed_date)
+    return [
+        {
+            "start": slot.start.isoformat(),
+            "end": slot.end.isoformat(),
+            "octopus_rate_eur_kwh": slot.octopus_rate_eur_kwh,
+            "modul3_rate_eur_kwh": slot.modul3_rate_eur_kwh,
+            "effective_rate_eur_kwh": slot.effective_rate_eur_kwh,
+        }
+        for slot in slots
+    ]

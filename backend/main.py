@@ -45,10 +45,11 @@ from typing import AsyncGenerator
 from fastapi import FastAPI
 
 from backend.api import api_router
-from backend.config import HuaweiConfig, OrchestratorConfig, SystemConfig, VictronConfig
+from backend.config import HuaweiConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig
 from backend.drivers.huawei_driver import HuaweiDriver
 from backend.drivers.victron_driver import VictronDriver
 from backend.orchestrator import Orchestrator
+from backend.tariff import CompositeTariffEngine
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +133,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Store on app.state so the DI layer can retrieve it
     app.state.orchestrator = orchestrator
+
+    # --- Instantiate tariff engine ---
+    tariff_cfg = TariffConfig.from_env()
+    tariff_engine = CompositeTariffEngine(
+        octopus=tariff_cfg.octopus, modul3=tariff_cfg.modul3
+    )
+    app.state.tariff_engine = tariff_engine
+    logger.info(
+        "Tariff engine initialised — Octopus tz=%s Modul3 tz=%s windows=%d",
+        tariff_cfg.octopus.timezone,
+        tariff_cfg.modul3.timezone,
+        len(tariff_cfg.modul3.windows),
+    )
 
     yield  # application is running
 
