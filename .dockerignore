@@ -1,0 +1,27 @@
+# Exclude development artifacts from the Docker build context.
+# frontend/dist/ is intentionally NOT excluded — it must be present at build time.
+
+# Python
+.venv/
+*.pyc
+__pycache__/
+
+# Node
+node_modules/
+frontend/src/
+frontend/public/
+frontend/node_modules/
+
+# Tests and tooling
+tests/
+scripts/
+
+# GSD / CI
+.gsd/
+
+# Secrets — never bake into image
+.env
+.env.*
+
+# Docs (root-level only)
+*.md
