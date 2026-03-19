@@ -219,6 +219,38 @@ class InfluxConfig:
 
 
 @dataclass
+class EvccMqttConfig:
+    """Connection config for the EVCC MQTT broker.
+
+    All fields have safe defaults so unit tests run without any environment
+    variables set.
+
+    Attributes:
+        host: IP or hostname of the EVCC MQTT broker (default ``192.168.0.10``).
+        port: TCP port (default ``1883``).
+
+    Environment variables:
+        ``EVCC_MQTT_HOST`` — hostname or IP (default ``192.168.0.10``).
+        ``EVCC_MQTT_PORT`` — TCP port (default ``1883``).
+    """
+
+    host: str = "192.168.0.10"
+    port: int = 1883
+
+    @classmethod
+    def from_env(cls) -> "EvccMqttConfig":
+        """Construct an :class:`EvccMqttConfig` from environment variables.
+
+        Both fields fall back to safe defaults when the corresponding
+        environment variable is absent — **no env vars are required**.
+        """
+        return cls(
+            host=os.environ.get("EVCC_MQTT_HOST", "192.168.0.10"),
+            port=int(os.environ.get("EVCC_MQTT_PORT", "1883")),
+        )
+
+
+@dataclass
 class EvccConfig:
     """Connection config for the EVCC energy-management / EVopt HTTP API.
 

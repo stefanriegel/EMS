@@ -3,10 +3,11 @@ pymodbus<4,>=3.11
 fastapi
 uvicorn[standard]
 paho-mqtt>=2.1
+influxdb-client[async]>=1.45
+httpx
 
 [dev]
 pytest>=8
 anyio[trio]
 pytest-anyio
 pytest-mock
-httpx

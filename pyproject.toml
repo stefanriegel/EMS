@@ -9,6 +9,7 @@ dependencies = [
     "uvicorn[standard]",
     "paho-mqtt>=2.1",
     "influxdb-client[async]>=1.45",
+    "httpx",
 ]
 
 [project.optional-dependencies]
@@ -17,12 +18,14 @@ dev = [
     "anyio[trio]",
     "pytest-anyio",
     "pytest-mock",
-    "httpx",
 ]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 anyio_mode = "auto"
+
+[tool.setuptools.packages.find]
+include = ["backend*"]
 
 [build-system]
 requires = ["setuptools>=68"]
