@@ -311,3 +311,323 @@ async def test_query_latest_exception_logged_as_warning(caplog: pytest.LogCaptur
         await reader.query_latest("ems_system")
 
     assert any("influx query failed" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Helpers for query_consumption_history tests
+# ---------------------------------------------------------------------------
+
+
+def _make_consumption_record(date_str: str, value_w: float = 500.0) -> MagicMock:
+    """Return a mock record for one calendar day (post-Flux sign-flip).
+
+    ``date_str`` is an ISO-8601 date string like ``"2026-01-05"``.
+    ``value_w`` is positive watts (Flux map already flipped the sign).
+    """
+    time_str = f"{date_str}T12:00:00+00:00"
+    return _make_mock_record(time_val=time_str, field_val="combined_power_w", value_val=value_w)
+
+
+def _make_consumption_tables(dates: list[str], value_w: float = 500.0) -> list[MagicMock]:
+    """One table with one record per date string."""
+    records = [_make_consumption_record(d, value_w) for d in dates]
+    return [_make_mock_table(records)]
+
+
+def _fourteen_dates() -> list[str]:
+    """Return 14 consecutive ISO date strings starting 2026-01-01."""
+    import datetime as _dt
+    return [
+        (_dt.date(2026, 1, 1) + _dt.timedelta(days=i)).isoformat()
+        for i in range(14)
+    ]
+
+
+# ---------------------------------------------------------------------------
+# query_consumption_history — Flux query construction
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_consumption_history_flux_contains_bucket() -> None:
+    """Flux query includes the configured bucket name."""
+    reader = _make_reader(tables=_make_consumption_tables(_fourteen_dates()), bucket="my_bucket")
+    await reader.query_consumption_history()
+    flux: str = reader._query_api.query.call_args.kwargs.get("query") or \
+        reader._query_api.query.call_args.args[0]
+    assert "my_bucket" in flux
+
+
+@pytest.mark.anyio
+async def test_consumption_history_flux_contains_measurement() -> None:
+    """Flux query filters on ems_system measurement."""
+    reader = _make_reader(tables=_make_consumption_tables(_fourteen_dates()))
+    await reader.query_consumption_history()
+    flux: str = reader._query_api.query.call_args.kwargs.get("query") or \
+        reader._query_api.query.call_args.args[0]
+    assert "ems_system" in flux
+
+
+@pytest.mark.anyio
+async def test_consumption_history_flux_contains_field_filter() -> None:
+    """Flux query filters on the combined_power_w field."""
+    reader = _make_reader(tables=_make_consumption_tables(_fourteen_dates()))
+    await reader.query_consumption_history()
+    flux: str = reader._query_api.query.call_args.kwargs.get("query") or \
+        reader._query_api.query.call_args.args[0]
+    assert "combined_power_w" in flux
+
+
+@pytest.mark.anyio
+async def test_consumption_history_flux_contains_range() -> None:
+    """Default days=14 produces a -14d range in the Flux query."""
+    reader = _make_reader(tables=_make_consumption_tables(_fourteen_dates()))
+    await reader.query_consumption_history()
+    flux: str = reader._query_api.query.call_args.kwargs.get("query") or \
+        reader._query_api.query.call_args.args[0]
+    assert "-14d" in flux
+
+
+@pytest.mark.anyio
+async def test_consumption_history_flux_custom_days() -> None:
+    """Passing days=7 produces a -7d range in the Flux query."""
+    import datetime as _dt
+    seven_dates = [
+        (_dt.date(2026, 1, 1) + _dt.timedelta(days=i)).isoformat()
+        for i in range(7)
+    ]
+    reader = _make_reader(tables=_make_consumption_tables(seven_dates))
+    await reader.query_consumption_history(days=7)
+    flux: str = reader._query_api.query.call_args.kwargs.get("query") or \
+        reader._query_api.query.call_args.args[0]
+    assert "-7d" in flux
+    assert "-14d" not in flux
+
+
+@pytest.mark.anyio
+async def test_consumption_history_flux_contains_tz() -> None:
+    """The timezone string appears in the Flux query."""
+    reader = _make_reader(tables=_make_consumption_tables(_fourteen_dates()))
+    await reader.query_consumption_history(tz="Europe/Berlin")
+    flux: str = reader._query_api.query.call_args.kwargs.get("query") or \
+        reader._query_api.query.call_args.args[0]
+    assert "Europe/Berlin" in flux
+
+
+@pytest.mark.anyio
+async def test_consumption_history_flux_negative_filter() -> None:
+    """Flux query includes a filter for negative values (discharge proxy)."""
+    reader = _make_reader(tables=_make_consumption_tables(_fourteen_dates()))
+    await reader.query_consumption_history()
+    flux: str = reader._query_api.query.call_args.kwargs.get("query") or \
+        reader._query_api.query.call_args.args[0]
+    assert "< 0" in flux
+
+
+# ---------------------------------------------------------------------------
+# query_consumption_history — return type and not-None contract
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_consumption_history_returns_consumption_forecast_type() -> None:
+    """Result is always a ConsumptionForecast instance."""
+    from backend.schedule_models import ConsumptionForecast
+    reader = _make_reader(tables=_make_consumption_tables(_fourteen_dates()))
+    result = await reader.query_consumption_history()
+    assert isinstance(result, ConsumptionForecast)
+
+
+@pytest.mark.anyio
+async def test_consumption_history_not_none() -> None:
+    """query_consumption_history never returns None."""
+    reader = _make_reader(tables=[])
+    result = await reader.query_consumption_history()
+    assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# query_consumption_history — happy path (≥7 days)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_consumption_history_fallback_false_with_sufficient_data() -> None:
+    """fallback_used=False when records span 14 distinct dates."""
+    reader = _make_reader(tables=_make_consumption_tables(_fourteen_dates()))
+    result = await reader.query_consumption_history()
+    assert result.fallback_used is False
+
+
+@pytest.mark.anyio
+async def test_consumption_history_kwh_by_weekday_keys_are_ints() -> None:
+    """kwh_by_weekday keys are integers 0–6."""
+    reader = _make_reader(tables=_make_consumption_tables(_fourteen_dates()))
+    result = await reader.query_consumption_history()
+    assert result.fallback_used is False
+    for key in result.kwh_by_weekday:
+        assert isinstance(key, int)
+        assert 0 <= key <= 6
+
+
+@pytest.mark.anyio
+async def test_consumption_history_today_expected_kwh_from_weekday_map() -> None:
+    """today_expected_kwh matches kwh_by_weekday[today.weekday()] when present."""
+    import datetime as _dt
+    reader = _make_reader(tables=_make_consumption_tables(_fourteen_dates()))
+    result = await reader.query_consumption_history()
+    today_wd = _dt.date.today().weekday()
+    if today_wd in result.kwh_by_weekday:
+        assert result.today_expected_kwh == pytest.approx(result.kwh_by_weekday[today_wd])
+
+
+@pytest.mark.anyio
+async def test_consumption_history_days_of_history_count() -> None:
+    """days_of_history equals the number of distinct calendar dates in mock records."""
+    reader = _make_reader(tables=_make_consumption_tables(_fourteen_dates()))
+    result = await reader.query_consumption_history()
+    assert result.days_of_history == 14
+
+
+@pytest.mark.anyio
+async def test_consumption_history_kwh_conversion() -> None:
+    """500 W mean over 1 day → 12.0 kWh (500 * 24 / 1000)."""
+    # Use 14 records all on different dates but same weekday — or just check
+    # that any entry in kwh_by_weekday is 500*24/1000 = 12.0 when value=500W.
+    dates = _fourteen_dates()
+    reader = _make_reader(tables=_make_consumption_tables(dates, value_w=500.0))
+    result = await reader.query_consumption_history()
+    assert result.fallback_used is False
+    # Every weekday bucket should be 12.0 kWh
+    for kwh in result.kwh_by_weekday.values():
+        assert kwh == pytest.approx(12.0)
+
+
+# ---------------------------------------------------------------------------
+# query_consumption_history — fallback path (< 7 days)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_consumption_history_fallback_true_with_few_records() -> None:
+    """fallback_used=True when records span only 3 distinct dates."""
+    import datetime as _dt
+    three_dates = [(_dt.date(2026, 1, 1) + _dt.timedelta(days=i)).isoformat() for i in range(3)]
+    reader = _make_reader(tables=_make_consumption_tables(three_dates))
+    result = await reader.query_consumption_history()
+    assert result.fallback_used is True
+
+
+@pytest.mark.anyio
+async def test_consumption_history_fallback_kwh_by_weekday_empty_on_few_records() -> None:
+    """kwh_by_weekday == {} when fallback is triggered (< 7 days)."""
+    import datetime as _dt
+    few_dates = [(_dt.date(2026, 3, 1) + _dt.timedelta(days=i)).isoformat() for i in range(4)]
+    reader = _make_reader(tables=_make_consumption_tables(few_dates))
+    result = await reader.query_consumption_history()
+    assert result.kwh_by_weekday == {}
+
+
+@pytest.mark.anyio
+async def test_consumption_history_no_records_returns_fallback() -> None:
+    """No tables at all → fallback_used=True."""
+    reader = _make_reader(tables=[])
+    result = await reader.query_consumption_history()
+    assert result.fallback_used is True
+
+
+@pytest.mark.anyio
+async def test_consumption_history_days_of_history_zero_on_no_records() -> None:
+    """days_of_history==0 when there are no records."""
+    reader = _make_reader(tables=[])
+    result = await reader.query_consumption_history()
+    assert result.days_of_history == 0
+
+
+# ---------------------------------------------------------------------------
+# query_consumption_history — seasonal fallback constants
+# ---------------------------------------------------------------------------
+
+
+def test_seasonal_fallback_winter_month() -> None:
+    """Month 12 (December) → 35.0 kWh/day."""
+    import datetime as _dt
+    from backend.influx_reader import _seasonal_fallback_kwh
+    assert _seasonal_fallback_kwh(_dt.date(2026, 12, 15)) == pytest.approx(35.0)
+
+
+def test_seasonal_fallback_winter_month_january() -> None:
+    """Month 1 (January) → 35.0 kWh/day."""
+    import datetime as _dt
+    from backend.influx_reader import _seasonal_fallback_kwh
+    assert _seasonal_fallback_kwh(_dt.date(2026, 1, 10)) == pytest.approx(35.0)
+
+
+def test_seasonal_fallback_summer_month() -> None:
+    """Month 7 (July) → 15.0 kWh/day."""
+    import datetime as _dt
+    from backend.influx_reader import _seasonal_fallback_kwh
+    assert _seasonal_fallback_kwh(_dt.date(2026, 7, 1)) == pytest.approx(15.0)
+
+
+def test_seasonal_fallback_shoulder_month() -> None:
+    """Month 4 (April) → 25.0 kWh/day."""
+    import datetime as _dt
+    from backend.influx_reader import _seasonal_fallback_kwh
+    assert _seasonal_fallback_kwh(_dt.date(2026, 4, 15)) == pytest.approx(25.0)
+
+
+def test_seasonal_fallback_shoulder_march() -> None:
+    """Month 3 (March) → 25.0 kWh/day (shoulder season)."""
+    import datetime as _dt
+    from backend.influx_reader import _seasonal_fallback_kwh
+    assert _seasonal_fallback_kwh(_dt.date(2026, 3, 20)) == pytest.approx(25.0)
+
+
+# ---------------------------------------------------------------------------
+# query_consumption_history — error handling
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_consumption_history_swallows_exception() -> None:
+    """Exception from query_api.query() → returns ConsumptionForecast, does not raise."""
+    from backend.schedule_models import ConsumptionForecast
+    reader = _make_reader(tables=RuntimeError("influx down"))
+    result = await reader.query_consumption_history()
+    assert isinstance(result, ConsumptionForecast)
+
+
+@pytest.mark.anyio
+async def test_consumption_history_exception_fallback_used_true() -> None:
+    """Exception path always returns fallback_used=True."""
+    reader = _make_reader(tables=ConnectionError("timeout"))
+    result = await reader.query_consumption_history()
+    assert result.fallback_used is True
+
+
+@pytest.mark.anyio
+async def test_consumption_history_exception_logs_warning(caplog: pytest.LogCaptureFixture) -> None:
+    """Exception path logs WARNING with 'influx consumption query failed'."""
+    import logging
+    reader = _make_reader(tables=OSError("network unreachable"))
+    with caplog.at_level(logging.WARNING, logger="backend.influx_reader"):
+        await reader.query_consumption_history()
+    assert any("influx consumption query failed" in r.message for r in caplog.records)
+
+
+@pytest.mark.anyio
+async def test_consumption_history_exception_days_of_history_zero() -> None:
+    """Exception path returns days_of_history=0."""
+    reader = _make_reader(tables=RuntimeError("boom"))
+    result = await reader.query_consumption_history()
+    assert result.days_of_history == 0
+
+
+@pytest.mark.anyio
+async def test_consumption_history_exception_kwh_by_weekday_empty() -> None:
+    """Exception path returns kwh_by_weekday={}."""
+    reader = _make_reader(tables=ValueError("bad query"))
+    result = await reader.query_consumption_history()
+    assert result.kwh_by_weekday == {}
+
