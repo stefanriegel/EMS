@@ -106,7 +106,7 @@ export default function App() {
       </main>
 
       <footer className="app-footer">
-        <span>EMS · M001-rwfoax</span>
+        <span>EMS · M004</span>
       </footer>
     </div>
   );

@@ -1,4 +1,4 @@
-/* EMS Dashboard — industrial dark theme */
+/* EMS Dashboard — consumer-friendly theme */
 
 :root {
   --bg-primary: #0d1117;
@@ -13,6 +13,13 @@
   --accent-blue: #3b82f6;
   --font-mono: "JetBrains Mono", "Fira Mono", "Courier New", monospace;
   --font-sans: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  /* Consumer palette — energy domain tokens used by EnergyFlowCard and future components */
+  --color-pv: #4ade80;
+  --color-battery: #fbbf24;
+  --color-home: #60a5fa;
+  --color-grid: #94a3b8;
+  --color-surface: #1a1f2e;
+  --color-surface-border: #2d3448;
 }
 
 *, *::before, *::after {
@@ -121,8 +128,9 @@ html, body {
 .card {
   background: var(--bg-card);
   border: 1px solid var(--bg-card-border);
-  border-radius: 6px;
+  border-radius: 12px;
   padding: 1.25rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
 
 .card-title {
