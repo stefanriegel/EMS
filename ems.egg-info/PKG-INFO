@@ -1,0 +1,13 @@
+Metadata-Version: 2.4
+Name: ems
+Version: 0.1.0
+Requires-Python: >=3.12
+Requires-Dist: huawei-solar>=2.5
+Requires-Dist: pymodbus<4,>=3.11
+Requires-Dist: fastapi
+Requires-Dist: uvicorn[standard]
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"
+Requires-Dist: anyio[trio]; extra == "dev"
+Requires-Dist: pytest-anyio; extra == "dev"
+Requires-Dist: pytest-mock; extra == "dev"

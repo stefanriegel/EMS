@@ -1,0 +1,25 @@
+[project]
+name = "ems"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "huawei-solar>=2.5",
+    "pymodbus>=3.11,<4",
+    "fastapi",
+    "uvicorn[standard]",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "anyio[trio]",
+    "pytest-anyio",
+    "pytest-mock",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
