@@ -84,6 +84,12 @@ def _victron_sentinel() -> VictronSystemData:
         ess_mode=None,
         system_state=None,
         vebus_state=None,
+        grid_power_w=None,
+        grid_l1_power_w=None,
+        grid_l2_power_w=None,
+        grid_l3_power_w=None,
+        consumption_w=None,
+        pv_on_grid_w=None,
         timestamp=0.0,  # always stale
     )
 

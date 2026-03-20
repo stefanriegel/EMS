@@ -48,6 +48,12 @@ def _make_system_data(**overrides) -> VictronSystemData:
         "ess_mode": 3,
         "system_state": 9,
         "vebus_state": 9,
+        "grid_power_w": None,
+        "grid_l1_power_w": None,
+        "grid_l2_power_w": None,
+        "grid_l3_power_w": None,
+        "consumption_w": None,
+        "pv_on_grid_w": None,
         "timestamp": 12345.0,
     }
     defaults.update(overrides)

@@ -89,6 +89,40 @@ class VictronSystemData:
     vebus_state: int | None
     """VE.Bus state register value, or ``None`` if not yet received."""
 
+    # --- Grid meter (Venus OS grid/40) ---
+
+    grid_power_w: float | None
+    """Total grid power in watts; positive = importing, negative = exporting.
+    Sourced from ``grid/40/Ac/Power`` (Venus OS grid meter).
+    ``None`` until first MQTT message arrives."""
+
+    grid_l1_power_w: float | None
+    """Phase L1 grid power in watts; positive = importing.
+    None until first MQTT message arrives."""
+
+    grid_l2_power_w: float | None
+    """Phase L2 grid power in watts; positive = importing.
+    None until first MQTT message arrives."""
+
+    grid_l3_power_w: float | None
+    """Phase L3 grid power in watts; positive = importing.
+    None until first MQTT message arrives."""
+
+    # --- System-level consumption (Venus OS system/0/Ac/Consumption) ---
+
+    consumption_w: float | None
+    """Total house consumption in watts, all phases combined.
+    Computed as L1+L2+L3 from ``system/0/Ac/Consumption/*/Power``.
+    ``None`` until all three phase values arrive."""
+
+    # --- PV-on-grid total (Venus OS system/0/Ac/PvOnGrid) ---
+
+    pv_on_grid_w: float | None
+    """Total AC-coupled PV power in watts, all phases combined.
+    Computed as L1+L2+L3 from ``system/0/Ac/PvOnGrid/*/Power``.
+    Covers ALL grid-tied PV inverters, not just the Huawei/SUN2000.
+    ``None`` until all three phase values arrive."""
+
     # --- Metadata ---
 
     timestamp: float

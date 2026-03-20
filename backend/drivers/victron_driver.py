@@ -395,6 +395,12 @@ class VictronDriver:
             ess_mode=s.get("ess_mode"),
             system_state=s.get("system_state"),
             vebus_state=s.get("vebus_state"),
+            grid_power_w=s.get("grid_power_w"),
+            grid_l1_power_w=s.get("grid_l1_power_w"),
+            grid_l2_power_w=s.get("grid_l2_power_w"),
+            grid_l3_power_w=s.get("grid_l3_power_w"),
+            consumption_w=consumption_w,
+            pv_on_grid_w=pv_on_grid_w,
             timestamp=time.monotonic(),
         )
 
