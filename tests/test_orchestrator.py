@@ -1767,6 +1767,106 @@ class TestGridCharge:
         state = orch._build_unified_state(huawei_w, victron_w)
         assert state.grid_charge_slot_active is True
 
+    # ------------------------------------------------------------------
+    # Setpoint tracking: _last_victron_setpoint updated by grid-charge methods
+    # ------------------------------------------------------------------
+
+    async def test_apply_grid_charge_updates_last_victron_setpoint(self):
+        """_apply_grid_charge_setpoints() must update _last_victron_setpoint to victron_w."""
+        victron_mock = MagicMock()
+        victron_mock.read_system_state = MagicMock(return_value=_make_victron())
+        victron_mock.write_ac_power_setpoint = MagicMock()
+
+        orch = _make_orchestrator(victron_mock=victron_mock)
+        await orch._poll()
+        orch._victron_available = True
+        orch._huawei_available = False
+
+        assert orch._last_victron_setpoint == 0.0  # precondition
+
+        await orch._apply_grid_charge_setpoints(0, 3000.0)
+
+        assert orch._last_victron_setpoint == 3000.0, (
+            f"Expected _last_victron_setpoint=3000.0 after grid charge apply, "
+            f"got {orch._last_victron_setpoint}"
+        )
+
+    async def test_cleanup_grid_charge_resets_last_victron_setpoint(self):
+        """_cleanup_grid_charge() must reset _last_victron_setpoint to 0.0."""
+        huawei_mock = MagicMock()
+        huawei_mock.read_master = AsyncMock(return_value=_make_master())
+        huawei_mock.read_battery = AsyncMock(return_value=_make_battery())
+        huawei_mock.write_max_discharge_power = AsyncMock()
+        huawei_mock.write_ac_charging = AsyncMock()
+        huawei_mock.write_max_charge_power = AsyncMock()
+
+        victron_mock = MagicMock()
+        victron_mock.read_system_state = MagicMock(return_value=_make_victron())
+        victron_mock.write_ac_power_setpoint = MagicMock()
+
+        orch = _make_orchestrator(huawei_mock=huawei_mock, victron_mock=victron_mock)
+        await orch._poll()
+        orch._victron_available = True
+        orch._huawei_available = True
+
+        # Simulate that grid charging was active and tracking was updated
+        orch._last_victron_setpoint = 5000.0
+
+        await orch._cleanup_grid_charge()
+
+        assert orch._last_victron_setpoint == 0.0, (
+            f"Expected _last_victron_setpoint=0.0 after cleanup, "
+            f"got {orch._last_victron_setpoint}"
+        )
+
+    async def test_first_normal_setpoint_after_grid_charge_not_suppressed(self):
+        """First normal _apply_setpoints after slot-exit must NOT be suppressed by hysteresis.
+
+        After cleanup resets _last_victron_setpoint=0.0, a new victron_w=2000.0 has
+        Δ=2000 which exceeds any reasonable hysteresis threshold — the write must proceed.
+        """
+        huawei_mock = MagicMock()
+        huawei_mock.read_master = AsyncMock(return_value=_make_master())
+        huawei_mock.read_battery = AsyncMock(return_value=_make_battery())
+        huawei_mock.write_max_discharge_power = AsyncMock()
+        huawei_mock.write_ac_charging = AsyncMock()
+        huawei_mock.write_max_charge_power = AsyncMock()
+
+        victron_mock = MagicMock()
+        victron_mock.read_system_state = MagicMock(return_value=_make_victron())
+        victron_mock.write_ac_power_setpoint = MagicMock()
+        victron_mock.write_disable_feed_in = MagicMock()
+
+        # Use a non-zero hysteresis to make the suppression risk realistic
+        orch = _make_orchestrator(
+            huawei_mock=huawei_mock,
+            victron_mock=victron_mock,
+            orch_config=OrchestratorConfig(
+                loop_interval_s=0.01,
+                debounce_cycles=1,
+                hysteresis_w=100,
+            ),
+        )
+        await orch._poll()
+        orch._victron_available = True
+        orch._huawei_available = True
+
+        # Simulate GRID_CHARGE → IDLE transition: prev=GRID_CHARGE, current=IDLE
+        orch._prev_control_state = ControlState.GRID_CHARGE
+        orch._control_state = ControlState.IDLE
+
+        # Cleanup would leave _last_victron_setpoint = 0.0 — confirm that here
+        orch._last_victron_setpoint = 0.0
+
+        # Apply a 2000 W victron setpoint — Δ=2000 >> hysteresis_w=100
+        await orch._apply_setpoints(0, 2000.0)
+
+        # write_ac_power_setpoint must have been called (not suppressed)
+        victron_mock.write_ac_power_setpoint.assert_called(), (
+            "write_ac_power_setpoint must be called after slot-exit when "
+            "_last_victron_setpoint was correctly reset to 0.0"
+        )
+
 
 # ===========================================================================
 # TestDischargeLock — DISCHARGE_LOCKED state machine contract (S02/T02)

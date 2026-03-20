@@ -774,6 +774,7 @@ class Orchestrator:
                     per_phase_w,
                     victron_w,
                 )
+                self._last_victron_setpoint = victron_w
             except Exception as exc:
                 logger.warning("GRID_CHARGE Victron write failed (%s): %s", type(exc).__name__, exc)
 
@@ -796,6 +797,7 @@ class Orchestrator:
                 for phase in (1, 2, 3):
                     self._victron.write_ac_power_setpoint(phase, 0.0)
                 logger.debug("GRID_CHARGE cleanup: Victron setpoints zeroed")
+                self._last_victron_setpoint = 0.0
             except Exception as exc:
                 logger.warning("GRID_CHARGE cleanup Victron failed (%s): %s", type(exc).__name__, exc)
 
