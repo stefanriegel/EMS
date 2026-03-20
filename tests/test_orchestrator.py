@@ -1867,6 +1867,273 @@ class TestGridCharge:
             "_last_victron_setpoint was correctly reset to 0.0"
         )
 
+    # ------------------------------------------------------------------
+    # Scheduler → orchestrator integration (T02)
+    # ------------------------------------------------------------------
+
+    async def test_integration_victron_only_slot_writes_positive_setpoints(self):
+        """Integration: poll + compute + apply with battery='victron' slot writes
+        positive per-phase setpoints to Victron and does NOT call write_ac_charging."""
+        huawei_mock = MagicMock()
+        huawei_mock.read_master = AsyncMock(return_value=_make_master())
+        huawei_mock.read_battery = AsyncMock(return_value=_make_battery(total_soc_pct=70.0))
+        huawei_mock.write_max_discharge_power = AsyncMock()
+        huawei_mock.write_ac_charging = AsyncMock()
+        huawei_mock.write_max_charge_power = AsyncMock()
+
+        victron_mock = MagicMock()
+        # Victron SoC=40%, below target 90% → slot is active
+        victron_mock.read_system_state = MagicMock(return_value=_make_victron(battery_soc_pct=40.0))
+        victron_mock.write_ac_power_setpoint = MagicMock()
+
+        orch = _make_orchestrator(huawei_mock=huawei_mock, victron_mock=victron_mock)
+
+        slot = _make_charge_slot(battery="victron", target_soc_pct=90.0, grid_charge_power_w=3000)
+        schedule = _make_schedule([slot])
+        orch.set_scheduler(_make_scheduler_mock(active_schedule=schedule))
+
+        await orch._poll()
+        huawei_w, victron_w = orch._compute_setpoints()
+        await orch._apply_setpoints(huawei_w, victron_w)
+
+        # Victron-only slot: huawei_w=0, victron_w=3000
+        assert orch._control_state == ControlState.GRID_CHARGE, (
+            f"Expected GRID_CHARGE, got {orch._control_state}"
+        )
+        assert victron_w == 3000.0, f"Expected victron_w=3000.0, got {victron_w}"
+        assert huawei_w == 0, f"Expected huawei_w=0, got {huawei_w}"
+
+        # Victron: write_ac_power_setpoint called 3× with +1000 W (positive → import)
+        assert victron_mock.write_ac_power_setpoint.call_count == 3, (
+            f"Expected 3 phase writes, got {victron_mock.write_ac_power_setpoint.call_count}"
+        )
+        per_phase = 3000.0 / 3.0
+        for call in victron_mock.write_ac_power_setpoint.call_args_list:
+            actual_w = call[0][1]  # second positional arg is watts
+            assert actual_w == pytest.approx(per_phase, abs=1.0), (
+                f"Expected +{per_phase} W per phase (positive = import), got {actual_w}"
+            )
+
+        # Huawei: victron-only slot with huawei_w=0 → Huawei gets write_ac_charging(False)
+        # (LUNA-done path: huawei_w=0 triggers ac_charging=False to keep Huawei idle)
+        huawei_mock.write_ac_charging.assert_awaited_once_with(False)
+
+        # Tracking must reflect what was written
+        assert orch._last_victron_setpoint == 3000.0, (
+            f"Expected _last_victron_setpoint=3000.0, got {orch._last_victron_setpoint}"
+        )
+
+    async def test_integration_slot_exit_cleanup_fires_both_drivers(self):
+        """Integration: full slot-exit cycle — GRID_CHARGE → IDLE cleans up both drivers
+        and resets _last_victron_setpoint to 0.0."""
+        huawei_mock = MagicMock()
+        # active_power_w=0: no grid import after slot exit → P_target=0 → discharge setpoint=0
+        # This ensures the normal apply path also writes 0 and tracking stays at 0.0.
+        huawei_mock.read_master = AsyncMock(return_value=_make_master(active_power_w=0))
+        huawei_mock.read_battery = AsyncMock(return_value=_make_battery(total_soc_pct=70.0))
+        huawei_mock.write_max_discharge_power = AsyncMock()
+        huawei_mock.write_ac_charging = AsyncMock()
+        huawei_mock.write_max_charge_power = AsyncMock()
+
+        victron_mock = MagicMock()
+        victron_mock.read_system_state = MagicMock(return_value=_make_victron(battery_soc_pct=40.0))
+        victron_mock.write_ac_power_setpoint = MagicMock()
+
+        orch = _make_orchestrator(huawei_mock=huawei_mock, victron_mock=victron_mock)
+
+        # Cycle 1: active slot → enters GRID_CHARGE
+        slot = _make_charge_slot(battery="huawei", target_soc_pct=90.0, grid_charge_power_w=5000)
+        schedule = _make_schedule([slot])
+        orch.set_scheduler(_make_scheduler_mock(active_schedule=schedule))
+
+        await orch._poll()
+        hw, vw = orch._compute_setpoints()
+        await orch._apply_setpoints(hw, vw)
+
+        assert orch._control_state == ControlState.GRID_CHARGE, (
+            f"Cycle-1: expected GRID_CHARGE, got {orch._control_state}"
+        )
+        huawei_mock.write_ac_charging.assert_awaited_with(True)
+
+        # Reset call counts before cycle 2
+        huawei_mock.write_ac_charging.reset_mock()
+        victron_mock.write_ac_power_setpoint.reset_mock()
+
+        # Cycle 2: no active slot → slot-exit → IDLE / DISCHARGE, cleanup fires
+        orch.set_scheduler(_make_scheduler_mock(active_schedule=None))
+
+        await orch._poll()
+        hw2, vw2 = orch._compute_setpoints()
+        await orch._apply_setpoints(hw2, vw2)
+
+        # State must have left GRID_CHARGE
+        assert orch._control_state != ControlState.GRID_CHARGE, (
+            f"Expected non-GRID_CHARGE after slot exit, got {orch._control_state}"
+        )
+
+        # Cleanup: Huawei AC charging disabled
+        huawei_mock.write_ac_charging.assert_awaited_with(False)
+
+        # Cleanup: Victron phases zeroed — at least 3 calls to write_ac_power_setpoint
+        # (cleanup writes 3× 0.0 first; normal apply path may write additional setpoints)
+        assert victron_mock.write_ac_power_setpoint.call_count >= 3, (
+            f"Expected at least 3 zero-writes on Victron cleanup, "
+            f"got {victron_mock.write_ac_power_setpoint.call_count}"
+        )
+        # The first 3 calls are the cleanup zeroes from _cleanup_grid_charge
+        cleanup_calls = victron_mock.write_ac_power_setpoint.call_args_list[:3]
+        for call in cleanup_calls:
+            actual_w = call[0][1]
+            assert actual_w == pytest.approx(0.0, abs=0.1), (
+                f"Expected 0 W per phase from cleanup, got {actual_w}"
+            )
+
+        # Tracking reset
+        assert orch._last_victron_setpoint == 0.0, (
+            f"Expected _last_victron_setpoint=0.0 after cleanup, "
+            f"got {orch._last_victron_setpoint}"
+        )
+
+    async def test_integration_luna_done_victron_takes_over(self):
+        """Integration: Huawei offline during a 'huawei' slot routes full power to Victron
+        (LUNA-done path). Victron gets positive per-phase setpoints."""
+        # Huawei is offline — no reads, no writes
+        huawei_mock = MagicMock()
+        huawei_mock.read_master = AsyncMock(side_effect=ConnectionError("offline"))
+        huawei_mock.read_battery = AsyncMock(side_effect=ConnectionError("offline"))
+        huawei_mock.write_max_discharge_power = AsyncMock()
+        huawei_mock.write_ac_charging = AsyncMock()
+        huawei_mock.write_max_charge_power = AsyncMock()
+
+        victron_mock = MagicMock()
+        victron_mock.read_system_state = MagicMock(return_value=_make_victron(battery_soc_pct=40.0))
+        victron_mock.write_ac_power_setpoint = MagicMock()
+
+        orch = _make_orchestrator(huawei_mock=huawei_mock, victron_mock=victron_mock)
+
+        slot = _make_charge_slot(battery="huawei", target_soc_pct=90.0, grid_charge_power_w=6000)
+        schedule = _make_schedule([slot])
+        orch.set_scheduler(_make_scheduler_mock(active_schedule=schedule))
+
+        await orch._poll()
+        # Huawei offline → _huawei_available=False → huawei_target_met=True → victron takes over
+        assert not orch._huawei_available, "Huawei should be unavailable after failed reads"
+
+        huawei_w, victron_w = orch._compute_setpoints()
+
+        # LUNA-done: huawei offline → huawei_target_met=True → victron_w = grid_charge_power_w
+        assert huawei_w == 0, f"Expected huawei_w=0 (offline), got {huawei_w}"
+        assert victron_w == pytest.approx(6000.0, abs=1.0), (
+            f"Expected victron_w=6000.0 (full power to Victron), got {victron_w}"
+        )
+        assert orch._control_state == ControlState.GRID_CHARGE, (
+            f"Expected GRID_CHARGE, got {orch._control_state}"
+        )
+
+        await orch._apply_setpoints(huawei_w, victron_w)
+
+        # Victron must receive positive per-phase setpoints
+        assert victron_mock.write_ac_power_setpoint.call_count == 3, (
+            f"Expected 3 Victron phase writes, got {victron_mock.write_ac_power_setpoint.call_count}"
+        )
+        per_phase = 6000.0 / 3.0
+        for call in victron_mock.write_ac_power_setpoint.call_args_list:
+            actual_w = call[0][1]
+            assert actual_w == pytest.approx(per_phase, abs=1.0), (
+                f"Expected +{per_phase} W per phase (positive = import), got {actual_w}"
+            )
+
+        # Huawei write methods must NOT have been called (it's offline)
+        huawei_mock.write_ac_charging.assert_not_called()
+        huawei_mock.write_max_charge_power.assert_not_called()
+
+        # Tracking updated
+        assert orch._last_victron_setpoint == pytest.approx(6000.0, abs=1.0), (
+            f"Expected _last_victron_setpoint=6000.0, got {orch._last_victron_setpoint}"
+        )
+
+    async def test_integration_grid_charge_victron_write_failure_no_crash(self, caplog):
+        """Integration: Victron write_ac_power_setpoint raises ConnectionError during GRID_CHARGE.
+        The orchestrator must not crash and must remain in GRID_CHARGE state."""
+        import logging
+
+        huawei_mock = MagicMock()
+        huawei_mock.read_master = AsyncMock(return_value=_make_master())
+        huawei_mock.read_battery = AsyncMock(return_value=_make_battery(total_soc_pct=70.0))
+        huawei_mock.write_max_discharge_power = AsyncMock()
+        huawei_mock.write_ac_charging = AsyncMock()
+        huawei_mock.write_max_charge_power = AsyncMock()
+
+        victron_mock = MagicMock()
+        victron_mock.read_system_state = MagicMock(return_value=_make_victron(battery_soc_pct=40.0))
+        # Simulate write failure on all phase writes
+        victron_mock.write_ac_power_setpoint = MagicMock(side_effect=ConnectionError("Victron unreachable"))
+
+        orch = _make_orchestrator(huawei_mock=huawei_mock, victron_mock=victron_mock)
+
+        slot = _make_charge_slot(battery="victron", target_soc_pct=90.0, grid_charge_power_w=3000)
+        schedule = _make_schedule([slot])
+        orch.set_scheduler(_make_scheduler_mock(active_schedule=schedule))
+
+        await orch._poll()
+        huawei_w, victron_w = orch._compute_setpoints()
+
+        # Must not raise despite Victron write failure
+        with caplog.at_level(logging.WARNING, logger="backend.orchestrator"):
+            await orch._apply_setpoints(huawei_w, victron_w)
+
+        # Still in GRID_CHARGE — transient write failure does not change control state
+        assert orch._control_state == ControlState.GRID_CHARGE, (
+            f"Expected GRID_CHARGE after write failure, got {orch._control_state}"
+        )
+
+        # WARNING must have been emitted for the failed write
+        warning_msgs = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
+        assert any("GRID_CHARGE" in m and "Victron" in m for m in warning_msgs), (
+            f"Expected WARNING about GRID_CHARGE Victron write failure, got: {warning_msgs}"
+        )
+
+        # Tracking must NOT have updated (write failed → keep previous value)
+        assert orch._last_victron_setpoint == 0.0, (
+            f"Expected _last_victron_setpoint=0.0 (write failed, not updated), "
+            f"got {orch._last_victron_setpoint}"
+        )
+
+    async def test_integration_both_offline_during_grid_charge(self):
+        """Integration: both drivers offline during active slot — _apply_grid_charge_setpoints
+        must perform no writes and exit cleanly without errors."""
+        huawei_mock = MagicMock()
+        huawei_mock.read_master = AsyncMock(return_value=_make_master())
+        huawei_mock.read_battery = AsyncMock(return_value=_make_battery(total_soc_pct=70.0))
+        huawei_mock.write_max_discharge_power = AsyncMock()
+        huawei_mock.write_ac_charging = AsyncMock()
+        huawei_mock.write_max_charge_power = AsyncMock()
+
+        victron_mock = MagicMock()
+        victron_mock.read_system_state = MagicMock(return_value=_make_victron(battery_soc_pct=40.0))
+        victron_mock.write_ac_power_setpoint = MagicMock()
+
+        orch = _make_orchestrator(huawei_mock=huawei_mock, victron_mock=victron_mock)
+        await orch._poll()
+
+        # Force both drivers offline
+        orch._huawei_available = False
+        orch._victron_available = False
+
+        # Call _apply_grid_charge_setpoints directly — must not raise, must not write
+        await orch._apply_grid_charge_setpoints(5000, 3000.0)
+
+        # No write calls to either driver
+        huawei_mock.write_ac_charging.assert_not_called()
+        huawei_mock.write_max_charge_power.assert_not_called()
+        victron_mock.write_ac_power_setpoint.assert_not_called()
+
+        # Tracking must remain at initial 0.0 (no writes occurred)
+        assert orch._last_victron_setpoint == 0.0, (
+            f"Expected _last_victron_setpoint=0.0 (both offline), "
+            f"got {orch._last_victron_setpoint}"
+        )
+
 
 # ===========================================================================
 # TestDischargeLock — DISCHARGE_LOCKED state machine contract (S02/T02)
