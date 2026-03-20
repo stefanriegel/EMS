@@ -9,8 +9,14 @@
  *      useEmsState polling fallback supplies pool + devices; tariff shows null.
  *   4. PoolOverview always receives `connected` from the WS hook so it renders
  *      the "⚠ Disconnected" banner when the WS is down.
+ *
+ * Routing:
+ *   - On first run (GET /api/setup/status → setup_complete: false), the app
+ *     auto-redirects to /setup.
+ *   - /setup renders SetupWizard; / renders the main dashboard.
  */
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { Route, Switch, useLocation } from "wouter";
 import { useEmsSocket } from "./hooks/useEmsSocket";
 import { useEmsState } from "./hooks/useEmsState";
 import { EnergyFlowCard } from "./components/EnergyFlowCard";
@@ -20,6 +26,7 @@ import { TariffCard } from "./components/TariffCard";
 import { OptimizationCard } from "./components/OptimizationCard";
 import { EvccCard } from "./components/EvccCard";
 import { LoadsCard } from "./components/LoadsCard";
+import { SetupWizard } from "./pages/SetupWizard";
 import type { PoolState, DevicesPayload } from "./types";
 
 // In production, location.host resolves to the FastAPI server address.
@@ -53,7 +60,10 @@ function FallbackConsumer({
   return null;
 }
 
-export default function App() {
+/**
+ * DashboardLayout — the main dashboard view, shown at /.
+ */
+function DashboardLayout() {
   const ws = useEmsSocket(WS_URL);
   const useFallback = !ws.connected && ws.retryCount > 0;
 
@@ -114,5 +124,39 @@ export default function App() {
         <span>EMS · M004</span>
       </footer>
     </div>
+  );
+}
+
+/**
+ * App — SPA root. Handles auto-redirect to /setup on first run, then
+ * delegates to route-matched components.
+ */
+export default function App() {
+  const [, setLocation] = useLocation();
+
+  // On mount: check setup status. If not complete, redirect to /setup.
+  // Silently ignore errors (no backend in preview/test environment).
+  useEffect(() => {
+    fetch("/api/setup/status")
+      .then((r) => r.json())
+      .then((data: { setup_complete: boolean }) => {
+        if (!data.setup_complete) {
+          setLocation("/setup");
+        }
+      })
+      .catch(() => {
+        // No backend available (preview/test environment) — stay on current route.
+      });
+  }, [setLocation]);
+
+  return (
+    <Switch>
+      <Route path="/setup">
+        <SetupWizard />
+      </Route>
+      <Route path="/">
+        <DashboardLayout />
+      </Route>
+    </Switch>
   );
 }
