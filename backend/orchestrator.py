@@ -565,20 +565,23 @@ class Orchestrator:
 
         # --- P_target: net discharge needed ---
         # positive = house needs energy (discharge), negative = surplus (charge)
-        if self._last_master is not None:
-            # master.active_power_w: positive = exporting to grid; we want
-            # net consumption = -(active_power_w) when it's negative (importing)
-            # For simplicity: P_target = discharge power requested from pool.
-            # Use master active power as grid import indicator.
-            # Positive active_power = export (PV surplus); negative = grid import.
-            # We cap P_target to the total max discharge of the pool.
+        if victron.grid_power_w is not None:
+            # Venus OS grid meter: positive = importing from grid → need to discharge
+            P_target = float(victron.grid_power_w)
+            logger.debug("P_target source: grid_meter (%.0f W)", P_target)
+        elif self._last_master is not None:
+            # Fallback: Huawei SUN2000 AC output (positive = export, negative = import)
             master_power = self._last_master.active_power_w
-            # If master is exporting (positive), P_target < 0 (charge signal)
-            # If master is importing (negative), P_target > 0 (discharge signal)
             P_target = float(-master_power)
+            logger.debug(
+                "P_target source: huawei_master (%.0f W, active_power=%.0f W)",
+                P_target,
+                master_power,
+            )
         else:
-            # No master data available at all — can't compute P_target
+            # No source available — hold at zero
             P_target = 0.0
+            logger.debug("P_target source: none available — holding at 0")
 
         # Clamp to physically achievable
         max_discharge = (
@@ -705,6 +708,15 @@ class Orchestrator:
         # Slot-exit cleanup: fired on the first cycle after leaving GRID_CHARGE
         if prev_state == ControlState.GRID_CHARGE and self._control_state != ControlState.GRID_CHARGE:
             await self._cleanup_grid_charge()
+
+        # ESS mode guard: modes 0 and 1 do not honour AcPowerSetpoint writes
+        if self._victron_available and self._last_victron.ess_mode not in {2, 3}:
+            logger.warning(
+                "Victron ESS mode %s — skipping setpoint writes (expected mode 2 or 3)",
+                self._last_victron.ess_mode,
+            )
+            self._prev_control_state = self._control_state
+            return
 
         if (
             huawei_delta < self._cfg.hysteresis_w
@@ -919,7 +931,7 @@ class Orchestrator:
         ) / (self._cfg.huawei_capacity_kwh + self._cfg.victron_capacity_kwh)
 
         huawei_headroom = max(0, battery.max_charge_power_w - battery.charge_power_w)
-        victron_headroom = max(0.0, victron.charge_power_w)
+        victron_headroom = max(0.0, self._cfg.victron_max_charge_w - victron.charge_power_w)
 
         combined_power = battery.total_charge_discharge_power_w + victron.battery_power_w
 

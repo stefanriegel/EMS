@@ -974,6 +974,215 @@ class TestBuildUnifiedState:
         expected_combined = (80.0 * 30.0 + 60.0 * 64.0) / 94.0
         assert state.combined_soc_pct == pytest.approx(expected_combined, abs=0.01)
 
+    async def test_victron_charge_headroom_reflects_remaining_capacity(self):
+        """victron_charge_headroom_w = max(0, victron_max_charge_w - charge_power_w)."""
+        # charge_power_w = max(0, battery_power_w); positive = charging
+        victron_data = _make_victron(battery_power_w=1500.0)  # charging at 1500 W
+
+        orch = _make_orchestrator(
+            orch_config=OrchestratorConfig(
+                loop_interval_s=0.01,
+                debounce_cycles=1,
+                hysteresis_w=0,
+                victron_max_charge_w=5000.0,
+            )
+        )
+        orch._huawei_available = True
+        orch._victron_available = True
+        orch._last_battery = _make_battery()
+        orch._last_victron = victron_data
+
+        state = orch._build_unified_state(0, 0.0)
+
+        # headroom = 5000 - 1500 = 3500
+        assert state.victron_charge_headroom_w == pytest.approx(3500.0)
+
+    async def test_victron_charge_headroom_clamps_to_zero_when_over_max(self):
+        """headroom is 0 when charge_power_w exceeds victron_max_charge_w."""
+        victron_data = _make_victron(battery_power_w=5500.0)  # charging at 5500 W (over max)
+
+        orch = _make_orchestrator(
+            orch_config=OrchestratorConfig(
+                loop_interval_s=0.01,
+                debounce_cycles=1,
+                hysteresis_w=0,
+                victron_max_charge_w=5000.0,
+            )
+        )
+        orch._huawei_available = True
+        orch._victron_available = True
+        orch._last_battery = _make_battery()
+        orch._last_victron = victron_data
+
+        state = orch._build_unified_state(0, 0.0)
+
+        assert state.victron_charge_headroom_w == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Tests: P_target source selection
+# ---------------------------------------------------------------------------
+
+class TestPTargetSource:
+    """Verify P_target is sourced from grid_power_w first, then master, then zero."""
+
+    async def test_p_target_uses_grid_power_w_when_available(self):
+        """When grid_power_w=3000, P_target=3000 → setpoints sum to ~3000W."""
+        battery = _make_battery(total_soc_pct=80.0, max_discharge_power_w=5000)
+        # grid importing 3000W → need to discharge 3000W
+        victron_data = _make_victron(battery_soc_pct=70.0, grid_power_w=3000.0)
+
+        huawei_mock = MagicMock()
+        huawei_mock.read_master = AsyncMock(
+            return_value=_make_master(active_power_w=0)  # master says zero (ignored when grid_power_w set)
+        )
+        huawei_mock.read_battery = AsyncMock(return_value=battery)
+        huawei_mock.write_max_discharge_power = AsyncMock()
+
+        victron_mock = MagicMock()
+        victron_mock.read_system_state = MagicMock(return_value=victron_data)
+
+        orch = _make_orchestrator(
+            huawei_mock=huawei_mock,
+            victron_mock=victron_mock,
+        )
+        await orch._poll()
+
+        huawei_w, victron_w = orch._compute_setpoints()
+
+        # Combined output should be ~3000W (may be clamped by SoC-ratio math, but >0)
+        assert huawei_w + victron_w == pytest.approx(3000.0, abs=1.0)
+        assert orch._control_state == ControlState.DISCHARGE
+
+    async def test_p_target_falls_back_to_master_when_grid_power_none(self):
+        """When grid_power_w=None, fall back to -master.active_power_w."""
+        battery = _make_battery(total_soc_pct=80.0, max_discharge_power_w=5000)
+        # master importing 2000W → P_target = -(-2000) = 2000W
+        victron_data = _make_victron(battery_soc_pct=70.0, grid_power_w=None)
+
+        huawei_mock = MagicMock()
+        huawei_mock.read_master = AsyncMock(
+            return_value=_make_master(active_power_w=-2000)  # importing
+        )
+        huawei_mock.read_battery = AsyncMock(return_value=battery)
+        huawei_mock.write_max_discharge_power = AsyncMock()
+
+        victron_mock = MagicMock()
+        victron_mock.read_system_state = MagicMock(return_value=victron_data)
+
+        orch = _make_orchestrator(
+            huawei_mock=huawei_mock,
+            victron_mock=victron_mock,
+        )
+        await orch._poll()
+
+        huawei_w, victron_w = orch._compute_setpoints()
+
+        # P_target should be 2000W from master fallback
+        assert huawei_w + victron_w == pytest.approx(2000.0, abs=1.0)
+        assert orch._control_state == ControlState.DISCHARGE
+
+    async def test_p_target_zero_when_both_sources_absent(self):
+        """When grid_power_w=None and _last_master=None, P_target=0 → IDLE."""
+        victron_data = _make_victron(battery_soc_pct=70.0, grid_power_w=None)
+
+        victron_mock = MagicMock()
+        victron_mock.read_system_state = MagicMock(return_value=victron_data)
+
+        # Make read_master fail so _last_master stays None
+        huawei_mock = MagicMock()
+        huawei_mock.read_master = AsyncMock(side_effect=Exception("no data"))
+        huawei_mock.read_battery = AsyncMock(return_value=_make_battery())
+        huawei_mock.write_max_discharge_power = AsyncMock()
+
+        orch = _make_orchestrator(
+            huawei_mock=huawei_mock,
+            victron_mock=victron_mock,
+        )
+        await orch._poll()  # read_master raises → _last_master stays None
+
+        assert orch._last_master is None
+
+        huawei_w, victron_w = orch._compute_setpoints()
+
+        assert huawei_w == 0
+        assert victron_w == 0.0
+        assert orch._control_state == ControlState.IDLE
+
+
+# ---------------------------------------------------------------------------
+# Tests: ESS mode guard
+# ---------------------------------------------------------------------------
+
+class TestEssModeGuard:
+    """Verify _apply_setpoints() skips Victron writes when ESS mode is 0 or 1."""
+
+    async def test_ess_mode_guard_skips_writes_mode_0(self):
+        """ESS mode 0 (OFF) → Victron write_ac_power_setpoint NOT called."""
+        battery = _make_battery(total_soc_pct=80.0, max_discharge_power_w=5000)
+        victron_data = _make_victron(battery_soc_pct=70.0, grid_power_w=2000.0, ess_mode=0)
+
+        huawei_mock = MagicMock()
+        huawei_mock.read_master = AsyncMock(return_value=_make_master())
+        huawei_mock.read_battery = AsyncMock(return_value=battery)
+        huawei_mock.write_max_discharge_power = AsyncMock()
+
+        victron_mock = MagicMock()
+        victron_mock.read_system_state = MagicMock(return_value=victron_data)
+        victron_mock.write_ac_power_setpoint = MagicMock()
+
+        orch = _make_orchestrator(huawei_mock=huawei_mock, victron_mock=victron_mock)
+        await orch._poll()
+
+        huawei_w, victron_w = orch._compute_setpoints()
+        await orch._apply_setpoints(huawei_w, victron_w)
+
+        victron_mock.write_ac_power_setpoint.assert_not_called()
+
+    async def test_ess_mode_guard_skips_writes_mode_1(self):
+        """ESS mode 1 (Optimized without BatteryLife) → Victron write NOT called."""
+        battery = _make_battery(total_soc_pct=80.0, max_discharge_power_w=5000)
+        victron_data = _make_victron(battery_soc_pct=70.0, grid_power_w=2000.0, ess_mode=1)
+
+        huawei_mock = MagicMock()
+        huawei_mock.read_master = AsyncMock(return_value=_make_master())
+        huawei_mock.read_battery = AsyncMock(return_value=battery)
+        huawei_mock.write_max_discharge_power = AsyncMock()
+
+        victron_mock = MagicMock()
+        victron_mock.read_system_state = MagicMock(return_value=victron_data)
+        victron_mock.write_ac_power_setpoint = MagicMock()
+
+        orch = _make_orchestrator(huawei_mock=huawei_mock, victron_mock=victron_mock)
+        await orch._poll()
+
+        huawei_w, victron_w = orch._compute_setpoints()
+        await orch._apply_setpoints(huawei_w, victron_w)
+
+        victron_mock.write_ac_power_setpoint.assert_not_called()
+
+    async def test_ess_mode_guard_allows_writes_mode_2(self):
+        """ESS mode 2 (Optimized with BatteryLife) → Victron writes ARE executed."""
+        battery = _make_battery(total_soc_pct=80.0, max_discharge_power_w=5000)
+        victron_data = _make_victron(battery_soc_pct=70.0, grid_power_w=2000.0, ess_mode=2)
+
+        huawei_mock = MagicMock()
+        huawei_mock.read_master = AsyncMock(return_value=_make_master())
+        huawei_mock.read_battery = AsyncMock(return_value=battery)
+        huawei_mock.write_max_discharge_power = AsyncMock()
+
+        victron_mock = MagicMock()
+        victron_mock.read_system_state = MagicMock(return_value=victron_data)
+        victron_mock.write_ac_power_setpoint = MagicMock()
+
+        orch = _make_orchestrator(huawei_mock=huawei_mock, victron_mock=victron_mock)
+        await orch._poll()
+
+        huawei_w, victron_w = orch._compute_setpoints()
+        await orch._apply_setpoints(huawei_w, victron_w)
+
+        victron_mock.write_ac_power_setpoint.assert_called()
+
 
 # ---------------------------------------------------------------------------
 # Tests: phase imbalance detection
