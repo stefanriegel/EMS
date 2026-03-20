@@ -191,9 +191,13 @@ async def get_state(
 
 @api_router.get("/health")
 async def get_health(
-    orchestrator: Orchestrator = Depends(get_orchestrator),
+    orchestrator: Orchestrator | None = Depends(get_orchestrator),
 ) -> dict[str, Any]:
     """Return a structured health report.
+
+    Accepts ``None`` from :func:`get_orchestrator` so it works in degraded
+    mode (orchestrator not started) — returns status "offline" with safe
+    defaults rather than crashing.
 
     Response shape::
 
@@ -206,13 +210,13 @@ async def get_health(
             "uptime_s": float
         }
     """
-    state = orchestrator.get_state()
+    state = orchestrator.get_state() if orchestrator is not None else None
     return {
         "status": _health_status(state),
         "huawei_available": state.huawei_available if state else False,
         "victron_available": state.victron_available if state else False,
         "control_state": str(state.control_state) if state else "IDLE",
-        "last_error": orchestrator.get_last_error(),
+        "last_error": orchestrator.get_last_error() if orchestrator is not None else None,
         "uptime_s": time.monotonic() - _start_time,
     }
 
@@ -661,6 +665,16 @@ async def ws_state(
     raised inside the loop exits the handler cleanly (manager.disconnect called
     in the finally block).
     """
+    # --- Auth check (when ADMIN_PASSWORD_HASH is set) ---
+    from backend.auth import AdminConfig, verify_token
+
+    admin_cfg = AdminConfig.from_env()
+    if admin_cfg.password_hash:
+        token = ws.cookies.get("ems_token", "")
+        if not verify_token(token, admin_cfg.jwt_secret):
+            await ws.close(code=4401)
+            return
+
     orchestrator: Orchestrator = ws.app.state.orchestrator
     tariff_engine = getattr(ws.app.state, "tariff_engine", None)
 

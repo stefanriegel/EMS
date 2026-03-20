@@ -5,6 +5,8 @@ uvicorn[standard]
 paho-mqtt>=2.1
 influxdb-client[async]>=1.45
 httpx
+python-jose[cryptography]
+passlib[bcrypt]
 
 [dev]
 pytest>=8

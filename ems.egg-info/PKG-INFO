@@ -9,6 +9,8 @@ Requires-Dist: uvicorn[standard]
 Requires-Dist: paho-mqtt>=2.1
 Requires-Dist: influxdb-client[async]>=1.45
 Requires-Dist: httpx
+Requires-Dist: python-jose[cryptography]
+Requires-Dist: passlib[bcrypt]
 Provides-Extra: dev
 Requires-Dist: pytest>=8; extra == "dev"
 Requires-Dist: anyio[trio]; extra == "dev"

@@ -46,6 +46,7 @@ from fastapi import FastAPI
 from starlette.staticfiles import StaticFiles
 
 from backend.api import api_router
+from backend.auth import AdminConfig, AuthMiddleware, auth_router
 from backend.config import HuaweiConfig, InfluxConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig, EvccConfig, SchedulerConfig, EvccMqttConfig, HaMqttConfig, TelegramConfig, HaRestConfig
 from backend.setup_config import load_setup_config, EMS_CONFIG_PATH
 from backend.setup_api import setup_router
@@ -329,8 +330,10 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+    app.add_middleware(AuthMiddleware, admin_cfg=AdminConfig.from_env())
     app.include_router(api_router)
     app.include_router(setup_router)
+    app.include_router(auth_router)
 
     # Mount the React SPA build artifacts.  The os.path.exists guard is
     # mandatory: without it, uvicorn raises RuntimeError at startup in CI or
