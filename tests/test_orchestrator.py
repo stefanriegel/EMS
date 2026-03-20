@@ -774,8 +774,13 @@ class TestBothDriversFailed:
 
 class TestVictronWriteConvention:
     async def test_victron_setpoint_is_negative_per_phase(self):
-        """Victron write_ac_power_setpoint uses -victron_w/3 for discharge."""
-        victron_data = _make_victron(battery_soc_pct=60.0)
+        """Victron write_ac_power_setpoint uses -grid_lN_power_w for per-phase discharge."""
+        victron_data = _make_victron(
+            battery_soc_pct=60.0,
+            grid_l1_power_w=300.0,
+            grid_l2_power_w=300.0,
+            grid_l3_power_w=300.0,
+        )
 
         huawei_mock = MagicMock()
         huawei_mock.write_max_discharge_power = AsyncMock()
@@ -797,10 +802,10 @@ class TestVictronWriteConvention:
         orch._victron_available = True
         orch._last_victron = victron_data
 
-        # Write a 900 W discharge setpoint (300 W per phase)
+        # Write a 900 W discharge setpoint — per-phase uses grid_lN readings (300 W each)
         await orch._apply_setpoints(0, 900.0)
 
-        # All three phases should receive -300 W
+        # All three phases should receive -300 W (from grid_lN_power_w, not equal split)
         expected_per_phase = -300.0
         calls = victron_mock.write_ac_power_setpoint.call_args_list
         assert len(calls) == 3
@@ -811,7 +816,11 @@ class TestVictronWriteConvention:
 
     async def test_victron_3_phases_each_receive_call(self):
         """All three phases (1, 2, 3) receive exactly one write call each."""
-        victron_data = _make_victron()
+        victron_data = _make_victron(
+            grid_l1_power_w=200.0,
+            grid_l2_power_w=200.0,
+            grid_l3_power_w=200.0,
+        )
 
         victron_mock = MagicMock()
         victron_mock.write_ac_power_setpoint = MagicMock()
@@ -2567,3 +2576,183 @@ class TestTelegramWiring:
 
         mock_notifier.send_alert.assert_not_called()
 
+
+# ---------------------------------------------------------------------------
+# Tests: per-phase setpoint dispatch
+# ---------------------------------------------------------------------------
+
+class TestPerPhaseDispatch:
+    """Verify _apply_setpoints() per-phase dispatch: values, fallback, clamping, dead-band."""
+
+    def _orch_with_victron(self, **victron_overrides):
+        """Return (orch, victron_mock, victron_data) ready for _apply_setpoints calls."""
+        victron_data = _make_victron(**victron_overrides)
+
+        victron_mock = MagicMock()
+        victron_mock.write_ac_power_setpoint = MagicMock()
+
+        orch = _make_orchestrator(
+            victron_mock=victron_mock,
+            orch_config=OrchestratorConfig(
+                loop_interval_s=0.01,
+                debounce_cycles=1,
+                hysteresis_w=0,  # disable Huawei combined dead-band for these tests
+            ),
+        )
+        orch._victron_available = True
+        orch._last_victron = victron_data
+        return orch, victron_mock, victron_data
+
+    async def test_per_phase_uses_individual_grid_readings(self):
+        """Per-phase dispatch uses each phase's own grid reading, not equal split."""
+        orch, victron_mock, _ = self._orch_with_victron(
+            grid_l1_power_w=200.0,
+            grid_l2_power_w=400.0,
+            grid_l3_power_w=600.0,
+        )
+
+        await orch._apply_setpoints(0, 1200.0)
+
+        calls = victron_mock.write_ac_power_setpoint.call_args_list
+        assert len(calls) == 3
+        phase_to_value = {c[0][0]: c[0][1] for c in calls}
+        assert phase_to_value[1] == pytest.approx(-200.0, abs=0.1)
+        assert phase_to_value[2] == pytest.approx(-400.0, abs=0.1)
+        assert phase_to_value[3] == pytest.approx(-600.0, abs=0.1)
+
+    async def test_per_phase_none_falls_back_to_equal_split(self):
+        """All grid_lN=None → equal-split fallback; all three phases still written."""
+        orch, victron_mock, _ = self._orch_with_victron(
+            grid_l1_power_w=None,
+            grid_l2_power_w=None,
+            grid_l3_power_w=None,
+        )
+
+        await orch._apply_setpoints(0, 900.0)
+
+        calls = victron_mock.write_ac_power_setpoint.call_args_list
+        assert len(calls) == 3
+        for c in calls:
+            assert c[0][1] == pytest.approx(-300.0, abs=0.1)
+
+    async def test_per_phase_partial_none_uses_equal_split_for_missing_phase(self):
+        """L1 available, L2/L3 None → L1 uses grid reading; L2/L3 use equal split."""
+        orch, victron_mock, _ = self._orch_with_victron(
+            grid_l1_power_w=300.0,
+            grid_l2_power_w=None,
+            grid_l3_power_w=None,
+        )
+
+        await orch._apply_setpoints(0, 900.0)
+
+        calls = victron_mock.write_ac_power_setpoint.call_args_list
+        assert len(calls) == 3
+        phase_to_value = {c[0][0]: c[0][1] for c in calls}
+        # L1 uses its grid reading (-300.0); L2/L3 fall back to equal split (-900/3 = -300.0)
+        assert phase_to_value[1] == pytest.approx(-300.0, abs=0.1)
+        assert phase_to_value[2] == pytest.approx(-300.0, abs=0.1)
+        assert phase_to_value[3] == pytest.approx(-300.0, abs=0.1)
+
+    async def test_per_phase_clamp_max_positive_import(self):
+        """Grid reading > 4600 W → setpoint clamped to -4600 W."""
+        orch, victron_mock, _ = self._orch_with_victron(
+            grid_l1_power_w=5000.0,
+            grid_l2_power_w=5000.0,
+            grid_l3_power_w=5000.0,
+        )
+
+        await orch._apply_setpoints(0, 15000.0)
+
+        calls = victron_mock.write_ac_power_setpoint.call_args_list
+        assert len(calls) == 3
+        for c in calls:
+            assert c[0][1] == pytest.approx(-4600.0, abs=0.1)
+
+    async def test_per_phase_clamp_min_negative_export(self):
+        """Grid reading < -4600 W (exporting) → setpoint clamped to +4600 W."""
+        orch, victron_mock, _ = self._orch_with_victron(
+            grid_l1_power_w=-5000.0,
+            grid_l2_power_w=-5000.0,
+            grid_l3_power_w=-5000.0,
+        )
+
+        await orch._apply_setpoints(0, -15000.0)
+
+        calls = victron_mock.write_ac_power_setpoint.call_args_list
+        assert len(calls) == 3
+        for c in calls:
+            assert c[0][1] == pytest.approx(4600.0, abs=0.1)
+
+    async def test_per_phase_dead_band_suppresses_writes_when_all_deltas_small(self):
+        """All three per-phase deltas < 20 W → write_ac_power_setpoint NOT called."""
+        orch, victron_mock, _ = self._orch_with_victron(
+            grid_l1_power_w=300.0,
+            grid_l2_power_w=400.0,
+            grid_l3_power_w=600.0,
+        )
+        # Last written setpoints close to the new values (delta 10, 10, 10 < 20 W)
+        orch._last_l1_setpoint = -290.0
+        orch._last_l2_setpoint = -390.0
+        orch._last_l3_setpoint = -590.0
+
+        await orch._apply_setpoints(0, 1300.0)
+
+        victron_mock.write_ac_power_setpoint.assert_not_called()
+
+    async def test_per_phase_dead_band_allows_writes_when_any_delta_large(self):
+        """One phase delta ≥ 20 W → all three phases are written."""
+        orch, victron_mock, _ = self._orch_with_victron(
+            grid_l1_power_w=250.0,  # new setpoint -250, last -200 → delta 50 W ≥ 20
+            grid_l2_power_w=210.0,  # new setpoint -210, last -200 → delta 10 W < 20
+            grid_l3_power_w=215.0,  # new setpoint -215, last -200 → delta 15 W < 20
+        )
+        orch._last_l1_setpoint = -200.0
+        orch._last_l2_setpoint = -200.0
+        orch._last_l3_setpoint = -200.0
+
+        await orch._apply_setpoints(0, 675.0)
+
+        calls = victron_mock.write_ac_power_setpoint.call_args_list
+        assert len(calls) == 3
+        called_phases = sorted(c[0][0] for c in calls)
+        assert called_phases == [1, 2, 3]
+
+
+# ---------------------------------------------------------------------------
+# Tests: get_device_snapshot() per-phase grid fields
+# ---------------------------------------------------------------------------
+
+class TestGetDeviceSnapshot:
+    """Verify get_device_snapshot() exposes per-phase grid fields in victron dict."""
+
+    def test_device_snapshot_victron_includes_grid_phase_fields(self):
+        """get_device_snapshot() victron dict includes grid_l1/l2/l3_power_w."""
+        orch = _make_orchestrator()
+        orch._last_victron = _make_victron(
+            grid_l1_power_w=100.0,
+            grid_l2_power_w=200.0,
+            grid_l3_power_w=300.0,
+        )
+
+        snapshot = orch.get_device_snapshot()
+        victron = snapshot["victron"]
+
+        assert victron["grid_l1_power_w"] == pytest.approx(100.0)
+        assert victron["grid_l2_power_w"] == pytest.approx(200.0)
+        assert victron["grid_l3_power_w"] == pytest.approx(300.0)
+
+    def test_device_snapshot_victron_grid_phase_fields_none_when_unavailable(self):
+        """grid_lN_power_w fields are None when VictronSystemData has no phase readings."""
+        orch = _make_orchestrator()
+        orch._last_victron = _make_victron(
+            grid_l1_power_w=None,
+            grid_l2_power_w=None,
+            grid_l3_power_w=None,
+        )
+
+        snapshot = orch.get_device_snapshot()
+        victron = snapshot["victron"]
+
+        assert victron["grid_l1_power_w"] is None
+        assert victron["grid_l2_power_w"] is None
+        assert victron["grid_l3_power_w"] is None
