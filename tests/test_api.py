@@ -65,6 +65,9 @@ class MockOrchestrator:
     def get_last_error(self) -> str | None:
         return self._last_error
 
+    def get_working_mode(self) -> int | None:
+        return None
+
     def get_device_snapshot(self) -> dict:
         return self._device_snapshot
 
@@ -292,6 +295,43 @@ async def test_get_health_exposes_last_error() -> None:
         resp = await client.get("/api/health")
 
     assert resp.json()["last_error"] == "Connection refused"
+
+
+@pytest.mark.anyio
+async def test_get_health_exposes_huawei_working_mode() -> None:
+    """GET /api/health includes huawei_working_mode from the orchestrator."""
+    orch = MockOrchestrator(state=_make_state())
+    # Override get_working_mode to return a specific value
+    orch.get_working_mode = lambda: 3  # type: ignore[method-assign]
+    app = _build_test_app(orch)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/health")
+
+    assert resp.status_code == 200
+    assert resp.json()["huawei_working_mode"] == 3
+
+
+@pytest.mark.anyio
+async def test_get_health_working_mode_null_when_orchestrator_none() -> None:
+    """GET /api/health returns huawei_working_mode=null in degraded mode (no orchestrator)."""
+    from backend.main import create_app
+    from fastapi import FastAPI
+    from backend.api import api_router, get_orchestrator
+
+    app = FastAPI(title="EMS-test-degraded")
+    app.include_router(api_router)
+    app.dependency_overrides[get_orchestrator] = lambda: None
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/health")
+
+    assert resp.status_code == 200
+    assert resp.json()["huawei_working_mode"] is None
 
 
 # ---------------------------------------------------------------------------

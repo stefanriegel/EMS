@@ -218,6 +218,7 @@ async def get_health(
         "control_state": str(state.control_state) if state else "IDLE",
         "last_error": orchestrator.get_last_error() if orchestrator is not None else None,
         "uptime_s": time.monotonic() - _start_time,
+        "huawei_working_mode": orchestrator.get_working_mode() if orchestrator is not None else None,
     }
 
 

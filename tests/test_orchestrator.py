@@ -2756,3 +2756,128 @@ class TestGetDeviceSnapshot:
         assert victron["grid_l1_power_w"] is None
         assert victron["grid_l2_power_w"] is None
         assert victron["grid_l3_power_w"] is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: Huawei working mode capture and logging
+# ---------------------------------------------------------------------------
+
+
+class TestHuaweiWorkingMode:
+    """Working-mode is captured once on first successful battery read.
+
+    Uses caplog (pytest's built-in log capture) for all log assertions.
+    """
+
+    @pytest.mark.anyio
+    async def test_info_logged_for_expected_mode_2(self, caplog):
+        """MAXIMISE_SELF_CONSUMPTION (mode=2) logs INFO only — no WARNING."""
+        import logging
+
+        orch = _make_orchestrator()
+        orch._huawei.read_battery = AsyncMock(return_value=_make_battery(working_mode=2))
+
+        with caplog.at_level(logging.DEBUG, logger="backend.orchestrator"):
+            await orch._poll()
+
+        info_msgs = [r.message for r in caplog.records if r.levelno == logging.INFO]
+        assert any("Huawei working mode: MAXIMISE_SELF_CONSUMPTION (2)" in m for m in info_msgs), (
+            f"Expected INFO not found in: {info_msgs}"
+        )
+        warn_msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert not any("write_max_discharge_power" in m for m in warn_msgs), (
+            f"Unexpected WARNING found: {warn_msgs}"
+        )
+        assert orch.get_working_mode() == 2
+
+    @pytest.mark.anyio
+    async def test_info_logged_for_expected_mode_5(self, caplog):
+        """TIME_OF_USE_LUNA2000 (mode=5) logs INFO only — no WARNING."""
+        import logging
+
+        orch = _make_orchestrator()
+        orch._huawei.read_battery = AsyncMock(return_value=_make_battery(working_mode=5))
+
+        with caplog.at_level(logging.DEBUG, logger="backend.orchestrator"):
+            await orch._poll()
+
+        info_msgs = [r.message for r in caplog.records if r.levelno == logging.INFO]
+        assert any("TIME_OF_USE_LUNA2000 (5)" in m for m in info_msgs)
+        warn_msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert not any("write_max_discharge_power" in m for m in warn_msgs)
+        assert orch.get_working_mode() == 5
+
+    @pytest.mark.anyio
+    async def test_warning_logged_for_unexpected_mode(self, caplog):
+        """An unexpected mode (e.g. 1=FIXED_CHARGE_DISCHARGE) logs a WARNING."""
+        import logging
+
+        orch = _make_orchestrator()
+        orch._huawei.read_battery = AsyncMock(return_value=_make_battery(working_mode=1))
+
+        with caplog.at_level(logging.WARNING, logger="backend.orchestrator"):
+            await orch._poll()
+
+        warn_msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("write_max_discharge_power" in m for m in warn_msgs), (
+            f"Expected WARNING not found in: {warn_msgs}"
+        )
+        assert orch.get_working_mode() == 1
+
+    @pytest.mark.anyio
+    async def test_log_fires_only_once_across_multiple_polls(self, caplog):
+        """The working-mode log block must not repeat on subsequent poll cycles."""
+        import logging
+
+        orch = _make_orchestrator()
+        orch._huawei.read_battery = AsyncMock(return_value=_make_battery(working_mode=2))
+
+        with caplog.at_level(logging.INFO, logger="backend.orchestrator"):
+            await orch._poll()
+            await orch._poll()
+            await orch._poll()
+
+        working_mode_logs = [
+            r for r in caplog.records
+            if r.levelno == logging.INFO and "Huawei working mode" in r.message
+        ]
+        assert len(working_mode_logs) == 1, (
+            f"Expected exactly 1 working-mode log; got {len(working_mode_logs)}"
+        )
+        assert orch._working_mode_logged is True
+
+    @pytest.mark.anyio
+    async def test_working_mode_none_logs_unavailable(self, caplog):
+        """When working_mode=None the INFO log says 'unavailable' and get_working_mode() is None."""
+        import logging
+
+        orch = _make_orchestrator()
+        orch._huawei.read_battery = AsyncMock(return_value=_make_battery(working_mode=None))
+
+        with caplog.at_level(logging.INFO, logger="backend.orchestrator"):
+            await orch._poll()
+
+        info_msgs = [r.message for r in caplog.records if r.levelno == logging.INFO]
+        assert any("unavailable" in m for m in info_msgs), (
+            f"Expected 'unavailable' INFO not found in: {info_msgs}"
+        )
+        assert orch.get_working_mode() is None
+
+    def test_get_working_mode_returns_none_before_first_poll(self):
+        """get_working_mode() is None before any successful battery read."""
+        orch = _make_orchestrator()
+        assert orch.get_working_mode() is None
+
+    @pytest.mark.anyio
+    async def test_working_mode_not_updated_after_huawei_failure(self, caplog):
+        """A failed poll does not set _working_mode_logged; mode stays None."""
+        import logging
+
+        orch = _make_orchestrator()
+        orch._huawei.read_battery = AsyncMock(side_effect=Exception("Modbus timeout"))
+
+        with caplog.at_level(logging.WARNING, logger="backend.orchestrator"):
+            await orch._poll()
+
+        assert orch._working_mode_logged is False
+        assert orch.get_working_mode() is None

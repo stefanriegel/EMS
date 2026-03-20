@@ -33,6 +33,7 @@ import time
 from typing import TYPE_CHECKING
 
 from backend.config import OrchestratorConfig, SystemConfig
+from backend.drivers.huawei_driver import StorageWorkingModesC  # noqa: F401 re-exported
 from backend.drivers.huawei_models import HuaweiBatteryData
 from backend.drivers.victron_models import VictronSystemData
 from backend.notifier import ALERT_COMM_FAILURE, ALERT_DISCHARGE_LOCKED, ALERT_DISCHARGE_RELEASED
@@ -142,6 +143,9 @@ class Orchestrator:
         self._last_master: "HuaweiMasterData | None" = None  # retained across poll failures
         self._huawei_available: bool = False
         self._victron_available: bool = False
+        # Working mode captured on first successful battery read (never reset)
+        self._huawei_working_mode: int | None = None
+        self._working_mode_logged: bool = False
 
         # Track when each driver was last seen online (monotonic)
         self._huawei_last_seen: float = 0.0
@@ -226,6 +230,10 @@ class Orchestrator:
         if self._huawei_error:
             return self._huawei_error
         return self._victron_error
+
+    def get_working_mode(self) -> int | None:
+        """Return the Huawei working mode read at startup, or None if not yet read."""
+        return self._huawei_working_mode
 
     def set_scheduler(self, scheduler: "Scheduler") -> None:
         """Inject the Scheduler reference for GRID_CHARGE slot detection."""
@@ -462,6 +470,26 @@ class Orchestrator:
                 self._last_battery.total_soc_pct,
                 self._last_battery.total_charge_discharge_power_w,
             )
+            # One-time working-mode capture and log (never reset after first read)
+            if not self._working_mode_logged:
+                self._working_mode_logged = True
+                mode = self._last_battery.working_mode
+                self._huawei_working_mode = mode
+                if mode is not None:
+                    try:
+                        name = StorageWorkingModesC(mode).name
+                    except ValueError:
+                        name = "UNKNOWN"
+                    logger.info("Huawei working mode: %s (%d)", name, mode)
+                    if mode not in {2, 5}:
+                        logger.warning(
+                            "Huawei working mode %s (%d) will silently ignore "
+                            "write_max_discharge_power — set to MAXIMISE_SELF_CONSUMPTION or "
+                            "TIME_OF_USE_LUNA2000",
+                            name, mode,
+                        )
+                else:
+                    logger.info("Huawei working mode: unavailable (register returned None)")
         except Exception as exc:
             self._huawei_error = str(exc)
             self._huawei_available = False
