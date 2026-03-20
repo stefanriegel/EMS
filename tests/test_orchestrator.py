@@ -1221,7 +1221,7 @@ class TestPhaseImbalance:
         import logging
 
         victron_data = _make_victron(
-            l1=_make_phase(power_w=0.0),  # large deviation
+            l1=_make_phase(power_w=0.0),  # large deviation from 1000W setpoint
             l2=_make_phase(power_w=0.0),
             l3=_make_phase(power_w=0.0),
         )
@@ -1229,10 +1229,14 @@ class TestPhaseImbalance:
         orch = _make_orchestrator()
         orch._victron_available = True
         orch._last_victron = victron_data
+        # Set last-written per-phase setpoints so deviation is 1000W per phase
+        orch._last_l1_setpoint = -1000.0
+        orch._last_l2_setpoint = -1000.0
+        orch._last_l3_setpoint = -1000.0
 
         with caplog.at_level(logging.WARNING, logger="backend.orchestrator"):
             for _ in range(4):
-                orch._check_phase_imbalance(3000.0)  # 1000W/phase expected
+                orch._check_phase_imbalance(3000.0)  # 1000W/phase commanded
 
         assert orch._phase_imbalance_cycles > 2
         assert any("Phase imbalance" in r.message for r in caplog.records)
@@ -1248,8 +1252,12 @@ class TestPhaseImbalance:
         orch._victron_available = True
         orch._last_victron = victron_data
         orch._phase_imbalance_cycles = 5  # pre-set high
+        # Commanded 1000W per phase → measured ~1000W → no imbalance
+        orch._last_l1_setpoint = -1000.0
+        orch._last_l2_setpoint = -1000.0
+        orch._last_l3_setpoint = -1000.0
 
-        # Measured ~1000W per phase vs 1000W setpoint → no imbalance
+        # Measured ~1000W per phase vs 1000W commanded → no imbalance
         orch._check_phase_imbalance(3000.0)
 
         assert orch._phase_imbalance_cycles == 0

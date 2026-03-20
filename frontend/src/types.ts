@@ -58,6 +58,13 @@ export interface VictronSnapshot {
   l1_voltage_v: number;
   l2_voltage_v: number;
   l3_voltage_v: number;
+  // System-level Venus OS totals
+  grid_power_w: number | null;       // positive = importing, negative = exporting
+  grid_l1_power_w: number | null;    // per-phase grid import/export at L1
+  grid_l2_power_w: number | null;
+  grid_l3_power_w: number | null;
+  consumption_w: number | null;      // total house load across all phases
+  pv_on_grid_w: number | null;       // total AC-coupled PV across all inverters
 }
 
 export interface DevicesPayload {

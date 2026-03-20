@@ -9,8 +9,10 @@
 
 Sign conventions:
   * Huawei setpoints: positive watts = discharge power limit.
-  * Victron setpoints: ``write_ac_power_setpoint(phase, -watts/3)`` —
-    negative = export (discharge); each phase gets an equal third.
+  * Victron setpoints: ``write_ac_power_setpoint(N, -grid_lN_power_w)`` —
+    negative = export (discharge); each phase individually zeroes its measured
+    grid import.  Falls back to ``-(victron_w / 3.0)`` per phase when
+    grid_lN_power_w is None.
 
 Logging::
 
@@ -152,6 +154,9 @@ class Orchestrator:
         # --- Setpoint tracking ---
         self._last_huawei_setpoint: int = 0
         self._last_victron_setpoint: float = 0.0
+        self._last_l1_setpoint: float = 0.0
+        self._last_l2_setpoint: float = 0.0
+        self._last_l3_setpoint: float = 0.0
 
         # --- State machine ---
         self._control_state: ControlState = ControlState.IDLE
@@ -310,6 +315,13 @@ class Orchestrator:
             "l1_voltage_v": victron.l1.voltage_v,
             "l2_voltage_v": victron.l2.voltage_v,
             "l3_voltage_v": victron.l3.voltage_v,
+            # System-level totals from Venus OS (all PV inverters, grid meter, house load)
+            "grid_power_w": victron.grid_power_w,
+            "grid_l1_power_w": victron.grid_l1_power_w,
+            "grid_l2_power_w": victron.grid_l2_power_w,
+            "grid_l3_power_w": victron.grid_l3_power_w,
+            "consumption_w": victron.consumption_w,
+            "pv_on_grid_w": victron.pv_on_grid_w,
         }
 
         return {"huawei": huawei_dict, "victron": victron_dict}
@@ -681,17 +693,20 @@ class Orchestrator:
     # ------------------------------------------------------------------
 
     async def _apply_setpoints(self, huawei_w: int, victron_w: float) -> None:
-        """Write computed setpoints to both drivers with hysteresis and debounce.
+        """Write computed setpoints to both drivers with hysteresis and dead-band.
 
-        Hysteresis: if both setpoints are within ``hysteresis_w`` of the last
-        applied values, skip the write entirely (prevents micro-oscillation).
+        Huawei: combined 200W hysteresis on the discharge limit.
+        Victron: per-phase 20W dead-band — all three writes suppressed when all
+        three phases are within 20W of the last written value.
 
         Debounce is handled in _compute_setpoints via _transition_state;
         by the time _apply_setpoints is called, ``self._control_state`` already
         reflects the committed (debounced) state.
 
-        Victron writes use negative watts (negative = export/discharge):
-          ``write_ac_power_setpoint(phase, -victron_w/3)`` for phase in (1, 2, 3).
+        Victron writes are per-phase (negative = export/discharge):
+          ``write_ac_power_setpoint(N, -grid_lN_power_w)`` — each phase
+          individually zeroes its measured grid import.  Falls back to
+          ``-(victron_w / 3.0)`` per phase when grid_lN_power_w is None.
         """
         huawei_delta = abs(huawei_w - self._last_huawei_setpoint)
         victron_delta = abs(victron_w - self._last_victron_setpoint)
@@ -718,20 +733,44 @@ class Orchestrator:
             self._prev_control_state = self._control_state
             return
 
-        if (
-            huawei_delta < self._cfg.hysteresis_w
-            and victron_delta < self._cfg.hysteresis_w
-        ):
+        # --- Compute per-phase Victron setpoints ---
+        PHASE_MAX_W = 4600.0
+        PHASE_DEAD_BAND_W = 20.0
+
+        victron = self._last_victron
+        l1 = victron.grid_l1_power_w
+        l2 = victron.grid_l2_power_w
+        l3 = victron.grid_l3_power_w
+
+        if l1 is None and l2 is None and l3 is None:
+            logger.warning(
+                "Victron per-phase grid readings unavailable — falling back to equal split"
+            )
+
+        equal_split = -(victron_w / 3.0)
+        sp1 = max(-PHASE_MAX_W, min(PHASE_MAX_W, -l1 if l1 is not None else equal_split))
+        sp2 = max(-PHASE_MAX_W, min(PHASE_MAX_W, -l2 if l2 is not None else equal_split))
+        sp3 = max(-PHASE_MAX_W, min(PHASE_MAX_W, -l3 if l3 is not None else equal_split))
+
+        # Per-phase dead-band: suppress all three Victron writes when all phases are within 20W
+        victron_suppressed = (
+            abs(sp1 - self._last_l1_setpoint) < PHASE_DEAD_BAND_W
+            and abs(sp2 - self._last_l2_setpoint) < PHASE_DEAD_BAND_W
+            and abs(sp3 - self._last_l3_setpoint) < PHASE_DEAD_BAND_W
+        )
+
+        # Huawei hysteresis check (unchanged, uses combined 200W threshold)
+        if huawei_delta < self._cfg.hysteresis_w and victron_suppressed:
             logger.debug(
-                "Hysteresis: suppressing write (Δhuawei=%d W, Δvictron=%.0f W < %d W)",
+                "Hysteresis: suppressing write (Δhuawei=%d W < %d W, all per-phase deltas < %.0f W)",
                 huawei_delta,
-                victron_delta,
                 self._cfg.hysteresis_w,
+                PHASE_DEAD_BAND_W,
             )
             return
 
         # --- Write Huawei ---
-        if self._huawei_available:
+        if self._huawei_available and huawei_delta >= self._cfg.hysteresis_w:
             try:
                 await self._huawei.write_max_discharge_power(huawei_w)
                 self._last_huawei_setpoint = huawei_w
@@ -741,17 +780,20 @@ class Orchestrator:
                     "Huawei write failed (%s): %s", type(exc).__name__, exc
                 )
 
-        # --- Write Victron (3-phase equal split, negative = discharge) ---
-        if self._victron_available:
-            per_phase_w = -(victron_w / 3.0)
+        # --- Write Victron (per-phase, negative = discharge/export) ---
+        if self._victron_available and not victron_suppressed:
             try:
-                for phase in (1, 2, 3):
-                    self._victron.write_ac_power_setpoint(phase, per_phase_w)
+                for phase, sp, attr in (
+                    (1, sp1, "_last_l1_setpoint"),
+                    (2, sp2, "_last_l2_setpoint"),
+                    (3, sp3, "_last_l3_setpoint"),
+                ):
+                    self._victron.write_ac_power_setpoint(phase, sp)
+                    setattr(self, attr, sp)
                 self._last_victron_setpoint = victron_w
                 logger.debug(
-                    "Victron per-phase setpoint %.0f W (total %.0f W discharge)",
-                    per_phase_w,
-                    victron_w,
+                    "Victron per-phase setpoint L1=%.0f L2=%.0f L3=%.0f W (total=%.0f W demand)",
+                    sp1, sp2, sp3, victron_w,
                 )
             except Exception as exc:
                 logger.warning(
@@ -825,21 +867,26 @@ class Orchestrator:
         Checks each measured phase power against the per-phase setpoint.
         If any phase deviates by > 500 W for > 2 consecutive cycles, logs WARNING.
         """
-        per_phase_setpoint = victron_setpoint_w / 3.0  # magnitude
+        per_phase_setpoints = {
+            1: self._last_l1_setpoint,
+            2: self._last_l2_setpoint,
+            3: self._last_l3_setpoint,
+        }
         threshold_w = 500.0
 
         victron = self._last_victron
         imbalance_detected = False
 
-        for phase_name, phase_data in (
-            ("L1", victron.l1),
-            ("L2", victron.l2),
-            ("L3", victron.l3),
+        for phase_num, phase_name, phase_data in (
+            (1, "L1", victron.l1),
+            (2, "L2", victron.l2),
+            (3, "L3", victron.l3),
         ):
-            # Measured power is positive for import; setpoint is for discharge (export)
+            # Measured power is positive for import; setpoint is for discharge (export, negative)
             # We compare the magnitude of what was measured vs what was commanded
             measured_magnitude = abs(phase_data.power_w)
-            deviation = abs(measured_magnitude - per_phase_setpoint)
+            commanded_magnitude = abs(per_phase_setpoints[phase_num])
+            deviation = abs(measured_magnitude - commanded_magnitude)
             if deviation > threshold_w:
                 imbalance_detected = True
                 logger.debug(
@@ -847,7 +894,7 @@ class Orchestrator:
                     "setpoint=%.0f W deviation=%.0f W",
                     phase_name,
                     measured_magnitude,
-                    per_phase_setpoint,
+                    commanded_magnitude,
                     deviation,
                 )
 
@@ -856,8 +903,7 @@ class Orchestrator:
             if self._phase_imbalance_cycles > 2:
                 logger.warning(
                     "Phase imbalance: measured power deviates >500 W from setpoint "
-                    "(%.0f W per-phase) for %d consecutive cycles",
-                    per_phase_setpoint,
+                    "for %d consecutive cycles",
                     self._phase_imbalance_cycles,
                 )
         else:
