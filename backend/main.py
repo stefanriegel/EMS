@@ -47,6 +47,8 @@ from starlette.staticfiles import StaticFiles
 
 from backend.api import api_router
 from backend.config import HuaweiConfig, InfluxConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig, EvccConfig, SchedulerConfig, EvccMqttConfig, HaMqttConfig, TelegramConfig, HaRestConfig
+from backend.setup_config import load_setup_config, EMS_CONFIG_PATH
+from backend.setup_api import setup_router
 from backend.ha_rest_client import HomeAssistantClient
 from backend.drivers.huawei_driver import HuaweiDriver
 from backend.drivers.victron_driver import VictronDriver
@@ -97,171 +99,209 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     On shutdown (after the ``yield``), the orchestrator is stopped gracefully
     and both drivers are disconnected.
 
-    Raises
-    ------
-    KeyError
-        If ``HUAWEI_HOST`` or ``VICTRON_HOST`` environment variables are not set.
+    If ``HUAWEI_HOST`` / ``VICTRON_HOST`` are absent (and no wizard config is
+    present on disk), the lifespan starts in **degraded setup-only mode**:
+    ``app.state.orchestrator`` is set to ``None`` and only the setup endpoints
+    are served.  Existing ``GET /api/state`` callers will receive 503 via the
+    ``get_orchestrator()`` dependency — which is the correct signal that the
+    orchestrator is not running.
     """
-    # --- Read configuration from environment ---
-    huawei_cfg = HuaweiConfig.from_env()
-    victron_cfg = VictronConfig.from_env()
-    sys_cfg = SystemConfig()
-    orch_cfg = OrchestratorConfig()
+    # --- Load wizard-persisted config and inject into env (setdefault = env vars win) ---
+    config_path = os.environ.get("EMS_CONFIG_PATH", EMS_CONFIG_PATH)
+    app.state.setup_config_path = config_path
+    setup_cfg = load_setup_config(config_path)
+    if setup_cfg is not None:
+        os.environ.setdefault("HUAWEI_HOST", setup_cfg.huawei_host)
+        os.environ.setdefault("HUAWEI_PORT", str(setup_cfg.huawei_port))
+        os.environ.setdefault("VICTRON_HOST", setup_cfg.victron_host)
+        os.environ.setdefault("VICTRON_PORT", str(setup_cfg.victron_port))
+        os.environ.setdefault("EVCC_HOST", setup_cfg.evcc_host)
+        os.environ.setdefault("EVCC_PORT", str(setup_cfg.evcc_port))
+        os.environ.setdefault("EVCC_MQTT_HOST", setup_cfg.evcc_mqtt_host)
+        os.environ.setdefault("EVCC_MQTT_PORT", str(setup_cfg.evcc_mqtt_port))
+        os.environ.setdefault("HA_URL", setup_cfg.ha_url)
+        os.environ.setdefault("HA_TOKEN", setup_cfg.ha_token)
+        os.environ.setdefault("HA_HEAT_PUMP_ENTITY_ID", setup_cfg.ha_heat_pump_entity_id)
 
-    logger.info(
-        "EMS starting up — Huawei=%s:%d  Victron=%s:%d",
-        huawei_cfg.host,
-        huawei_cfg.port,
-        victron_cfg.host,
-        victron_cfg.port,
-    )
-
-    # --- Connect drivers ---
-    huawei = HuaweiDriver(
-        host=huawei_cfg.host,
-        port=huawei_cfg.port,
-        master_slave_id=huawei_cfg.master_slave_id,
-        slave_slave_id=huawei_cfg.slave_slave_id,
-        timeout_s=huawei_cfg.timeout_s,
-    )
-    victron = VictronDriver(
-        host=victron_cfg.host,
-        port=victron_cfg.port,
-        timeout_s=victron_cfg.timeout_s,
-        discovery_timeout_s=victron_cfg.discovery_timeout_s,
-    )
-
-    await huawei.connect()
-    logger.info("Huawei driver connected")
+    # --- Orchestrator + hardware drivers (degraded mode on missing env vars) ---
     try:
-        await victron.connect()
-        logger.info("Victron driver connected")
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Victron driver failed to connect — running without Victron: %s", exc)
+        huawei_cfg = HuaweiConfig.from_env()
+        victron_cfg = VictronConfig.from_env()
+        sys_cfg = SystemConfig()
+        orch_cfg = OrchestratorConfig()
 
-    # --- Instantiate tariff engine ---
-    tariff_cfg = TariffConfig.from_env()
-    tariff_engine = CompositeTariffEngine(
-        octopus=tariff_cfg.octopus, modul3=tariff_cfg.modul3
-    )
-    app.state.tariff_engine = tariff_engine
-    logger.info(
-        "Tariff engine initialised — Octopus tz=%s Modul3 tz=%s windows=%d",
-        tariff_cfg.octopus.timezone,
-        tariff_cfg.modul3.timezone,
-        len(tariff_cfg.modul3.windows),
-    )
-
-    # --- Instantiate InfluxDB client and metrics writer ---
-    influx_cfg = InfluxConfig.from_env()
-    influx_client = InfluxDBClientAsync(
-        url=influx_cfg.url, token=influx_cfg.token, org=influx_cfg.org
-    )
-    metrics_writer = InfluxMetricsWriter(influx_client, influx_cfg.bucket)
-    metrics_reader = InfluxMetricsReader(influx_client, influx_cfg.org, influx_cfg.bucket)
-    logger.info(
-        "InfluxDB client connected — url=%s org=%s", influx_cfg.url, influx_cfg.org
-    )
-
-    # --- Instantiate EVCC client and scheduler ---
-    evcc_cfg = EvccConfig.from_env()
-    sched_cfg = SchedulerConfig.from_env()
-    evcc_client = EvccClient(evcc_cfg)
-    scheduler = Scheduler(evcc_client, metrics_reader, tariff_engine, sys_cfg, orch_cfg)
-    app.state.scheduler = scheduler
-    logger.info(
-        "Scheduler wired — run_hour=%d charge_window=%d–%d min",
-        sched_cfg.run_hour,
-        sched_cfg.grid_charge_start_min,
-        sched_cfg.grid_charge_end_min,
-    )
-
-    # --- Start orchestrator ---
-    orchestrator = Orchestrator(
-        huawei, victron, sys_cfg, orch_cfg,
-        writer=metrics_writer,
-        tariff_engine=tariff_engine,
-    )
-    await orchestrator.start()
-    logger.info("Orchestrator control loop started")
-    orchestrator.set_scheduler(scheduler)
-    logger.info("Orchestrator: scheduler wired for GRID_CHARGE slot detection")
-
-    # Store on app.state so the DI layer can retrieve it
-    app.state.orchestrator = orchestrator
-    app.state.metrics_reader = metrics_reader
-
-    # --- EVCC MQTT driver ---
-    evcc_mqtt_cfg = EvccMqttConfig.from_env()
-    evcc_driver = EvccMqttDriver(host=evcc_mqtt_cfg.host, port=evcc_mqtt_cfg.port)
-    await evcc_driver.connect()
-    orchestrator.set_evcc_monitor(evcc_driver)
-    app.state.evcc_driver = evcc_driver
-    logger.info(
-        "EVCC MQTT driver connected — host=%s:%d", evcc_mqtt_cfg.host, evcc_mqtt_cfg.port
-    )
-
-    # --- HA MQTT client ---
-    ha_mqtt_cfg = HaMqttConfig.from_env()
-    ha_client = HomeAssistantMqttClient(
-        host=ha_mqtt_cfg.host,
-        port=ha_mqtt_cfg.port,
-        username=ha_mqtt_cfg.username,
-        password=ha_mqtt_cfg.password,
-    )
-    await ha_client.connect()
-    app.state.ha_mqtt_client = ha_client
-    logger.info(
-        "HA MQTT client connecting — host=%s:%d", ha_mqtt_cfg.host, ha_mqtt_cfg.port
-    )
-
-    # --- Telegram notifier ---
-    telegram_cfg = TelegramConfig.from_env()
-    notifier: TelegramNotifier | None = None
-    if telegram_cfg.token and telegram_cfg.chat_id:
-        notifier = TelegramNotifier(
-            token=telegram_cfg.token,
-            chat_id=telegram_cfg.chat_id,
-        )
-        logger.info("Telegram notifier configured")
-    else:
-        logger.info("Telegram notifier disabled — TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set")
-    app.state.notifier = notifier
-    if notifier is not None:
-        orchestrator.set_notifier(notifier)
-        logger.info("Orchestrator: Telegram notifier wired")
-
-    # --- HA REST client ---
-    ha_rest_cfg = HaRestConfig.from_env()
-    if ha_rest_cfg.url and ha_rest_cfg.token:
-        ha_rest_client = HomeAssistantClient(
-            ha_rest_cfg.url,
-            ha_rest_cfg.token,
-            ha_rest_cfg.heat_pump_entity_id,
-        )
-        await ha_rest_client.start()
-        app.state.ha_rest_client = ha_rest_client
         logger.info(
-            "HA REST client configured — entity_id=%s", ha_rest_cfg.heat_pump_entity_id
+            "EMS starting up — Huawei=%s:%d  Victron=%s:%d",
+            huawei_cfg.host,
+            huawei_cfg.port,
+            victron_cfg.host,
+            victron_cfg.port,
         )
-    else:
+
+        huawei = HuaweiDriver(
+            host=huawei_cfg.host,
+            port=huawei_cfg.port,
+            master_slave_id=huawei_cfg.master_slave_id,
+            slave_slave_id=huawei_cfg.slave_slave_id,
+            timeout_s=huawei_cfg.timeout_s,
+        )
+        victron = VictronDriver(
+            host=victron_cfg.host,
+            port=victron_cfg.port,
+            timeout_s=victron_cfg.timeout_s,
+            discovery_timeout_s=victron_cfg.discovery_timeout_s,
+        )
+
+        await huawei.connect()
+        logger.info("Huawei driver connected")
+        try:
+            await victron.connect()
+            logger.info("Victron driver connected")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Victron driver failed to connect — running without Victron: %s", exc)
+
+        # --- Instantiate EVCC client and scheduler (needs sys_cfg / orch_cfg) ---
+        evcc_cfg = EvccConfig.from_env()
+        sched_cfg = SchedulerConfig.from_env()
+
+        # --- Instantiate tariff engine ---
+        tariff_cfg = TariffConfig.from_env()
+        tariff_engine = CompositeTariffEngine(
+            octopus=tariff_cfg.octopus, modul3=tariff_cfg.modul3
+        )
+        app.state.tariff_engine = tariff_engine
+        logger.info(
+            "Tariff engine initialised — Octopus tz=%s Modul3 tz=%s windows=%d",
+            tariff_cfg.octopus.timezone,
+            tariff_cfg.modul3.timezone,
+            len(tariff_cfg.modul3.windows),
+        )
+
+        # --- Instantiate InfluxDB client and metrics writer ---
+        influx_cfg = InfluxConfig.from_env()
+        influx_client = InfluxDBClientAsync(
+            url=influx_cfg.url, token=influx_cfg.token, org=influx_cfg.org
+        )
+        metrics_writer = InfluxMetricsWriter(influx_client, influx_cfg.bucket)
+        metrics_reader = InfluxMetricsReader(influx_client, influx_cfg.org, influx_cfg.bucket)
+        logger.info(
+            "InfluxDB client connected — url=%s org=%s", influx_cfg.url, influx_cfg.org
+        )
+
+        evcc_client = EvccClient(evcc_cfg)
+        scheduler = Scheduler(evcc_client, metrics_reader, tariff_engine, sys_cfg, orch_cfg)
+        app.state.scheduler = scheduler
+        logger.info(
+            "Scheduler wired — run_hour=%d charge_window=%d–%d min",
+            sched_cfg.run_hour,
+            sched_cfg.grid_charge_start_min,
+            sched_cfg.grid_charge_end_min,
+        )
+
+        # --- Start orchestrator ---
+        orchestrator = Orchestrator(
+            huawei, victron, sys_cfg, orch_cfg,
+            writer=metrics_writer,
+            tariff_engine=tariff_engine,
+        )
+        await orchestrator.start()
+        logger.info("Orchestrator control loop started")
+        orchestrator.set_scheduler(scheduler)
+        logger.info("Orchestrator: scheduler wired for GRID_CHARGE slot detection")
+
+        app.state.orchestrator = orchestrator
+        app.state.metrics_reader = metrics_reader
+
+        # --- EVCC MQTT driver ---
+        evcc_mqtt_cfg = EvccMqttConfig.from_env()
+        evcc_driver = EvccMqttDriver(host=evcc_mqtt_cfg.host, port=evcc_mqtt_cfg.port)
+        await evcc_driver.connect()
+        orchestrator.set_evcc_monitor(evcc_driver)
+        app.state.evcc_driver = evcc_driver
+        logger.info(
+            "EVCC MQTT driver connected — host=%s:%d", evcc_mqtt_cfg.host, evcc_mqtt_cfg.port
+        )
+
+        # --- HA MQTT client ---
+        ha_mqtt_cfg = HaMqttConfig.from_env()
+        ha_client = HomeAssistantMqttClient(
+            host=ha_mqtt_cfg.host,
+            port=ha_mqtt_cfg.port,
+            username=ha_mqtt_cfg.username,
+            password=ha_mqtt_cfg.password,
+        )
+        await ha_client.connect()
+        app.state.ha_mqtt_client = ha_client
+        logger.info(
+            "HA MQTT client connecting — host=%s:%d", ha_mqtt_cfg.host, ha_mqtt_cfg.port
+        )
+
+        # --- Telegram notifier ---
+        telegram_cfg = TelegramConfig.from_env()
+        notifier: TelegramNotifier | None = None
+        if telegram_cfg.token and telegram_cfg.chat_id:
+            notifier = TelegramNotifier(
+                token=telegram_cfg.token,
+                chat_id=telegram_cfg.chat_id,
+            )
+            logger.info("Telegram notifier configured")
+        else:
+            logger.info("Telegram notifier disabled — TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set")
+        app.state.notifier = notifier
+        if notifier is not None:
+            orchestrator.set_notifier(notifier)
+            logger.info("Orchestrator: Telegram notifier wired")
+
+        # --- HA REST client ---
+        ha_rest_cfg = HaRestConfig.from_env()
+        if ha_rest_cfg.url and ha_rest_cfg.token:
+            ha_rest_client = HomeAssistantClient(
+                ha_rest_cfg.url,
+                ha_rest_cfg.token,
+                ha_rest_cfg.heat_pump_entity_id,
+            )
+            await ha_rest_client.start()
+            app.state.ha_rest_client = ha_rest_client
+            logger.info(
+                "HA REST client configured — entity_id=%s", ha_rest_cfg.heat_pump_entity_id
+            )
+        else:
+            app.state.ha_rest_client = None
+            logger.info("HA REST client not configured — HA_URL / HA_TOKEN not set")
+
+    except KeyError as exc:
+        logger.warning(
+            "Orchestrator not started — missing required env var %s "
+            "(setup-only mode; open /setup to configure)",
+            exc,
+        )
+        app.state.orchestrator = None
+        app.state.scheduler = None
+        app.state.metrics_reader = None
+        app.state.evcc_driver = None
+        app.state.ha_mqtt_client = None
+        app.state.notifier = None
         app.state.ha_rest_client = None
-        logger.info("HA REST client not configured — HA_URL / HA_TOKEN not set")
 
     yield  # application is running
 
     # --- Shutdown ---
-    logger.info("EMS shutting down — stopping orchestrator")
-    await orchestrator.stop()
-    await evcc_driver.close()
-    await ha_client.disconnect()
+    if app.state.orchestrator is not None:
+        logger.info("EMS shutting down — stopping orchestrator")
+        await app.state.orchestrator.stop()
+    if app.state.evcc_driver is not None:
+        await app.state.evcc_driver.close()
+    if app.state.ha_mqtt_client is not None:
+        await app.state.ha_mqtt_client.disconnect()
     if app.state.ha_rest_client is not None:
         await app.state.ha_rest_client.stop()
-    await influx_client.close()
-    logger.info("Disconnecting Victron driver")
-    await victron.close()
-    logger.info("Disconnecting Huawei driver")
-    await huawei.close()
+    if app.state.orchestrator is not None:
+        # influx_client and drivers are only created in the non-degraded path
+        await influx_client.close()
+        logger.info("Disconnecting Victron driver")
+        await victron.close()
+        logger.info("Disconnecting Huawei driver")
+        await huawei.close()
     logger.info("EMS shutdown complete")
 
 
@@ -290,6 +330,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     app.include_router(api_router)
+    app.include_router(setup_router)
 
     # Mount the React SPA build artifacts.  The os.path.exists guard is
     # mandatory: without it, uvicorn raises RuntimeError at startup in CI or
