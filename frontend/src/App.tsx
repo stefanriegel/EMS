@@ -27,6 +27,7 @@ import { OptimizationCard } from "./components/OptimizationCard";
 import { EvccCard } from "./components/EvccCard";
 import { LoadsCard } from "./components/LoadsCard";
 import { SetupWizard } from "./pages/SetupWizard";
+import { Login } from "./pages/Login";
 import type { PoolState, DevicesPayload } from "./types";
 
 // In production, location.host resolves to the FastAPI server address.
@@ -138,9 +139,15 @@ export default function App() {
   // Silently ignore errors (no backend in preview/test environment).
   useEffect(() => {
     fetch("/api/setup/status")
-      .then((r) => r.json())
-      .then((data: { setup_complete: boolean }) => {
-        if (!data.setup_complete) {
+      .then((r) => {
+        if (r.status === 401) {
+          setLocation("/login");
+          return null;
+        }
+        return r.json();
+      })
+      .then((data: { setup_complete: boolean } | null) => {
+        if (data && !data.setup_complete) {
           setLocation("/setup");
         }
       })
@@ -153,6 +160,9 @@ export default function App() {
     <Switch>
       <Route path="/setup">
         <SetupWizard />
+      </Route>
+      <Route path="/login">
+        <Login />
       </Route>
       <Route path="/">
         <DashboardLayout />
