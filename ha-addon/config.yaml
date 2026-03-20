@@ -1,0 +1,76 @@
+name: EMS – Energy Management System
+version: "0.1.0"
+slug: ems
+description: >
+  Energy Management System for Huawei SUN2000 + Victron MultiPlus II.
+  Orchestrates battery dispatch, EVCC coordination, InfluxDB logging,
+  and Home Assistant telemetry integration.
+arch:
+  - aarch64
+  - amd64
+startup: application
+boot: auto
+ports:
+  "8000/tcp": 8000
+host_network: false
+map:
+  - config:rw
+
+options:
+  # --- Required: hardware endpoints ---
+  huawei_host: ""
+  victron_host: ""
+  influxdb_url: ""
+  influxdb_token: ""
+  # --- Optional: port overrides and service addresses ---
+  huawei_port: 502
+  victron_port: 1883
+  influxdb_org: "ems"
+  influxdb_bucket: "ems"
+  evcc_host: "192.168.0.10"
+  evcc_port: 7070
+  evcc_mqtt_host: "192.168.0.10"
+  evcc_mqtt_port: 1883
+  # --- Home Assistant REST API ---
+  ha_url: ""
+  ha_token: ""
+  ha_heat_pump_entity_id: ""
+  # --- Home Assistant MQTT ---
+  ha_mqtt_host: "192.168.0.10"
+  ha_mqtt_port: 1883
+  ha_mqtt_username: ""
+  ha_mqtt_password: ""
+  # --- Telegram alerts ---
+  telegram_bot_token: ""
+  telegram_chat_id: ""
+  # --- Auth (opt-in; leave blank to disable) ---
+  admin_password_hash: ""
+  jwt_secret: ""
+  # --- Logging ---
+  log_level: "INFO"
+
+schema:
+  huawei_host: str
+  victron_host: str
+  influxdb_url: str
+  influxdb_token: password
+  huawei_port: int
+  victron_port: int
+  influxdb_org: str
+  influxdb_bucket: str
+  evcc_host: str
+  evcc_port: int
+  evcc_mqtt_host: str
+  evcc_mqtt_port: int
+  ha_url: str
+  ha_token: password
+  ha_heat_pump_entity_id: str
+  ha_mqtt_host: str
+  ha_mqtt_port: int
+  ha_mqtt_username: str
+  ha_mqtt_password: password
+  telegram_bot_token: password
+  telegram_chat_id: str
+  admin_password_hash: password
+  jwt_secret: password
+  log_level: str

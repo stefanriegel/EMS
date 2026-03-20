@@ -1,0 +1,6 @@
+name: EMS Add-on Repository
+url: https://github.com/local/ems
+maintainer: EMS Maintainer
+addons:
+  - slug: ems
+    location: ha-addon
