@@ -384,6 +384,25 @@ class VictronDriver:
                 setpoint_w=s.get(f"{prefix}_setpoint_w"),
             )
 
+        # Derive system-level totals from per-phase values
+        cons_l1 = s.get("consumption_l1_w")
+        cons_l2 = s.get("consumption_l2_w")
+        cons_l3 = s.get("consumption_l3_w")
+        consumption_w = (
+            (cons_l1 or 0.0) + (cons_l2 or 0.0) + (cons_l3 or 0.0)
+            if any(v is not None for v in (cons_l1, cons_l2, cons_l3))
+            else None
+        )
+
+        pv_l1 = s.get("pv_on_grid_l1_w")
+        pv_l2 = s.get("pv_on_grid_l2_w")
+        pv_l3 = s.get("pv_on_grid_l3_w")
+        pv_on_grid_w = (
+            (pv_l1 or 0.0) + (pv_l2 or 0.0) + (pv_l3 or 0.0)
+            if any(v is not None for v in (pv_l1, pv_l2, pv_l3))
+            else None
+        )
+
         return VictronSystemData(
             battery_soc_pct=s.get("battery_soc_pct", 0.0),
             battery_power_w=s.get("battery_power_w", 0.0),
