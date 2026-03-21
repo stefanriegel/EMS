@@ -1,0 +1,16 @@
+apiVersion: 1
+
+datasources:
+  - name: ems-influxdb
+    type: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    isDefault: true
+    editable: false
+    jsonData:
+      version: Flux
+      organization: ems
+      defaultBucket: ems
+      httpMode: POST
+    secureJsonData:
+      token: ems-dev-token-change-me

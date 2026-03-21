@@ -1,0 +1,311 @@
+{
+  "__inputs": [],
+  "__requires": [],
+  "annotations": { "list": [] },
+  "description": "EMS overview — Daily Energy, Battery SoC, Tariff",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 10,
+      "title": "Daily Energy",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "influxdb", "uid": "P498BE722B6C1924A" },
+      "description": "PV yield, grid import, grid export, and net consumption per day (kWh). Requires S03 enrichment.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCentered": false,
+            "axisColorMode": "text",
+            "axisLabel": "kWh",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 80 }
+            ]
+          },
+          "unit": "kwatth"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "PV Yield" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "#F2CC0C", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Grid Import" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "#FF5722", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Grid Export" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "#73BF69", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Consumption" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "#5794F2", "mode": "fixed" } }]
+          }
+        ]
+      },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 1 },
+      "id": 1,
+      "options": {
+        "barRadius": 0.03,
+        "barWidth": 0.6,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "orientation": "auto",
+        "stacking": "none",
+        "tooltip": { "mode": "multi", "sort": "none" },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": { "type": "influxdb", "uid": "P498BE722B6C1924A" },
+          "hide": false,
+          "query": "from(bucket: \"ems\")\n  |> range(start: -7d)\n  |> filter(fn: (r) => r._measurement == \"ems_system\")\n  |> filter(fn: (r) => r._field == \"pv_on_grid_w\")\n  |> drop(columns: [\"control_state\", \"huawei_available\", \"victron_available\"])\n  |> group(columns: [\"_field\"])\n  |> aggregateWindow(every: 1d, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({r with _value: r._value * 5.0 / 3600000.0}))\n  |> set(key: \"_field\", value: \"PV Yield\")",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "influxdb", "uid": "P498BE722B6C1924A" },
+          "hide": false,
+          "query": "from(bucket: \"ems\")\n  |> range(start: -7d)\n  |> filter(fn: (r) => r._measurement == \"ems_system\")\n  |> filter(fn: (r) => r._field == \"grid_power_w\")\n  |> filter(fn: (r) => r._value > 0.0)\n  |> drop(columns: [\"control_state\", \"huawei_available\", \"victron_available\"])\n  |> group(columns: [\"_field\"])\n  |> aggregateWindow(every: 1d, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({r with _value: r._value * 5.0 / 3600000.0}))\n  |> set(key: \"_field\", value: \"Grid Import\")",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "influxdb", "uid": "P498BE722B6C1924A" },
+          "hide": false,
+          "query": "from(bucket: \"ems\")\n  |> range(start: -7d)\n  |> filter(fn: (r) => r._measurement == \"ems_system\")\n  |> filter(fn: (r) => r._field == \"grid_power_w\")\n  |> filter(fn: (r) => r._value < 0.0)\n  |> map(fn: (r) => ({r with _value: -r._value}))\n  |> drop(columns: [\"control_state\", \"huawei_available\", \"victron_available\"])\n  |> group(columns: [\"_field\"])\n  |> aggregateWindow(every: 1d, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({r with _value: r._value * 5.0 / 3600000.0}))\n  |> set(key: \"_field\", value: \"Grid Export\")",
+          "refId": "C"
+        },
+        {
+          "datasource": { "type": "influxdb", "uid": "P498BE722B6C1924A" },
+          "hide": false,
+          "query": "from(bucket: \"ems\")\n  |> range(start: -7d)\n  |> filter(fn: (r) => r._measurement == \"ems_system\")\n  |> filter(fn: (r) => r._field == \"consumption_w\")\n  |> drop(columns: [\"control_state\", \"huawei_available\", \"victron_available\"])\n  |> group(columns: [\"_field\"])\n  |> aggregateWindow(every: 1d, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({r with _value: r._value * 5.0 / 3600000.0}))\n  |> set(key: \"_field\", value: \"Consumption\")",
+          "refId": "D"
+        }
+      ],
+      "title": "Daily Energy (last 7 days)",
+      "transformations": [],
+      "type": "barchart"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 10 },
+      "id": 11,
+      "title": "Battery SoC",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "influxdb", "uid": "P498BE722B6C1924A" },
+      "description": "Huawei (LUNA2000) and Victron SoC % over time. Both lines should track together for healthy SoC-balanced operation.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCentered": false,
+            "axisColorMode": "text",
+            "axisLabel": "%",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 80 }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Huawei SoC %" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "#F2CC0C", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Victron SoC %" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "#5794F2", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Combined SoC %" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "#73BF69", "mode": "fixed" } },
+              { "id": "custom.lineWidth", "value": 1 },
+              { "id": "custom.lineStyle", "value": { "dash": [4, 4], "fill": "dash" } }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 11 },
+      "id": 2,
+      "options": {
+        "legend": { "calcs": ["last", "min"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "influxdb", "uid": "P498BE722B6C1924A" },
+          "hide": false,
+          "query": "from(bucket: \"ems\")\n  |> range(start: -24h)\n  |> filter(fn: (r) => r._measurement == \"ems_system\")\n  |> filter(fn: (r) => r._field == \"huawei_soc_pct\")\n  |> drop(columns: [\"control_state\", \"huawei_available\", \"victron_available\"])\n  |> group(columns: [\"_field\"])\n  |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)\n  |> set(key: \"_field\", value: \"Huawei SoC %\")",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "influxdb", "uid": "P498BE722B6C1924A" },
+          "hide": false,
+          "query": "from(bucket: \"ems\")\n  |> range(start: -24h)\n  |> filter(fn: (r) => r._measurement == \"ems_system\")\n  |> filter(fn: (r) => r._field == \"victron_soc_pct\")\n  |> drop(columns: [\"control_state\", \"huawei_available\", \"victron_available\"])\n  |> group(columns: [\"_field\"])\n  |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)\n  |> set(key: \"_field\", value: \"Victron SoC %\")",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "influxdb", "uid": "P498BE722B6C1924A" },
+          "hide": false,
+          "query": "from(bucket: \"ems\")\n  |> range(start: -24h)\n  |> filter(fn: (r) => r._measurement == \"ems_system\")\n  |> filter(fn: (r) => r._field == \"combined_soc_pct\")\n  |> drop(columns: [\"control_state\", \"huawei_available\", \"victron_available\"])\n  |> group(columns: [\"_field\"])\n  |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)\n  |> set(key: \"_field\", value: \"Combined SoC %\")",
+          "refId": "C"
+        }
+      ],
+      "title": "Battery SoC (last 24h)",
+      "transformations": [],
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 20 },
+      "id": 12,
+      "title": "Tariff",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "influxdb", "uid": "P498BE722B6C1924A" },
+      "description": "Effective composite tariff rate per hour (EUR/kWh). Off-peak ~0.08 EUR/kWh, peak ~0.28 EUR/kWh.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "continuous-BlPu" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCentered": false,
+            "axisColorMode": "text",
+            "axisLabel": "EUR/kWh",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "gradientMode": "scheme",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "line+area" }
+          },
+          "decimals": 4,
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.15 },
+              { "color": "red", "value": 0.25 }
+            ]
+          },
+          "unit": "currencyEUR"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Octopus Rate" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "#FF9830", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Modul3 Rate" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "#8F3BB8", "mode": "fixed" } }]
+          }
+        ]
+      },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 21 },
+      "id": 3,
+      "options": {
+        "legend": { "calcs": ["last", "min", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "influxdb", "uid": "P498BE722B6C1924A" },
+          "hide": false,
+          "query": "from(bucket: \"ems\")\n  |> range(start: -24h)\n  |> filter(fn: (r) => r._measurement == \"ems_tariff\")\n  |> filter(fn: (r) => r._field == \"effective_rate_eur_kwh\")\n  |> aggregateWindow(every: 5m, fn: last, createEmpty: false)\n  |> set(key: \"_field\", value: \"Effective Rate\")",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "influxdb", "uid": "P498BE722B6C1924A" },
+          "hide": false,
+          "query": "from(bucket: \"ems\")\n  |> range(start: -24h)\n  |> filter(fn: (r) => r._measurement == \"ems_tariff\")\n  |> filter(fn: (r) => r._field == \"octopus_rate_eur_kwh\")\n  |> aggregateWindow(every: 5m, fn: last, createEmpty: false)\n  |> set(key: \"_field\", value: \"Octopus Rate\")",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "influxdb", "uid": "P498BE722B6C1924A" },
+          "hide": false,
+          "query": "from(bucket: \"ems\")\n  |> range(start: -24h)\n  |> filter(fn: (r) => r._measurement == \"ems_tariff\")\n  |> filter(fn: (r) => r._field == \"modul3_rate_eur_kwh\")\n  |> aggregateWindow(every: 5m, fn: last, createEmpty: false)\n  |> set(key: \"_field\", value: \"Modul3 Rate\")",
+          "refId": "C"
+        }
+      ],
+      "title": "Tariff Rate (last 24h)",
+      "transformations": [],
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["ems", "energy", "battery"],
+  "templating": { "list": [] },
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "EMS Overview",
+  "uid": "ems-overview",
+  "version": 1,
+  "weekStart": ""
+}
