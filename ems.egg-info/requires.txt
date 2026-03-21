@@ -7,6 +7,7 @@ influxdb-client[async]>=1.45
 httpx
 python-jose[cryptography]
 passlib[bcrypt]
+bcrypt<4
 
 [dev]
 pytest>=8

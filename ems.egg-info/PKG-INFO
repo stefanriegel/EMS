@@ -11,6 +11,7 @@ Requires-Dist: influxdb-client[async]>=1.45
 Requires-Dist: httpx
 Requires-Dist: python-jose[cryptography]
 Requires-Dist: passlib[bcrypt]
+Requires-Dist: bcrypt<4
 Provides-Extra: dev
 Requires-Dist: pytest>=8; extra == "dev"
 Requires-Dist: anyio[trio]; extra == "dev"
