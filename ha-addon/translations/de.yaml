@@ -1,0 +1,139 @@
+configuration:
+  # --- Huawei Modbus ---
+  huawei_host:
+    name: Huawei Modbus Host
+    description: >-
+      IP-Adresse des Modbus-TCP-Endpunkts. Bei Verwendung des modbus-proxy
+      Add-ons mit host_network auf 127.0.0.1 setzen.
+  huawei_port:
+    name: Huawei Modbus Port
+    description: TCP-Port für die Modbus-Verbindung. Standard ist 502.
+  huawei_master_unit_id:
+    name: Huawei Master Unit ID
+    description: >-
+      Modbus-Unit-ID des Master-Wechselrichters (mit Batterie).
+      Übliche Werte sind 1 oder 2 — am Wechselrichter prüfen.
+  huawei_slave_unit_id:
+    name: Huawei Slave Unit ID
+    description: >-
+      Modbus-Unit-ID des Slave-Wechselrichters (nur PV). Auf 0 setzen,
+      wenn nur ein Wechselrichter vorhanden ist.
+
+  # --- Victron ---
+  victron_host:
+    name: Victron Cerbo GX Host
+    description: >-
+      IP-Adresse des Victron Cerbo GX (Venus OS MQTT-Broker).
+      Direkte Verbindung zu dbus-flashmq — kein Benutzername/Passwort nötig.
+      NICHT die HA Mosquitto-Broker-Adresse verwenden.
+  victron_port:
+    name: Victron MQTT Port
+    description: MQTT-Port am Cerbo GX. Standard ist 1883.
+
+  # --- InfluxDB ---
+  influxdb_url:
+    name: InfluxDB URL
+    description: >-
+      Vollständige URL der InfluxDB v2 Instanz, z.B. http://192.168.0.10:8086.
+      Wird automatisch erkannt wenn das HA InfluxDB Add-on installiert ist —
+      leer lassen für Auto-Erkennung.
+  influxdb_token:
+    name: InfluxDB API Token
+    description: >-
+      InfluxDB v2 API-Token mit Schreibzugriff auf den Bucket.
+      Unter InfluxDB UI → Data → API Tokens zu finden.
+      Wird vom HA InfluxDB Add-on automatisch erkannt.
+  influxdb_org:
+    name: InfluxDB Organisation
+    description: InfluxDB Organisationsname. Standard ist "ems".
+  influxdb_bucket:
+    name: InfluxDB Bucket
+    description: InfluxDB Bucket für EMS-Metriken. Standard ist "ems".
+
+  # --- EVCC ---
+  evcc_host:
+    name: EVCC Host (Überschreibung)
+    description: >-
+      Leer lassen — EMS findet das EVCC Add-on automatisch.
+      Nur setzen wenn EVCC außerhalb von Home Assistant läuft.
+  evcc_port:
+    name: EVCC API Port (Überschreibung)
+    description: >-
+      Leer lassen für Auto-Erkennung. Nur für externe EVCC-Installationen.
+      Standard-EVCC-API-Port ist 7070.
+
+  # --- HA Entity Monitoring ---
+  ha_heat_pump_entity_id:
+    name: Wärmepumpe Entity ID
+    description: >-
+      HA-Sensor-Entity-ID für die aktuelle Leistungsaufnahme der Wärmepumpe
+      in Watt. Beispiel: sensor.warmepumpe_total_active_power.
+      Leer lassen zum Deaktivieren.
+
+  # --- ML Verbrauchsprognose ---
+  ha_db_path:
+    name: HA Datenbank-Pfad
+    description: >-
+      Pfad zur Home Assistant SQLite-Datenbank für ML-Trainingsdaten.
+      Auf HAOS ist dies immer /config/home-assistant_v2.db — nur ändern
+      bei benutzerdefiniertem Datenbank-Speicherort.
+  ha_statistics_entity_outdoor_temp:
+    name: Außentemperatur Entity
+    description: >-
+      HA-Entity-ID für die Außentemperatur (wird vom ML-Verbrauchsprognosetool
+      verwendet). Beispiel: sensor.ems_esp_boiler_aussentemperatur.
+  ha_statistics_entity_heat_pump:
+    name: Wärmepumpe Statistik-Entity
+    description: >-
+      HA-Entity-ID für die Wärmepumpen-Verbrauchsstatistik (wird vom
+      ML-Prognosetool für das Training verwendet). Beispiel:
+      sensor.warmepumpe_total_active_power.
+  ha_statistics_entity_dhw:
+    name: Warmwasser (DHW) Statistik-Entity
+    description: >-
+      HA-Entity-ID für den Warmwasser-Verbrauch (optional).
+      Wird vom ML-Prognosetool verwendet, wenn die Wärmepumpe einen
+      separaten Warmwasserkreis hat. Leer lassen wenn nicht zutreffend.
+  ha_ml_min_days:
+    name: ML Mindest-Trainingstage
+    description: >-
+      Mindestanzahl an Tagen mit historischen Daten, bevor das ML-Prognosetool
+      Vorhersagen erstellt. Unterhalb dieses Schwellenwerts wird ein einfacher
+      saisonaler Durchschnitt verwendet. Standard ist 14 Tage.
+
+  # --- Live Octopus Tarif ---
+  ha_octopus_entity_id:
+    name: Octopus Strompreis Entity
+    description: >-
+      HA-Entity-ID mit dem aktuellen Octopus-Strompreis (z.B. von der
+      Octopus Energy Integration). Wenn gesetzt, verwendet EMS Live-Preise
+      statt des statischen HT/NT-Zeitplans.
+      Beispiel: sensor.octopus_a_7721404e_electricity_price.
+
+  # --- Telegram Benachrichtigungen ---
+  telegram_bot_token:
+    name: Telegram Bot Token
+    description: >-
+      Token für den Telegram-Bot (von @BotFather). Wird für Benachrichtigungen
+      verwendet (Phasenüberlastung, SoC-Grenzen). Leer lassen zum Deaktivieren.
+  telegram_chat_id:
+    name: Telegram Chat ID
+    description: >-
+      Numerische Chat-ID für Benachrichtigungen. Über @userinfobot ermitteln.
+      Leer lassen zum Deaktivieren.
+
+  # --- EMS Web-UI Authentifizierung ---
+  admin_password_hash:
+    name: Admin Passwort Hash (bcrypt)
+    description: >-
+      Optional. Bcrypt-Hash des Admin-Passworts für die EMS-Weboberfläche.
+      Erzeugen mit: python3 -c "import bcrypt; print(bcrypt.hashpw(b'passwort',
+      bcrypt.gensalt()).decode())". Leer lassen für Login ohne Passwort.
+      Der Sitzungsschlüssel wird automatisch generiert.
+
+  # --- Logging ---
+  log_level:
+    name: Log-Level
+    description: >-
+      Protokollierungs-Detailgrad. INFO für den Normalbetrieb, DEBUG zur
+      Fehlersuche.

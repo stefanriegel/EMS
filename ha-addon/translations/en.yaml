@@ -22,21 +22,27 @@ configuration:
   # --- Victron ---
   victron_host:
     name: Victron Cerbo GX Host
-    description: IP address of the Victron Cerbo GX (Venus OS MQTT broker).
+    description: >-
+      IP address of the Victron Cerbo GX (Venus OS MQTT broker).
+      This is the direct connection to dbus-flashmq — no username/password
+      needed. Do NOT use the HA Mosquitto broker address here.
   victron_port:
     name: Victron MQTT Port
     description: MQTT port on the Cerbo GX. Default is 1883.
 
-  # --- InfluxDB ---
+  # --- InfluxDB (auto-discovered if InfluxDB add-on is installed) ---
   influxdb_url:
     name: InfluxDB URL
     description: >-
       Full URL of your InfluxDB v2 instance, e.g. http://192.168.0.10:8086.
+      Auto-detected if the HA InfluxDB add-on is installed — leave blank
+      to use auto-discovery.
   influxdb_token:
     name: InfluxDB API Token
     description: >-
       InfluxDB v2 API token with write access to the configured bucket.
-      Found in InfluxDB UI → Data → API Tokens.
+      Found in InfluxDB UI → Data → API Tokens. Auto-detected from the
+      HA InfluxDB add-on if installed.
   influxdb_org:
     name: InfluxDB Organisation
     description: InfluxDB organisation name. Default is "ems".
@@ -56,12 +62,52 @@ configuration:
       Leave blank for auto-discovery. Set only for external EVCC deployments.
       Default EVCC API port is 7070.
 
-  # --- Home Assistant (auto-configured via Supervisor) ---
+  # --- Home Assistant entity monitoring ---
   ha_heat_pump_entity_id:
     name: Heat Pump Entity ID
     description: >-
       HA sensor entity ID reporting your heat pump's current power draw in watts.
       Example: sensor.warmepumpe_total_active_power. Leave blank to disable.
+
+  # --- ML Consumption Forecaster ---
+  ha_db_path:
+    name: HA Database Path
+    description: >-
+      Path to the Home Assistant SQLite database for ML training data.
+      On HAOS this is always /config/home-assistant_v2.db — only change
+      if you have a custom database location.
+  ha_statistics_entity_outdoor_temp:
+    name: Outdoor Temperature Entity
+    description: >-
+      HA entity ID for outdoor temperature (used by the ML consumption
+      forecaster). Example: sensor.ems_esp_boiler_aussentemperatur.
+  ha_statistics_entity_heat_pump:
+    name: Heat Pump Statistics Entity
+    description: >-
+      HA entity ID for heat pump power consumption statistics (used by
+      the ML forecaster for training). Example:
+      sensor.warmepumpe_total_active_power.
+  ha_statistics_entity_dhw:
+    name: DHW (Hot Water) Statistics Entity
+    description: >-
+      HA entity ID for domestic hot water power consumption (optional).
+      Used by the ML forecaster if your heat pump has a separate DHW
+      circuit. Leave blank if not applicable.
+  ha_ml_min_days:
+    name: ML Minimum Training Days
+    description: >-
+      Minimum number of days of historical data required before the ML
+      forecaster starts producing predictions. Below this threshold,
+      the system uses a simple seasonal average. Default is 14 days.
+
+  # --- Live Octopus tariff ---
+  ha_octopus_entity_id:
+    name: Octopus Energy Price Entity
+    description: >-
+      HA entity ID providing the current Octopus electricity price
+      (e.g. from the Octopus Energy integration). When set, EMS uses
+      live prices instead of the static off-peak/peak schedule.
+      Example: sensor.octopus_a_7721404e_electricity_price.
 
   # --- Telegram alerts ---
   telegram_bot_token:
@@ -80,9 +126,9 @@ configuration:
     name: Admin Password Hash (bcrypt)
     description: >-
       Optional. Bcrypt hash of the admin password for the EMS web interface.
-      Generate: python3 -c "import bcrypt; print(bcrypt.hashpw(b'yourpassword',
+      Generate with: python3 -c "import bcrypt; print(bcrypt.hashpw(b'yourpass',
       bcrypt.gensalt()).decode())". Leave blank to disable login.
-      The session secret key is generated automatically — no configuration needed.
+      The session secret key is generated automatically.
 
   # --- Logging ---
   log_level:

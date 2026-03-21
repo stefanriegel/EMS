@@ -1,5 +1,5 @@
 name: EMS – Energy Management System
-version: "0.3.3"
+version: "0.3.4"
 slug: ems
 description: >-
   Energy Management System for Huawei SUN2000 + Victron MultiPlus II.
@@ -28,39 +28,59 @@ map:
   - config:rw
 
 options:
+  # --- Required: hardware endpoints ---
   huawei_host: ""
-  victron_host: ""
-  influxdb_url: ""
-  influxdb_token: ""
   huawei_port: 502
   huawei_master_unit_id: 1
   huawei_slave_unit_id: 2
+  victron_host: ""
   victron_port: 1883
+  # --- InfluxDB (auto-detected from HA add-on if installed) ---
+  influxdb_url: ""
+  influxdb_token: ""
   influxdb_org: "ems"
   influxdb_bucket: "ems"
+  # --- ML Forecaster: HA DB + entity IDs ---
+  ha_db_path: "/config/home-assistant_v2.db"
+  ha_statistics_entity_outdoor_temp: ""
+  ha_statistics_entity_heat_pump: ""
+  ha_statistics_entity_dhw: ""
+  ha_ml_min_days: 14
+  # --- Live tariff ---
+  ha_octopus_entity_id: ""
+  # --- Logging ---
   log_level: "INFO"
 
 schema:
+  # --- Huawei Modbus ---
   huawei_host: str
-  victron_host: str
-  influxdb_url: str
-  influxdb_token: password
   huawei_port: int
   huawei_master_unit_id: int
   huawei_slave_unit_id: int
+  # --- Victron ---
+  victron_host: str
   victron_port: int
+  # --- InfluxDB ---
+  influxdb_url: str
+  influxdb_token: password
   influxdb_org: str
   influxdb_bucket: str
+  # --- EVCC (auto-discovered, override only) ---
   evcc_host: str?
   evcc_port: int?
+  # --- HA entity monitoring ---
   ha_heat_pump_entity_id: str?
+  # --- ML Forecaster ---
+  ha_db_path: str
+  ha_statistics_entity_outdoor_temp: str
+  ha_statistics_entity_heat_pump: str
+  ha_statistics_entity_dhw: str?
+  ha_ml_min_days: int
+  ha_octopus_entity_id: str?
+  # --- Telegram alerts ---
   telegram_bot_token: password?
   telegram_chat_id: str?
-  ha_db_path: str?
-  ha_statistics_entity_outdoor_temp: str?
-  ha_statistics_entity_heat_pump: str?
-  ha_statistics_entity_dhw: str?
-  ha_ml_min_days: int?
-  ha_octopus_entity_id: str?
+  # --- Auth ---
   admin_password_hash: password?
+  # --- Logging ---
   log_level: list(DEBUG|INFO|WARNING|ERROR)
