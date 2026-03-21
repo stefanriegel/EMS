@@ -1,35 +1,41 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/aarch64-base-python:3.12-alpine3.21
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-python:3.12-alpine3.21
 FROM ${BUILD_FROM}
 
-# The HA Supervisor uses the ha-addon/ directory as Docker build context.
-# Source code (backend/, pyproject.toml) lives in the parent repo.
-# We install from the GitHub repo URL directly during the build,
-# then copy the pre-built frontend dist from this directory.
+# ---------- build-time args ----------
+ARG BUILD_ARCH
+ARG BUILD_VERSION
 
-ARG BUILD_VERSION=0.3.0
+# ---------- system packages ----------
+# build-base + libffi-dev: bcrypt C extension on Alpine musl (K030)
+# jq: parse /data/options.json in run.sh
+# gfortran + openblas-dev: numpy/scipy/sklearn wheel build on aarch64
+RUN apk add --no-cache \
+    build-base \
+    libffi-dev \
+    gfortran \
+    openblas-dev \
+    jq
 
+# ---------- Python dependencies ----------
 WORKDIR /app
+COPY pyproject.toml .
+RUN pip install --no-cache-dir .
 
-# Install build toolchain for bcrypt C extension on Alpine musl (K030).
-RUN apk add --no-cache build-base libffi-dev jq git
-
-# Install the EMS backend from the GitHub repository.
-# The pip install fetches pyproject.toml + backend/ from the repo.
-RUN pip install --no-cache-dir \
-    "ems @ git+https://github.com/stefanriegel/EMS.git@main"
-
-# Copy the pre-built frontend dist (committed to ha-addon/ by deploy script)
-# If dist/ doesn't exist, create an empty placeholder so the COPY doesn't fail.
+# ---------- application source ----------
+COPY backend/ backend/
 COPY dist/ frontend/dist/
 
+# ---------- entrypoint ----------
 COPY run.sh /run.sh
 RUN chmod +x /run.sh
 
+# ---------- labels ----------
 LABEL \
-  io.hass.version="${BUILD_VERSION}" \
-  io.hass.type="addon" \
-  io.hass.arch="aarch64|amd64"
+    io.hass.name="EMS" \
+    io.hass.description="Energy Management System for Huawei + Victron" \
+    io.hass.arch="${BUILD_ARCH}" \
+    io.hass.type="addon" \
+    io.hass.version="${BUILD_VERSION}"
 
 EXPOSE 8000
-# Use ENTRYPOINT to bypass s6-overlay (K057)
 ENTRYPOINT ["/run.sh"]

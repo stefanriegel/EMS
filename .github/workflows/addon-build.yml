@@ -12,92 +12,60 @@ on:
       - '.github/workflows/addon-build.yml'
   workflow_dispatch:
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/ems-addon
-
 jobs:
-  build-frontend:
+  build:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+    name: Build ${{ matrix.arch }} add-on
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        arch: [aarch64, amd64]
 
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # Sync source into ha-addon/ (the HA builder uses ha-addon/ as context)
+      - name: Sync backend source into add-on directory
+        run: |
+          rm -rf ha-addon/backend
+          cp -r backend ha-addon/backend
+          cp pyproject.toml ha-addon/pyproject.toml
+          find ha-addon/backend -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
+
+      # Build frontend and copy dist into ha-addon/
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install and build frontend
+      - name: Build frontend
         working-directory: frontend
         run: |
           npm ci
           npm run build
 
-      - name: Upload dist artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-dist
-          path: frontend/dist/
-          retention-days: 1
-
-  build-addon:
-    needs: build-frontend
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
-    strategy:
-      matrix:
-        include:
-          - platform: linux/amd64
-            arch: amd64
-            build_from: ghcr.io/home-assistant/amd64-base-python:3.12-alpine3.21
-          - platform: linux/aarch64
-            arch: aarch64
-            build_from: ghcr.io/home-assistant/aarch64-base-python:3.12-alpine3.21
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download frontend dist
-        uses: actions/download-artifact@v4
-        with:
-          name: frontend-dist
-          path: frontend/dist/
-
-      - name: Extract version from config.yaml
-        id: version
+      - name: Copy frontend dist
         run: |
-          VERSION=$(grep '^version:' ha-addon/config.yaml | sed 's/version: *"\?\([^"]*\)"\?/\1/')
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Building version: $VERSION"
+          rm -rf ha-addon/dist
+          cp -r frontend/dist ha-addon/dist
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
+      - name: Login to GHCR
+        if: github.event_name == 'push'
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
-        uses: docker/build-push-action@v5
+      - name: Build ${{ matrix.arch }}
+        uses: home-assistant/builder@2025.03.0
         with:
-          context: .
-          file: ha-addon/Dockerfile
-          platforms: ${{ matrix.platform }}
-          push: true
-          build-args: |
-            BUILD_FROM=${{ matrix.build_from }}
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.arch }}:${{ steps.version.outputs.version }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.arch }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          args: |
+            --${{ matrix.arch }} \
+            --target /data/ha-addon \
+            --docker-hub "ghcr.io/${{ github.repository_owner }}" \
+            --addon

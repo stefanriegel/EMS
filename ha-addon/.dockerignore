@@ -1,0 +1,12 @@
+__pycache__
+*.pyc
+*.pyo
+.git
+.gitignore
+.gsd
+*.md
+!DOCS.md
+translations
+icon.png
+logo.png
+build.yaml
