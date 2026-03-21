@@ -1,6 +1,3 @@
-name: EMS Add-on Repository
-url: https://github.com/local/ems
-maintainer: EMS Maintainer
-addons:
-  - slug: ems
-    location: ha-addon
+name: EMS - Energy Management System
+url: https://github.com/stefanriegel/EMS
+maintainer: Stefan Riegel

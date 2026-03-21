@@ -2,6 +2,17 @@
 
 Orchestrates battery dispatch for a **Huawei SUN2000** solar inverter and **Victron MultiPlus II** inverter/charger. Reads Huawei state over Modbus TCP, reads and writes Victron state over MQTT (Venus OS), co-ordinates with EVCC for EV charging, logs time-series data to InfluxDB, and exposes a React dashboard on port 8000.
 
+## Home Assistant Add-on
+
+[![Add repository to HA](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fstefanriegel%2FEMS)
+
+Click the button above, or manually add this repository URL in the HA Add-on Store:
+```
+https://github.com/stefanriegel/EMS
+```
+
+After adding the repository, find **EMS - Energy Management System** in the store and click Install.
+
 **System requirements:**
 
 | Component | Minimum |

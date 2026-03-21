@@ -1,10 +1,11 @@
 name: EMS – Energy Management System
-version: "0.2.0"
+version: "0.3.0"
 slug: ems
 description: >-
   Energy Management System for Huawei SUN2000 + Victron MultiPlus II.
   Orchestrates battery dispatch, EVCC coordination, InfluxDB logging,
   and Home Assistant telemetry integration.
+image: ghcr.io/stefanriegel/ems-addon/{arch}
 arch:
   - aarch64
   - amd64
