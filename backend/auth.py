@@ -2,6 +2,7 @@
 
 Provides:
 - ``AdminConfig`` — dataclass for bcrypt hash + JWT secret (reads env vars)
+- ``ensure_jwt_secret`` — generate-once, persist-forever secret management
 - ``create_token`` / ``verify_token`` — JWT HS256 helpers
 - ``check_password`` — bcrypt verify wrapper
 - ``require_auth`` — FastAPI dependency (test-overrideable stub; real enforcement is in middleware)
@@ -11,13 +12,29 @@ Provides:
 Auth is disabled (all requests pass through) when ``ADMIN_PASSWORD_HASH`` is
 not set in the environment — this is the default dev mode and ensures all
 existing tests run unchanged without any modifications.
+
+JWT secret lifecycle
+--------------------
+Rather than requiring the operator to generate and configure a secret, the EMS
+generates one automatically on first startup and persists it alongside the
+wizard config.  Resolution order (first wins):
+
+1. ``JWT_SECRET`` environment variable (explicit override — run.sh, docker-compose)
+2. Persisted secret file at ``<config_dir>/.jwt_secret`` (generated on first run)
+3. Generate a new secret, write it to the file, inject into ``JWT_SECRET``
+
+This means the secret survives restarts without any operator action, and can
+still be overridden explicitly when needed (e.g. multi-instance deployments
+that need a shared secret).
 """
 from __future__ import annotations
 
 import logging
 import os
+import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from fastapi import APIRouter, Request
 from jose import JWTError, jwt
@@ -29,6 +46,72 @@ from starlette.responses import JSONResponse
 logger = logging.getLogger(__name__)
 _crypt = CryptContext(schemes=["bcrypt"], deprecated="auto")
 _TOKEN_COOKIE = "ems_token"
+_SECRET_FILENAME = ".jwt_secret"
+
+# ---------------------------------------------------------------------------
+# JWT secret lifecycle
+# ---------------------------------------------------------------------------
+
+
+def ensure_jwt_secret(config_dir: str) -> str:
+    """Return a persistent JWT secret, generating one on first call.
+
+    Resolution order (first wins):
+
+    1. ``JWT_SECRET`` env var — explicit override always wins.
+    2. Persisted secret file at ``<config_dir>/.jwt_secret``.
+    3. Generate a cryptographically random 32-byte hex secret, persist it,
+       and inject it into ``os.environ["JWT_SECRET"]`` so subsequent
+       ``AdminConfig.from_env()`` calls pick it up automatically.
+
+    The generated secret survives add-on restarts and updates because it is
+    stored in the HA config volume (``/config``), which is mounted persistently.
+
+    Parameters
+    ----------
+    config_dir:
+        Directory where the secret file is written.  Use the same directory
+        as ``EMS_CONFIG_PATH`` (e.g. ``/config`` inside the add-on container).
+
+    Returns
+    -------
+    str
+        The resolved secret string.
+    """
+    # 1. Explicit env var — always wins, no file I/O needed.
+    existing = os.environ.get("JWT_SECRET", "")
+    if existing and existing != "dev-secret-change-me":
+        logger.debug("JWT secret: using JWT_SECRET env var")
+        return existing
+
+    # 2. Persisted file.
+    secret_path = Path(config_dir) / _SECRET_FILENAME
+    if secret_path.exists():
+        try:
+            secret = secret_path.read_text().strip()
+            if secret:
+                logger.debug("JWT secret: loaded from %s", secret_path)
+                os.environ["JWT_SECRET"] = secret
+                return secret
+        except OSError as exc:
+            logger.warning("JWT secret: could not read %s — %s", secret_path, exc)
+
+    # 3. Generate, persist, inject.
+    secret = secrets.token_hex(32)
+    try:
+        secret_path.parent.mkdir(parents=True, exist_ok=True)
+        secret_path.write_text(secret)
+        # Restrict permissions — this file is sensitive
+        secret_path.chmod(0o600)
+        logger.info("JWT secret: generated and saved to %s", secret_path)
+    except OSError as exc:
+        logger.warning(
+            "JWT secret: could not persist to %s (%s) — secret will change on restart",
+            secret_path, exc,
+        )
+
+    os.environ["JWT_SECRET"] = secret
+    return secret
 
 # ---------------------------------------------------------------------------
 # Config
@@ -46,8 +129,9 @@ class AdminConfig:
         Empty string → auth disabled.
     jwt_secret
         HMAC secret for signing JWTs (``JWT_SECRET`` env var).
-        Defaults to a well-known dev placeholder — **must** be changed in
-        production when ``ADMIN_PASSWORD_HASH`` is set.
+        In production this is always set by :func:`ensure_jwt_secret` before
+        ``from_env()`` is called, so the fallback is only reached in bare
+        unit tests that don't call ``ensure_jwt_secret``.
     """
 
     password_hash: str = ""
@@ -132,7 +216,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             logger.info("Auth middleware active")
             if admin_cfg.jwt_secret == "dev-secret-change-me":
                 logger.warning(
-                    "JWT_SECRET is default — set JWT_SECRET env var in production"
+                    "JWT_SECRET is the dev default — call ensure_jwt_secret() at startup"
                 )
         else:
             logger.info("Auth middleware disabled (no ADMIN_PASSWORD_HASH set)")

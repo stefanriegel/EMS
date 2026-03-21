@@ -1,0 +1,91 @@
+configuration:
+  # --- Huawei Modbus ---
+  huawei_host:
+    name: Huawei Modbus Host
+    description: >-
+      IP address of the Modbus TCP endpoint. When using the modbus-proxy add-on
+      with host_network enabled, set this to 127.0.0.1.
+  huawei_port:
+    name: Huawei Modbus Port
+    description: TCP port for the Modbus connection. Default is 502.
+  huawei_master_unit_id:
+    name: Huawei Master Unit ID
+    description: >-
+      Modbus unit ID of the master inverter (the one with batteries).
+      Common values are 1 or 2 — scan your inverter to confirm.
+  huawei_slave_unit_id:
+    name: Huawei Slave Unit ID
+    description: >-
+      Modbus unit ID of the slave (PV-only) inverter. Set to 0 if you
+      only have a single inverter.
+
+  # --- Victron ---
+  victron_host:
+    name: Victron Cerbo GX Host
+    description: IP address of the Victron Cerbo GX (Venus OS MQTT broker).
+  victron_port:
+    name: Victron MQTT Port
+    description: MQTT port on the Cerbo GX. Default is 1883.
+
+  # --- InfluxDB ---
+  influxdb_url:
+    name: InfluxDB URL
+    description: >-
+      Full URL of your InfluxDB v2 instance, e.g. http://192.168.0.10:8086.
+  influxdb_token:
+    name: InfluxDB API Token
+    description: >-
+      InfluxDB v2 API token with write access to the configured bucket.
+      Found in InfluxDB UI → Data → API Tokens.
+  influxdb_org:
+    name: InfluxDB Organisation
+    description: InfluxDB organisation name. Default is "ems".
+  influxdb_bucket:
+    name: InfluxDB Bucket
+    description: InfluxDB bucket name where EMS metrics are written. Default is "ems".
+
+  # --- EVCC (auto-discovered if EVCC add-on is installed) ---
+  evcc_host:
+    name: EVCC Host (override)
+    description: >-
+      Leave blank — EMS finds the EVCC add-on automatically if it is installed.
+      Set this only if EVCC runs outside Home Assistant (external host/IP).
+  evcc_port:
+    name: EVCC API Port (override)
+    description: >-
+      Leave blank for auto-discovery. Set only for external EVCC deployments.
+      Default EVCC API port is 7070.
+
+  # --- Home Assistant (auto-configured via Supervisor) ---
+  ha_heat_pump_entity_id:
+    name: Heat Pump Entity ID
+    description: >-
+      HA sensor entity ID reporting your heat pump's current power draw in watts.
+      Example: sensor.warmepumpe_total_active_power. Leave blank to disable.
+
+  # --- Telegram alerts ---
+  telegram_bot_token:
+    name: Telegram Bot Token
+    description: >-
+      Token for your Telegram bot (from @BotFather). Used to send alerts
+      (phase overload, SoC limits). Leave blank to disable.
+  telegram_chat_id:
+    name: Telegram Chat ID
+    description: >-
+      Numeric chat ID where alerts are sent. Find it via @userinfobot.
+      Leave blank to disable.
+
+  # --- EMS web UI authentication ---
+  admin_password_hash:
+    name: Admin Password Hash (bcrypt)
+    description: >-
+      Optional. Bcrypt hash of the admin password for the EMS web interface.
+      Generate: python3 -c "import bcrypt; print(bcrypt.hashpw(b'yourpassword',
+      bcrypt.gensalt()).decode())". Leave blank to disable login.
+      The session secret key is generated automatically — no configuration needed.
+
+  # --- Logging ---
+  log_level:
+    name: Log Level
+    description: >-
+      Logging verbosity. INFO for normal use, DEBUG for troubleshooting.

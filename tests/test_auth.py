@@ -22,7 +22,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from backend.auth import AdminConfig, check_password, create_token, verify_token
+from backend.auth import AdminConfig, check_password, create_token, verify_token, ensure_jwt_secret
 from backend.config import SystemConfig
 from backend.unified_model import ControlState, UnifiedPoolState
 
@@ -164,6 +164,68 @@ def test_admin_config_from_env_defaults() -> None:
         cfg = AdminConfig.from_env()
     assert cfg.password_hash == ""
     assert cfg.jwt_secret == "dev-secret-change-me"
+
+
+# ---------------------------------------------------------------------------
+# ensure_jwt_secret
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_jwt_secret_uses_env_var(tmp_path, monkeypatch) -> None:
+    """Explicit JWT_SECRET env var is always returned unchanged."""
+    monkeypatch.setenv("JWT_SECRET", "my-explicit-secret")
+    result = ensure_jwt_secret(str(tmp_path))
+    assert result == "my-explicit-secret"
+    # No file should be written when env var is present
+    assert not (tmp_path / ".jwt_secret").exists()
+
+
+def test_ensure_jwt_secret_generates_on_first_run(tmp_path, monkeypatch) -> None:
+    """First call with no env var and no file generates and persists a secret."""
+    monkeypatch.delenv("JWT_SECRET", raising=False)
+    secret = ensure_jwt_secret(str(tmp_path))
+    assert len(secret) == 64  # 32 bytes hex = 64 chars
+    assert (tmp_path / ".jwt_secret").exists()
+    assert (tmp_path / ".jwt_secret").read_text() == secret
+    # Must also be injected into env for subsequent from_env() calls
+    assert os.environ.get("JWT_SECRET") == secret
+
+
+def test_ensure_jwt_secret_reuses_persisted_file(tmp_path, monkeypatch) -> None:
+    """Second call loads the same secret from the file."""
+    monkeypatch.delenv("JWT_SECRET", raising=False)
+    secret_file = tmp_path / ".jwt_secret"
+    secret_file.write_text("persisted-secret-value")
+
+    result = ensure_jwt_secret(str(tmp_path))
+    assert result == "persisted-secret-value"
+    assert os.environ.get("JWT_SECRET") == "persisted-secret-value"
+
+
+def test_ensure_jwt_secret_ignores_dev_default(tmp_path, monkeypatch) -> None:
+    """The dev-secret-change-me placeholder is treated as unset."""
+    monkeypatch.setenv("JWT_SECRET", "dev-secret-change-me")
+    result = ensure_jwt_secret(str(tmp_path))
+    # Should generate a new secret, not use the placeholder
+    assert result != "dev-secret-change-me"
+    assert len(result) == 64
+
+
+def test_ensure_jwt_secret_persisted_wins_over_dev_default(tmp_path, monkeypatch) -> None:
+    """Persisted file is used even when env var is the dev default."""
+    monkeypatch.setenv("JWT_SECRET", "dev-secret-change-me")
+    (tmp_path / ".jwt_secret").write_text("from-file-secret")
+    result = ensure_jwt_secret(str(tmp_path))
+    assert result == "from-file-secret"
+
+
+def test_ensure_jwt_secret_two_calls_same_secret(tmp_path, monkeypatch) -> None:
+    """Two consecutive calls return the same secret."""
+    monkeypatch.delenv("JWT_SECRET", raising=False)
+    first = ensure_jwt_secret(str(tmp_path))
+    monkeypatch.delenv("JWT_SECRET", raising=False)
+    second = ensure_jwt_secret(str(tmp_path))
+    assert first == second
 
 
 # ---------------------------------------------------------------------------
