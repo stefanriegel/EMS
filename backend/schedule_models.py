@@ -237,6 +237,8 @@ class OptimizationReasoning:
         expected_consumption_kwh: Expected household consumption in kWh.
         charge_energy_kwh:        Total energy to charge from grid in kWh.
         cost_estimate_eur:        Estimated cost of the schedule in euros.
+        evopt_status:             Raw EVopt solver status (``"Optimal"``,
+                                  ``"Heuristic"``, ``"Unavailable"``).
     """
 
     text: str
@@ -244,6 +246,7 @@ class OptimizationReasoning:
     expected_consumption_kwh: float
     charge_energy_kwh: float
     cost_estimate_eur: float
+    evopt_status: str = "Heuristic"
 
 
 @dataclass

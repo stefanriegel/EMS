@@ -191,6 +191,7 @@ async def get_state(
 
 @api_router.get("/health")
 async def get_health(
+    request: Request,
     orchestrator: Orchestrator | None = Depends(get_orchestrator),
 ) -> dict[str, Any]:
     """Return a structured health report.
@@ -211,6 +212,16 @@ async def get_health(
         }
     """
     state = orchestrator.get_state() if orchestrator is not None else None
+
+    # HA multi-entity client status
+    ha_client = getattr(request.app.state, "ha_rest_client", None)
+    ha_entities_count = 0
+    ha_entities_available = False
+    if ha_client is not None and hasattr(ha_client, "get_all_values"):
+        all_values = ha_client.get_all_values()
+        ha_entities_count = len(all_values)
+        ha_entities_available = any(v is not None for v in all_values.values())
+
     return {
         "status": _health_status(state),
         "huawei_available": state.huawei_available if state else False,
@@ -219,6 +230,8 @@ async def get_health(
         "last_error": orchestrator.get_last_error() if orchestrator is not None else None,
         "uptime_s": time.monotonic() - _start_time,
         "huawei_working_mode": orchestrator.get_working_mode() if orchestrator is not None else None,
+        "ha_entities_count": ha_entities_count,
+        "ha_entities_available": ha_entities_available,
     }
 
 
@@ -435,6 +448,111 @@ def _schedule_to_dict(schedule: ChargeSchedule) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# EVopt-compatible /api/v1/plan endpoint
+# ---------------------------------------------------------------------------
+
+
+def _schedule_to_evopt(schedule: "ChargeSchedule") -> dict[str, Any]:
+    """Convert a :class:`ChargeSchedule` to the EVopt JSON format.
+
+    The EVopt format uses 96 time slots (15-minute intervals over 24 hours)
+    with per-battery timeseries arrays.  Batteries are identified by title:
+    ``"Emma Akku 1"`` for Huawei and ``"Victron"`` for Victron.
+    """
+    from datetime import timedelta
+
+    computed_at = schedule.computed_at
+    # Generate 96 15-minute timestamps starting from midnight of the schedule day
+    base = computed_at.replace(hour=0, minute=0, second=0, microsecond=0)
+    if computed_at.hour >= 12:
+        # Schedule is for next day
+        base = base + timedelta(days=1)
+    timestamps = [
+        (base + timedelta(minutes=15 * i)).isoformat()
+        for i in range(96)
+    ]
+
+    # Build per-battery timeseries
+    battery_map: dict[str, dict[str, list[float]]] = {
+        "Emma Akku 1": {
+            "charging_power": [0.0] * 96,
+            "discharging_power": [0.0] * 96,
+            "state_of_charge": [0.0] * 96,
+        },
+        "Victron": {
+            "charging_power": [0.0] * 96,
+            "discharging_power": [0.0] * 96,
+            "state_of_charge": [0.0] * 96,
+        },
+    }
+
+    # Map each slot to its battery title
+    for slot in schedule.slots:
+        title = "Emma Akku 1" if slot.battery == "huawei" else "Victron"
+        if title not in battery_map:
+            continue
+        # Fill the timeseries for this slot's window
+        for i in range(96):
+            slot_time = base + timedelta(minutes=15 * i)
+            if slot.start_utc <= slot_time < slot.end_utc:
+                # Use max in case multiple slots overlap for same battery
+                current = battery_map[title]["charging_power"][i]
+                battery_map[title]["charging_power"][i] = max(
+                    current, float(slot.grid_charge_power_w)
+                )
+
+    batteries = [
+        {"title": title, **series}
+        for title, series in battery_map.items()
+    ]
+
+    return {
+        "res": {
+            "status": schedule.reasoning.evopt_status,
+            "objective_value": schedule.reasoning.cost_estimate_eur,
+            "batteries": batteries,
+            "details": {
+                "timestamp": timestamps,
+            },
+        }
+    }
+
+
+@api_router.get("/v1/plan")
+async def get_evopt_plan(
+    scheduler: Scheduler | None = Depends(get_scheduler),
+) -> dict[str, Any]:
+    """Return the active charge schedule in EVopt-compatible JSON format.
+
+    This endpoint implements the EVOPT_URI contract (R038): EVCC (or any EVopt
+    consumer) can ``GET /api/v1/plan`` and receive a response that passes
+    through ``_parse_state({"evopt": response_json})`` without error.
+
+    Returns
+    -------
+    dict
+        EVopt-format JSON with ``res.status``, ``res.objective_value``,
+        ``res.batteries`` (timeseries), and ``res.details.timestamp``.
+
+    Raises
+    ------
+    HTTPException(503)
+        If the scheduler is absent or has no active schedule.
+    """
+    if scheduler is None:
+        raise HTTPException(
+            status_code=503,
+            detail={"status": "Unavailable"},
+        )
+    if scheduler.active_schedule is None:
+        raise HTTPException(
+            status_code=503,
+            detail={"status": "Unavailable"},
+        )
+    return _schedule_to_evopt(scheduler.active_schedule)
+
+
+# ---------------------------------------------------------------------------
 # Metrics routes
 # ---------------------------------------------------------------------------
 
@@ -589,14 +707,24 @@ def _build_loads_dict(app: Any) -> dict[str, Any] | None:
     Returns ``None`` when the HA REST client is absent or unconfigured
     (``loads: null`` in WS payload = client not running).
 
-    When the client is present but the last poll failed (value is ``None``),
-    returns ``{"heat_pump_power_w": null, "available": false}`` — this is the
-    inspectable failure state that distinguishes "no client" from "client
-    running but HA sensor unavailable".
+    When using :class:`MultiEntityHaClient`, returns all 8 entity fields
+    (``heat_pump_power_w``, ``cop``, ``outdoor_temp_c``, etc.) with ``None``
+    for entities that haven't polled yet.
+
+    Falls back to the single-entity ``get_cached_value()`` path for backward
+    compatibility with the old ``HomeAssistantClient``.
     """
     client = getattr(app.state, "ha_rest_client", None)
     if client is None:
         return None
+
+    # Multi-entity path
+    if hasattr(client, "get_all_values"):
+        all_values = client.get_all_values()
+        available = any(v is not None for v in all_values.values())
+        return {**all_values, "available": available}
+
+    # Single-entity fallback
     value = client.get_cached_value()
     return {
         "heat_pump_power_w": value,
@@ -707,18 +835,21 @@ async def ws_state(
                         "effective_rate_eur_kwh": round(oct_rate + m3_rate, 6),
                         "octopus_rate_eur_kwh": oct_rate,
                         "modul3_rate_eur_kwh": m3_rate,
+                        "source": "live" if type(tariff_engine).__name__ == "LiveOctopusTariff" else "hardcoded",
                     }
                 except Exception:
                     tariff_dict = {
                         "effective_rate_eur_kwh": None,
                         "octopus_rate_eur_kwh": None,
                         "modul3_rate_eur_kwh": None,
+                        "source": "live" if type(tariff_engine).__name__ == "LiveOctopusTariff" else "hardcoded",
                     }
             else:
                 tariff_dict = {
                     "effective_rate_eur_kwh": None,
                     "octopus_rate_eur_kwh": None,
                     "modul3_rate_eur_kwh": None,
+                    "source": "hardcoded",
                 }
 
             # --- Build optimization snapshot ---
@@ -728,6 +859,10 @@ async def ws_state(
                 if (ws_scheduler is not None and ws_scheduler.active_schedule is not None)
                 else None
             )
+            if optimization_dict is not None:
+                optimization_dict["forecast_comparison"] = getattr(
+                    ws.app.state, "forecast_comparison", None
+                )
 
             payload: dict[str, Any] = {
                 "pool": pool_dict,
