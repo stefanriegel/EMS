@@ -316,16 +316,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             len(tariff_cfg.modul3.windows),
         )
 
-        # --- Instantiate InfluxDB client and metrics writer ---
+        # --- Instantiate InfluxDB client and metrics writer (optional) ---
         influx_cfg = InfluxConfig.from_env()
-        influx_client = InfluxDBClientAsync(
-            url=influx_cfg.url, token=influx_cfg.token, org=influx_cfg.org
-        )
-        metrics_writer = InfluxMetricsWriter(influx_client, influx_cfg.bucket)
-        metrics_reader = InfluxMetricsReader(influx_client, influx_cfg.org, influx_cfg.bucket)
-        logger.info(
-            "InfluxDB client connected — url=%s org=%s", influx_cfg.url, influx_cfg.org
-        )
+        if influx_cfg.enabled:
+            influx_client = InfluxDBClientAsync(
+                url=influx_cfg.url, token=influx_cfg.token, org=influx_cfg.org
+            )
+            metrics_writer: InfluxMetricsWriter | None = InfluxMetricsWriter(influx_client, influx_cfg.bucket)
+            metrics_reader: InfluxMetricsReader | None = InfluxMetricsReader(influx_client, influx_cfg.org, influx_cfg.bucket)
+            logger.info(
+                "InfluxDB client connected — url=%s org=%s", influx_cfg.url, influx_cfg.org
+            )
+        else:
+            influx_client = None
+            metrics_writer = None
+            metrics_reader = None
+            logger.info(
+                "InfluxDB disabled — set INFLUXDB_URL and INFLUXDB_TOKEN to enable metrics persistence"
+            )
 
         # --- ML Consumption Forecaster (optional — requires HA SQLite DB) ---
         consumption_forecaster = None
@@ -515,7 +523,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await app.state.ha_rest_client.stop()
     if app.state.orchestrator is not None:
         # influx_client and drivers are only created in the non-degraded path
-        await influx_client.close()
+        if influx_client is not None:
+            await influx_client.close()
         logger.info("Disconnecting Victron driver")
         await victron.close()
         logger.info("Disconnecting Huawei driver")

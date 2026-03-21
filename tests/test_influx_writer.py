@@ -76,9 +76,33 @@ class TestInfluxConfig:
 
         cfg = InfluxConfig.from_env()
         assert cfg.url == "http://localhost:8086"
-        assert cfg.token == "test-token"
+        assert cfg.token == ""
         assert cfg.org == "ems"
         assert cfg.bucket == "ems"
+
+    def test_disabled_when_no_env_vars(self, monkeypatch):
+        """enabled must be False when neither INFLUXDB_URL nor INFLUXDB_TOKEN is set."""
+        for key in ("INFLUXDB_URL", "INFLUXDB_TOKEN", "INFLUXDB_ORG", "INFLUXDB_BUCKET"):
+            monkeypatch.delenv(key, raising=False)
+
+        cfg = InfluxConfig.from_env()
+        assert cfg.enabled is False
+
+    def test_enabled_when_url_set(self, monkeypatch):
+        """enabled must be True when INFLUXDB_URL is set."""
+        monkeypatch.setenv("INFLUXDB_URL", "http://influx:8086")
+        monkeypatch.delenv("INFLUXDB_TOKEN", raising=False)
+
+        cfg = InfluxConfig.from_env()
+        assert cfg.enabled is True
+
+    def test_enabled_when_token_set(self, monkeypatch):
+        """enabled must be True when INFLUXDB_TOKEN is set."""
+        monkeypatch.delenv("INFLUXDB_URL", raising=False)
+        monkeypatch.setenv("INFLUXDB_TOKEN", "secret-tok")
+
+        cfg = InfluxConfig.from_env()
+        assert cfg.enabled is True
 
     def test_reads_env_vars(self, monkeypatch):
         monkeypatch.setenv("INFLUXDB_URL", "http://influx:8086")
@@ -91,6 +115,7 @@ class TestInfluxConfig:
         assert cfg.token == "secret-tok"
         assert cfg.org == "myorg"
         assert cfg.bucket == "mybucket"
+        assert cfg.enabled is True
 
 
 # ---------------------------------------------------------------------------

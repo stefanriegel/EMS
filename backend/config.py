@@ -196,40 +196,53 @@ class OrchestratorConfig:
 class InfluxConfig:
     """Connection config for the InfluxDB time-series database.
 
-    All fields have safe defaults so unit tests run without any environment
-    variables set.  The token default ``"test-token"`` is intentionally
-    non-functional for a real InfluxDB instance — tests mock the client.
+    InfluxDB is **optional** — the EMS runs fully without it.  The client is
+    only instantiated when :attr:`enabled` is ``True``, i.e. when at least
+    one of ``INFLUXDB_URL`` or ``INFLUXDB_TOKEN`` is explicitly set in the
+    environment.
 
     Attributes:
-        url:    HTTP(S) base URL of the InfluxDB instance (default: localhost).
-        token:  Authentication token — never logged.
-        org:    InfluxDB organisation name.
-        bucket: Target bucket for EMS measurements.
+        url:     HTTP(S) base URL of the InfluxDB instance (default: localhost).
+        token:   Authentication token — never logged.
+        org:     InfluxDB organisation name.
+        bucket:  Target bucket for EMS measurements.
+        enabled: ``True`` when InfluxDB is explicitly configured; ``False``
+                 when neither ``INFLUXDB_URL`` nor ``INFLUXDB_TOKEN`` is set.
 
     Environment variables:
         ``INFLUXDB_URL``    — base URL (default ``http://localhost:8086``).
-        ``INFLUXDB_TOKEN``  — auth token (default ``test-token``).
+        ``INFLUXDB_TOKEN``  — auth token (default ``""``, i.e. disabled).
         ``INFLUXDB_ORG``    — organisation (default ``ems``).
         ``INFLUXDB_BUCKET`` — bucket (default ``ems``).
     """
 
     url: str = "http://localhost:8086"
-    token: str = "test-token"
+    token: str = ""
     org: str = "ems"
     bucket: str = "ems"
+    enabled: bool = False
 
     @classmethod
     def from_env(cls) -> "InfluxConfig":
         """Construct an :class:`InfluxConfig` from environment variables.
 
-        All fields fall back to safe defaults when the corresponding
-        environment variable is absent — **no env vars are required**.
+        InfluxDB is considered **enabled** when either ``INFLUXDB_URL`` or
+        ``INFLUXDB_TOKEN`` is explicitly set to a non-empty value.  When
+        neither is set :attr:`enabled` is ``False`` and the lifespan will
+        skip instantiating the InfluxDB client.
+
+        All connection fields fall back to safe defaults when their
+        corresponding variable is absent.
         """
+        raw_url = os.environ.get("INFLUXDB_URL", "")
+        raw_token = os.environ.get("INFLUXDB_TOKEN", "")
+        enabled = bool(raw_url or raw_token)
         return cls(
-            url=os.environ.get("INFLUXDB_URL", "") or "http://localhost:8086",
-            token=os.environ.get("INFLUXDB_TOKEN", "") or "test-token",
+            url=raw_url or "http://localhost:8086",
+            token=raw_token,
             org=os.environ.get("INFLUXDB_ORG", "") or "ems",
             bucket=os.environ.get("INFLUXDB_BUCKET", "") or "ems",
+            enabled=enabled,
         )
 
 

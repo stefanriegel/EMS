@@ -186,3 +186,62 @@ class TestWebSocketEvccPayload:
         with TestClient(test_app).websocket_connect("/api/ws/state") as ws:
             data = ws.receive_json()
         assert data["ha_mqtt_connected"] is False
+
+
+class TestInfluxLifespanWiring:
+    """Verify InfluxDB is optional — lifespan must work with and without it."""
+
+    def test_metrics_reader_none_when_influx_not_configured(self):
+        """metrics_reader must be None when INFLUXDB_URL/TOKEN are absent."""
+        env_no_influx = {
+            k: v for k, v in os.environ.items()
+            if k not in ("INFLUXDB_URL", "INFLUXDB_TOKEN")
+        }
+        env_no_influx.update(_REQUIRED_ENV)
+        with patch("backend.main.HuaweiDriver", return_value=_make_mock_huawei()):
+            with patch("backend.main.VictronDriver", return_value=_make_mock_victron()):
+                with patch("backend.main.EvccMqttDriver", return_value=_make_mock_evcc_driver()):
+                    with patch("backend.main.HomeAssistantMqttClient", return_value=_make_mock_ha_client()):
+                        with patch.dict("os.environ", env_no_influx, clear=True):
+                            with TestClient(app) as client:
+                                assert app.state.metrics_reader is None
+
+    def test_metrics_reader_set_when_influx_configured(self):
+        """metrics_reader must be an InfluxMetricsReader when INFLUXDB_TOKEN is set."""
+        from backend.influx_reader import InfluxMetricsReader
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_influx = MagicMock()
+        mock_influx.close = AsyncMock()
+        mock_influx.write_api = MagicMock(return_value=MagicMock())
+        mock_influx.query_api = MagicMock(return_value=MagicMock())
+        mock_influx.url = "http://influx:8086"
+        mock_influx.org = "ems"
+
+        extra = {"INFLUXDB_TOKEN": "test-tok", "INFLUXDB_URL": "http://influx:8086"}
+        with patch("backend.main.HuaweiDriver", return_value=_make_mock_huawei()):
+            with patch("backend.main.VictronDriver", return_value=_make_mock_victron()):
+                with patch("backend.main.EvccMqttDriver", return_value=_make_mock_evcc_driver()):
+                    with patch("backend.main.HomeAssistantMqttClient", return_value=_make_mock_ha_client()):
+                        with patch("backend.main.InfluxDBClientAsync", return_value=mock_influx):
+                            with patch.dict("os.environ", {**_REQUIRED_ENV, **extra}):
+                                with TestClient(app) as client:
+                                    assert isinstance(app.state.metrics_reader, InfluxMetricsReader)
+
+    def test_influx_disabled_log_message(self, caplog):
+        """Startup must log that InfluxDB is disabled when not configured."""
+        import logging
+        env_no_influx = {
+            k: v for k, v in os.environ.items()
+            if k not in ("INFLUXDB_URL", "INFLUXDB_TOKEN")
+        }
+        env_no_influx.update(_REQUIRED_ENV)
+        with patch("backend.main.HuaweiDriver", return_value=_make_mock_huawei()):
+            with patch("backend.main.VictronDriver", return_value=_make_mock_victron()):
+                with patch("backend.main.EvccMqttDriver", return_value=_make_mock_evcc_driver()):
+                    with patch("backend.main.HomeAssistantMqttClient", return_value=_make_mock_ha_client()):
+                        with patch.dict("os.environ", env_no_influx, clear=True):
+                            with caplog.at_level(logging.INFO, logger="backend.main"):
+                                with TestClient(app):
+                                    pass
+        assert any("InfluxDB disabled" in r.message for r in caplog.records)
