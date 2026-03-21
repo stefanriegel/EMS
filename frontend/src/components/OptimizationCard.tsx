@@ -57,6 +57,29 @@ export function OptimizationCard({ optimization }: Props) {
               ))
             )}
           </div>
+
+          {optimization.forecast_comparison != null && (
+            <div className="opt-forecast-comparison" data-testid="opt-forecast-comparison">
+              <span className="opt-fc-label">Heat Pump Forecast</span>
+              <span className="opt-fc-values">
+                Predicted {optimization.forecast_comparison.predicted_kwh.toFixed(1)} kWh
+                {" · "}
+                Actual {optimization.forecast_comparison.actual_kwh.toFixed(1)} kWh
+              </span>
+              <span
+                data-testid="opt-forecast-error-badge"
+                className={`opt-fc-badge opt-fc-badge--${
+                  optimization.forecast_comparison.error_pct < 10
+                    ? "green"
+                    : optimization.forecast_comparison.error_pct < 20
+                    ? "amber"
+                    : "red"
+                }`}
+              >
+                Error {optimization.forecast_comparison.error_pct.toFixed(1)}%
+              </span>
+            </div>
+          )}
         </>
       )}
     </section>

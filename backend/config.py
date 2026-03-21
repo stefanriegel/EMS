@@ -509,3 +509,109 @@ class TariffConfig:
         )
         return cls(octopus=octopus, modul3=modul3)
 
+
+@dataclass
+class HaStatisticsConfig:
+    """Configuration for the HA SQLite statistics reader and ConsumptionForecaster.
+
+    Parameters
+    ----------
+    db_path:
+        Filesystem path to ``home-assistant_v2.db``.
+    min_training_days:
+        Minimum number of days of history required before the ML models are
+        considered trainable.  Below this threshold the forecaster falls back
+        to the seasonal constant.  Default: 14.
+    outdoor_temp_entity:
+        HA ``statistic_id`` for the outdoor temperature sensor.
+    heat_pump_entity:
+        HA ``statistic_id`` for the heat pump power sensor.
+    dhw_entity:
+        HA ``statistic_id`` for the domestic hot water (DHW) power sensor.
+        May be ``None`` when no DHW entity is configured.
+    """
+
+    db_path: str
+    outdoor_temp_entity: str
+    heat_pump_entity: str
+    dhw_entity: str | None = None
+    min_training_days: int = 14
+
+    @classmethod
+    def from_env(cls) -> "HaStatisticsConfig | None":
+        """Construct from environment variables, or return ``None`` if ``HA_DB_PATH`` is absent."""
+        db_path = os.environ.get("HA_DB_PATH", "/config/home-assistant_v2.db")
+        if not db_path:
+            return None
+        return cls(
+            db_path=db_path,
+            outdoor_temp_entity=os.environ.get(
+                "HA_STAT_OUTDOOR_TEMP_ENTITY",
+                "sensor.ems_esp_boiler_aussentemperatur",
+            ),
+            heat_pump_entity=os.environ.get(
+                "HA_STAT_HEAT_PUMP_ENTITY",
+                "sensor.warmepumpe_total_active_power",
+            ),
+            dhw_entity=os.environ.get("HA_STAT_DHW_ENTITY") or None,
+            min_training_days=int(os.environ.get("HA_ML_MIN_DAYS", "14")),
+        )
+
+
+@dataclass
+class MultiEntityHaConfig:
+    """Configuration for the multi-entity HA REST client.
+
+    Parameters
+    ----------
+    entity_map:
+        ``dict[field_name, (entity_id, converter)]`` mapping field names
+        to HA entity IDs and value converters.
+    """
+
+    entity_map: dict
+
+    @classmethod
+    def default_entities(cls) -> dict:
+        """Return the default 8-entity map covering all roadmap-specified sensors."""
+        from backend.ha_rest_client import _float_converter  # noqa: PLC0415
+        return {
+            "heat_pump_power_w": ("sensor.warmepumpe_total_active_power", _float_converter),
+            "cop": ("sensor.ems_esp_boiler_current_coefficient_of_performance", _float_converter),
+            "outdoor_temp_c": ("sensor.ems_esp_boiler_aussentemperatur", _float_converter),
+            "flow_temp_c": ("sensor.ems_esp_boiler_actual_flow_water_temperature", _float_converter),
+            "return_temp_c": ("sensor.ems_esp_boiler_return_temperature", _float_converter),
+            "hausverbrauch_w": ("sensor.hausverbrauch", _float_converter),
+            "steuerbare_w": ("sensor.steuerbare_verbraucher", _float_converter),
+            "base_w": ("sensor.hausverbrauch_abzgl_steuerbare", _float_converter),
+        }
+
+    @classmethod
+    def from_env(cls) -> "MultiEntityHaConfig":
+        """Construct from environment variables with sensible defaults."""
+        return cls(entity_map=cls.default_entities())
+
+
+@dataclass
+class LiveTariffConfig:
+    """Configuration for the live Octopus tariff from HA entity.
+
+    Parameters
+    ----------
+    octopus_entity_id:
+        HA entity ID to poll for the raw Octopus electricity price.
+        Empty string disables the live tariff — falls back to CompositeTariffEngine.
+    """
+
+    octopus_entity_id: str = "sensor.octopus_a_7721404e_electricity_price"
+
+    @classmethod
+    def from_env(cls) -> "LiveTariffConfig":
+        """Construct from environment variables."""
+        return cls(
+            octopus_entity_id=os.environ.get(
+                "HA_OCTOPUS_ENTITY_ID",
+                "sensor.octopus_a_7721404e_electricity_price",
+            ),
+        )
+

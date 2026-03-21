@@ -26,6 +26,25 @@ export function TariffCard({ tariff }: Props) {
     <section className="card tariff-card">
       <h2 className="card-title">Current Tariff</h2>
 
+      {tariff?.source === "live" && (
+        <span
+          data-testid="tariff-source-badge"
+          className="badge badge--live"
+          style={{ color: "var(--color-pv)", borderColor: "var(--color-pv)" }}
+        >
+          Live ⚡
+        </span>
+      )}
+      {tariff?.source === "hardcoded" && (
+        <span
+          data-testid="tariff-source-badge"
+          className="badge badge--hardcoded"
+          style={{ color: "var(--text-muted)", borderColor: "var(--text-muted)" }}
+        >
+          Hardcoded
+        </span>
+      )}
+
       {unavailable ? (
         <p className="tariff-unavailable">Tariff unavailable</p>
       ) : (

@@ -37,6 +37,7 @@ Default level is ``INFO``.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -46,11 +47,12 @@ from fastapi import FastAPI
 from starlette.staticfiles import StaticFiles
 
 from backend.api import api_router
-from backend.auth import AdminConfig, AuthMiddleware, auth_router
-from backend.config import HuaweiConfig, InfluxConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig, EvccConfig, SchedulerConfig, EvccMqttConfig, HaMqttConfig, TelegramConfig, HaRestConfig
+from backend.auth import AdminConfig, AuthMiddleware, auth_router, ensure_jwt_secret
+from backend.config import HuaweiConfig, InfluxConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig, EvccConfig, SchedulerConfig, EvccMqttConfig, HaMqttConfig, TelegramConfig, HaRestConfig, HaStatisticsConfig, MultiEntityHaConfig, LiveTariffConfig
+from backend.supervisor_client import SupervisorClient
 from backend.setup_config import load_setup_config, EMS_CONFIG_PATH
 from backend.setup_api import setup_router
-from backend.ha_rest_client import HomeAssistantClient
+from backend.ha_rest_client import HomeAssistantClient, MultiEntityHaClient
 from backend.drivers.huawei_driver import HuaweiDriver
 from backend.drivers.victron_driver import VictronDriver
 from backend.evcc_client import EvccClient
@@ -86,6 +88,89 @@ def _configure_logging() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Nightly scheduler loop
+# ---------------------------------------------------------------------------
+
+
+async def _nightly_scheduler_loop(
+    scheduler,
+    writer,
+    run_hour: int,
+    *,
+    consumption_forecaster=None,
+    app=None,
+) -> None:
+    """Asyncio task that calls ``scheduler.compute_schedule()`` once per night.
+
+    Sleeps until ``run_hour:00:00`` local time, then fires ``compute_schedule``
+    and repeats every 24 hours.  Exceptions in ``compute_schedule`` are caught
+    and logged as WARNING so a transient EVCC failure does not kill the loop.
+
+    Parameters
+    ----------
+    scheduler:
+        A :class:`~backend.scheduler.Scheduler` instance.
+    writer:
+        Optional :class:`~backend.influx_writer.InfluxMetricsWriter` passed
+        through to ``compute_schedule``.
+    run_hour:
+        Local clock hour (0–23) at which to run the scheduler each night.
+    consumption_forecaster:
+        Optional :class:`~backend.consumption_forecaster.ConsumptionForecaster`
+        that is retrained each night.
+    app:
+        Optional :class:`~fastapi.FastAPI` instance for setting
+        ``app.state.forecast_comparison``.
+    """
+    from datetime import datetime as _dt, timedelta as _td
+
+    now = _dt.now()
+    target = now.replace(hour=run_hour, minute=0, second=0, microsecond=0)
+    if target <= now:
+        # Next occurrence is tomorrow
+        target = target + _td(days=1)
+    initial_sleep = (target - now).total_seconds()
+    logger.info(
+        "nightly-scheduler: first run in %.0f s at %s (run_hour=%d)",
+        initial_sleep,
+        target.isoformat(),
+        run_hour,
+    )
+    await asyncio.sleep(initial_sleep)
+
+    while True:
+        logger.info("nightly-scheduler: compute_schedule running — run_hour=%d", run_hour)
+        try:
+            # Retrain ML models if stale
+            if consumption_forecaster is not None:
+                try:
+                    await consumption_forecaster.retrain_if_stale()
+                    logger.info("nightly-scheduler: consumption forecaster retrained")
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("nightly-scheduler: retrain failed: %s", exc)
+
+            await scheduler.compute_schedule(writer)
+            logger.info("nightly-scheduler: compute_schedule complete")
+
+            # Compute forecast comparison for yesterday
+            if consumption_forecaster is not None and app is not None:
+                try:
+                    metrics_reader = getattr(app.state, "metrics_reader", None)
+                    if metrics_reader is not None:
+                        actual = await metrics_reader.query_consumption_history(days=2)
+                        if actual is not None and hasattr(actual, "today_expected_kwh"):
+                            comparison = consumption_forecaster.get_forecast_comparison(
+                                actual.today_expected_kwh
+                            )
+                            app.state.forecast_comparison = comparison
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("nightly-scheduler: forecast comparison failed: %s", exc)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("nightly-scheduler: compute_schedule failed: %s", exc)
+        await asyncio.sleep(86400)
+
+
+# ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
 
@@ -110,6 +195,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # --- Load wizard-persisted config and inject into env (setdefault = env vars win) ---
     config_path = os.environ.get("EMS_CONFIG_PATH", EMS_CONFIG_PATH)
     app.state.setup_config_path = config_path
+
+    # Ensure a persistent JWT secret exists before any auth config is read.
+    # Uses the same directory as the wizard config file so it lives on the
+    # same persistent volume (HA config volume / Docker bind mount).
+    config_dir = os.path.dirname(config_path)
+    ensure_jwt_secret(config_dir)
+
     setup_cfg = load_setup_config(config_path)
     if setup_cfg is not None:
         os.environ.setdefault("HUAWEI_HOST", setup_cfg.huawei_host)
@@ -124,7 +216,53 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         os.environ.setdefault("HA_TOKEN", setup_cfg.ha_token)
         os.environ.setdefault("HA_HEAT_PUMP_ENTITY_ID", setup_cfg.ha_heat_pump_entity_id)
 
-    # --- Orchestrator + hardware drivers (degraded mode on missing env vars) ---
+    # --- Supervisor service discovery (HA add-on mode only, no-op otherwise) ---
+    # Resolves MQTT broker credentials and EVCC add-on location automatically
+    # when running inside Home Assistant OS.  Results are injected into env vars
+    # via setdefault so explicit env vars (run.sh options, Docker Compose .env)
+    # always take precedence.
+    supervisor = SupervisorClient.from_env()
+    if supervisor is not None:
+        logger.info("Supervisor: detected — resolving services automatically")
+
+        # HA Core API via Supervisor proxy (no user token needed)
+        ha_proxy = supervisor.get_ha_proxy_config()
+        os.environ.setdefault("HA_URL", ha_proxy.base_url)
+        os.environ.setdefault("HA_TOKEN", ha_proxy.token)
+        logger.info("Supervisor: HA REST API → %s", ha_proxy.base_url)
+
+        # MQTT broker (Mosquitto add-on)
+        mqtt_info = await supervisor.get_mqtt_service()
+        if mqtt_info is not None:
+            os.environ.setdefault("HA_MQTT_HOST", mqtt_info.host)
+            os.environ.setdefault("HA_MQTT_PORT", str(mqtt_info.port))
+            os.environ.setdefault("HA_MQTT_USERNAME", mqtt_info.username or "")
+            os.environ.setdefault("HA_MQTT_PASSWORD", mqtt_info.password or "")
+            # EVCC MQTT broker is the same Mosquitto instance
+            os.environ.setdefault("EVCC_MQTT_HOST", mqtt_info.host)
+            os.environ.setdefault("EVCC_MQTT_PORT", str(mqtt_info.port))
+            os.environ.setdefault("EVCC_MQTT_USERNAME", mqtt_info.username or "")
+            os.environ.setdefault("EVCC_MQTT_PASSWORD", mqtt_info.password or "")
+
+        # EVCC add-on (optional — skipped gracefully if not installed)
+        evcc_info = await supervisor.get_evcc_info()
+        if evcc_info is not None:
+            os.environ.setdefault("EVCC_HOST", evcc_info.api_host)
+            os.environ.setdefault("EVCC_PORT", str(evcc_info.api_port))
+
+        # InfluxDB add-on (optional — not all HAOS installations have it)
+        influx_info = await supervisor.get_influxdb_service()
+        if influx_info is not None and influx_info.url:
+            os.environ.setdefault("INFLUXDB_URL", influx_info.url)
+            if influx_info.token:
+                os.environ.setdefault("INFLUXDB_TOKEN", influx_info.token)
+            logger.info(
+                "Supervisor: using InfluxDB URL from Supervisor service discovery — url=%s",
+                influx_info.url,
+            )
+    else:
+        logger.debug("Supervisor: not detected — using env vars / wizard config only")
+
     try:
         huawei_cfg = HuaweiConfig.from_env()
         victron_cfg = VictronConfig.from_env()
@@ -189,8 +327,38 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             "InfluxDB client connected — url=%s org=%s", influx_cfg.url, influx_cfg.org
         )
 
+        # --- ML Consumption Forecaster (optional — requires HA SQLite DB) ---
+        consumption_forecaster = None
+        ha_stats_cfg = HaStatisticsConfig.from_env()
+        if ha_stats_cfg is not None and os.path.isfile(ha_stats_cfg.db_path):
+            try:
+                from backend.ha_statistics_reader import HaStatisticsReader  # noqa: PLC0415
+                from backend.consumption_forecaster import ConsumptionForecaster  # noqa: PLC0415
+
+                ha_stats_reader = HaStatisticsReader(ha_stats_cfg.db_path)
+                consumption_forecaster = ConsumptionForecaster(ha_stats_reader, ha_stats_cfg)
+                await consumption_forecaster.train()
+                logger.info(
+                    "ConsumptionForecaster trained — db_path=%s min_days=%d",
+                    ha_stats_cfg.db_path, ha_stats_cfg.min_training_days,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("ConsumptionForecaster failed to initialize: %s", exc)
+                consumption_forecaster = None
+        else:
+            if ha_stats_cfg is not None:
+                logger.info(
+                    "ConsumptionForecaster disabled — DB not found at %s",
+                    ha_stats_cfg.db_path,
+                )
+            else:
+                logger.info("ConsumptionForecaster disabled — HA_DB_PATH not configured")
+
+        # Use ML forecaster as the consumption reader for the scheduler if available
+        effective_consumption_reader = consumption_forecaster if consumption_forecaster is not None else metrics_reader
+
         evcc_client = EvccClient(evcc_cfg)
-        scheduler = Scheduler(evcc_client, metrics_reader, tariff_engine, sys_cfg, orch_cfg)
+        scheduler = Scheduler(evcc_client, effective_consumption_reader, tariff_engine, sys_cfg, orch_cfg)
         app.state.scheduler = scheduler
         logger.info(
             "Scheduler wired — run_hour=%d charge_window=%d–%d min",
@@ -198,6 +366,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             sched_cfg.grid_charge_start_min,
             sched_cfg.grid_charge_end_min,
         )
+
+        # --- Start nightly scheduler loop ---
+        sched_task = asyncio.create_task(
+            _nightly_scheduler_loop(
+                scheduler,
+                metrics_writer,
+                sched_cfg.run_hour,
+                consumption_forecaster=consumption_forecaster,
+                app=app,
+            ),
+            name="nightly-scheduler",
+        )
+        app.state.sched_task = sched_task
 
         # --- Start orchestrator ---
         orchestrator = Orchestrator(
@@ -253,22 +434,52 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             orchestrator.set_notifier(notifier)
             logger.info("Orchestrator: Telegram notifier wired")
 
-        # --- HA REST client ---
+        # --- HA REST client (multi-entity or single-entity fallback) ---
         ha_rest_cfg = HaRestConfig.from_env()
         if ha_rest_cfg.url and ha_rest_cfg.token:
-            ha_rest_client = HomeAssistantClient(
+            multi_ha_cfg = MultiEntityHaConfig.from_env()
+            entity_map = multi_ha_cfg.entity_map
+
+            # Add Octopus entity to the map if live tariff is configured
+            live_tariff_cfg = LiveTariffConfig.from_env()
+            if live_tariff_cfg.octopus_entity_id:
+                octopus_field = "octopus_electricity_price"
+                from backend.ha_rest_client import _float_converter  # noqa: PLC0415
+                entity_map[octopus_field] = (live_tariff_cfg.octopus_entity_id, _float_converter)
+
+            ha_rest_client = MultiEntityHaClient(
                 ha_rest_cfg.url,
                 ha_rest_cfg.token,
-                ha_rest_cfg.heat_pump_entity_id,
+                entity_map,
             )
             await ha_rest_client.start()
             app.state.ha_rest_client = ha_rest_client
             logger.info(
-                "HA REST client configured — entity_id=%s", ha_rest_cfg.heat_pump_entity_id
+                "HA REST multi-entity client configured — %d entities",
+                len(entity_map),
             )
+
+            # --- LiveOctopusTariff conditional wrap ---
+            if live_tariff_cfg.octopus_entity_id:
+                from backend.live_tariff import LiveOctopusTariff  # noqa: PLC0415
+                tariff_engine = LiveOctopusTariff(
+                    ha_client=ha_rest_client,
+                    octopus_entity_field=octopus_field,
+                    fallback=tariff_engine,
+                )
+                app.state.tariff_engine = tariff_engine
+                logger.info(
+                    "Live Octopus tariff configured — entity=%s field=%s",
+                    live_tariff_cfg.octopus_entity_id,
+                    octopus_field,
+                )
         else:
             app.state.ha_rest_client = None
             logger.info("HA REST client not configured — HA_URL / HA_TOKEN not set")
+
+        # forecast_comparison is updated nightly; initialize to None so the WS
+        # handler can safely read it via getattr before the first nightly run.
+        app.state.forecast_comparison = None
 
     except KeyError as exc:
         logger.warning(
@@ -278,11 +489,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
         app.state.orchestrator = None
         app.state.scheduler = None
+        app.state.sched_task = None
         app.state.metrics_reader = None
         app.state.evcc_driver = None
         app.state.ha_mqtt_client = None
         app.state.notifier = None
         app.state.ha_rest_client = None
+        app.state.forecast_comparison = None
 
     yield  # application is running
 
@@ -290,6 +503,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if app.state.orchestrator is not None:
         logger.info("EMS shutting down — stopping orchestrator")
         await app.state.orchestrator.stop()
+    if getattr(app.state, "sched_task", None) is not None:
+        app.state.sched_task.cancel()
+        await asyncio.gather(app.state.sched_task, return_exceptions=True)
+        logger.info("nightly-scheduler: task cancelled")
     if app.state.evcc_driver is not None:
         await app.state.evcc_driver.close()
     if app.state.ha_mqtt_client is not None:
@@ -330,6 +547,10 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+    # Ensure JWT secret is generated/loaded before middleware reads AdminConfig.
+    # Uses the configured config dir; falls back to the directory of the default path.
+    config_path = os.environ.get("EMS_CONFIG_PATH", EMS_CONFIG_PATH)
+    ensure_jwt_secret(os.path.dirname(config_path))
     app.add_middleware(AuthMiddleware, admin_cfg=AdminConfig.from_env())
     app.include_router(api_router)
     app.include_router(setup_router)

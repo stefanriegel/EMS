@@ -80,6 +80,7 @@ export interface TariffPayload {
   effective_rate_eur_kwh: number | null;
   octopus_rate_eur_kwh: number | null;
   modul3_rate_eur_kwh: number | null;
+  source?: "live" | "hardcoded";
 }
 
 // ---------------------------------------------------------------------------
@@ -107,6 +108,7 @@ export interface OptimizationPayload {
   reasoning: OptimizationReasoningPayload;
   computed_at: string;
   stale: boolean;
+  forecast_comparison?: { predicted_kwh: number; actual_kwh: number; error_pct: number } | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -129,6 +131,13 @@ export interface EvccPayload {
 export interface LoadsPayload {
   heat_pump_power_w: number | null;
   available: boolean;
+  cop?: number | null;
+  outdoor_temp_c?: number | null;
+  flow_temp_c?: number | null;
+  return_temp_c?: number | null;
+  hausverbrauch_w?: number | null;
+  steuerbare_w?: number | null;
+  base_w?: number | null;
 }
 
 // ---------------------------------------------------------------------------
