@@ -9,16 +9,23 @@ get_option() {
 }
 
 # --- Required hardware endpoints ---
-export HUAWEI_HOST=$(get_option 'huawei_host')
+# Only export if non-empty — the backend's config.py treats missing vars as
+# "unconfigured" and enters degraded/setup-only mode.  Exporting "" would
+# set the key in os.environ and bypass the KeyError-based detection.
+_huawei_host=$(get_option 'huawei_host')
+[ -n "$_huawei_host" ] && export HUAWEI_HOST="$_huawei_host"
 export HUAWEI_PORT=$(get_option 'huawei_port')
 export HUAWEI_MASTER_SLAVE_ID=$(get_option 'huawei_master_unit_id')
 export HUAWEI_SLAVE_SLAVE_ID=$(get_option 'huawei_slave_unit_id')
 
-export VICTRON_HOST=$(get_option 'victron_host')
+_victron_host=$(get_option 'victron_host')
+[ -n "$_victron_host" ] && export VICTRON_HOST="$_victron_host"
 export VICTRON_PORT=$(get_option 'victron_port')
 
-export INFLUXDB_URL=$(get_option 'influxdb_url')
-export INFLUXDB_TOKEN=$(get_option 'influxdb_token')
+_influxdb_url=$(get_option 'influxdb_url')
+[ -n "$_influxdb_url" ] && export INFLUXDB_URL="$_influxdb_url"
+_influxdb_token=$(get_option 'influxdb_token')
+[ -n "$_influxdb_token" ] && export INFLUXDB_TOKEN="$_influxdb_token"
 export INFLUXDB_ORG=$(get_option 'influxdb_org')
 export INFLUXDB_BUCKET=$(get_option 'influxdb_bucket')
 
@@ -57,11 +64,14 @@ _ha_octopus=$(get_option 'ha_octopus_entity_id')
 [ -n "$_ha_octopus" ] && export HA_OCTOPUS_ENTITY_ID="$_ha_octopus"
 
 # --- Optional: Telegram alerts ---
-export TELEGRAM_BOT_TOKEN=$(get_option 'telegram_bot_token')
-export TELEGRAM_CHAT_ID=$(get_option 'telegram_chat_id')
+_tg_token=$(get_option 'telegram_bot_token')
+[ -n "$_tg_token" ] && export TELEGRAM_BOT_TOKEN="$_tg_token"
+_tg_chat=$(get_option 'telegram_chat_id')
+[ -n "$_tg_chat" ] && export TELEGRAM_CHAT_ID="$_tg_chat"
 
 # --- Optional: EMS web UI authentication ---
-export ADMIN_PASSWORD_HASH=$(get_option 'admin_password_hash')
+_admin_hash=$(get_option 'admin_password_hash')
+[ -n "$_admin_hash" ] && export ADMIN_PASSWORD_HASH="$_admin_hash"
 # JWT_SECRET is generated automatically on first startup and persisted to
 # /config/.jwt_secret — no operator action required.
 

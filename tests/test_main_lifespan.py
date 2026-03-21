@@ -125,6 +125,25 @@ class TestLifespanWiring:
             with TestClient(app) as client:
                 assert app.state.orchestrator._evcc_monitor is mock_driver
 
+    def test_degraded_mode_when_hosts_empty(self):
+        """Empty HUAWEI_HOST/VICTRON_HOST (HA add-on default) → setup-only mode."""
+        env = {"HUAWEI_HOST": "", "VICTRON_HOST": ""}
+        with patch.dict("os.environ", env, clear=False):
+            with TestClient(app) as client:
+                assert app.state.orchestrator is None
+                resp = client.get("/api/health")
+                assert resp.status_code == 200
+                assert resp.json()["status"] == "offline"
+
+    def test_degraded_mode_when_hosts_missing(self):
+        """Missing HUAWEI_HOST/VICTRON_HOST → setup-only mode."""
+        # Remove both keys entirely
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("HUAWEI_HOST", "VICTRON_HOST")}
+        with patch.dict("os.environ", env, clear=True):
+            with TestClient(app) as client:
+                assert app.state.orchestrator is None
+
 
 class TestWebSocketEvccPayload:
     def test_ws_state_includes_evcc_key(self):

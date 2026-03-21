@@ -9,6 +9,21 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+
+def _require_env(key: str) -> str:
+    """Return the value of *key* from the environment.
+
+    Raises :class:`KeyError` if the variable is absent **or empty**.
+    ``run.sh`` exports every option from ``/data/options.json`` — unconfigured
+    fields arrive as ``""`` rather than being unset.  Treating empty the same
+    as missing lets the lifespan's ``except KeyError`` degraded-mode path work
+    correctly.
+    """
+    value = os.environ.get(key, "")
+    if not value:
+        raise KeyError(key)
+    return value
+
 from backend.tariff_models import Modul3Config, Modul3Window, OctopusGoConfig
 
 
@@ -46,7 +61,7 @@ class HuaweiConfig:
             KeyError: if ``HUAWEI_HOST`` is not set.
         """
         return cls(
-            host=os.environ["HUAWEI_HOST"],
+            host=_require_env("HUAWEI_HOST"),
             port=int(os.environ.get("HUAWEI_PORT", "502")),
             master_slave_id=int(os.environ.get("HUAWEI_MASTER_SLAVE_ID", "0")),
             slave_slave_id=int(os.environ.get("HUAWEI_SLAVE_SLAVE_ID", "2")),
@@ -88,7 +103,7 @@ class VictronConfig:
             KeyError: if ``VICTRON_HOST`` is not set.
         """
         return cls(
-            host=os.environ["VICTRON_HOST"],
+            host=_require_env("VICTRON_HOST"),
             port=int(os.environ.get("VICTRON_PORT", "1883")),
         )
 
@@ -211,10 +226,10 @@ class InfluxConfig:
         environment variable is absent — **no env vars are required**.
         """
         return cls(
-            url=os.environ.get("INFLUXDB_URL", "http://localhost:8086"),
-            token=os.environ.get("INFLUXDB_TOKEN", "test-token"),
-            org=os.environ.get("INFLUXDB_ORG", "ems"),
-            bucket=os.environ.get("INFLUXDB_BUCKET", "ems"),
+            url=os.environ.get("INFLUXDB_URL", "") or "http://localhost:8086",
+            token=os.environ.get("INFLUXDB_TOKEN", "") or "test-token",
+            org=os.environ.get("INFLUXDB_ORG", "") or "ems",
+            bucket=os.environ.get("INFLUXDB_BUCKET", "") or "ems",
         )
 
 

@@ -223,6 +223,13 @@ class TestVictronConfig:
         with pytest.raises(KeyError):
             VictronConfig.from_env()
 
+    def test_from_env_empty_host_raises(self, monkeypatch):
+        """Empty VICTRON_HOST must raise KeyError — run.sh exports '' for unconfigured fields."""
+        monkeypatch.setenv("VICTRON_HOST", "")
+
+        with pytest.raises(KeyError):
+            VictronConfig.from_env()
+
     def test_default_values_direct_construction(self):
         """VictronConfig defaults are correct when constructed directly."""
         cfg = VictronConfig(host="localhost")

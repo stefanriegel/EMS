@@ -210,6 +210,13 @@ class TestHuaweiConfig:
         with pytest.raises(KeyError):
             HuaweiConfig.from_env()
 
+    def test_from_env_empty_host_raises(self, monkeypatch):
+        """Empty HUAWEI_HOST must raise KeyError — run.sh exports '' for unconfigured fields."""
+        monkeypatch.setenv("HUAWEI_HOST", "")
+
+        with pytest.raises(KeyError):
+            HuaweiConfig.from_env()
+
     def test_default_values(self):
         """HuaweiConfig defaults are correct when constructed directly."""
         cfg = HuaweiConfig(host="localhost")
