@@ -1,29 +1,32 @@
 ARG BUILD_FROM=ghcr.io/home-assistant/aarch64-base-python:3.12-alpine3.21
 FROM ${BUILD_FROM}
 
-# Build context is the project root (set by GitHub Actions or manual build):
-#   docker build --platform linux/amd64 -t ems-addon-test \
-#     --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base-python:3.12-alpine3.21 \
-#     -f ha-addon/Dockerfile .
-# The GitHub Actions workflow passes --build-arg BUILD_FROM per architecture.
+# The HA Supervisor uses the ha-addon/ directory as Docker build context.
+# Source code (backend/, pyproject.toml) lives in the parent repo.
+# We install from the GitHub repo URL directly during the build,
+# then copy the pre-built frontend dist from this directory.
+
+ARG BUILD_VERSION=0.3.0
 
 WORKDIR /app
 
 # Install build toolchain for bcrypt C extension on Alpine musl (K030).
-# Without build-base + libffi-dev, pip install passlib[bcrypt] fails with
-# "gcc: not found" on Alpine's musl libc.
-RUN apk add --no-cache build-base libffi-dev jq
+RUN apk add --no-cache build-base libffi-dev jq git
 
-COPY pyproject.toml .
-RUN pip install --no-cache-dir .
+# Install the EMS backend from the GitHub repository.
+# The pip install fetches pyproject.toml + backend/ from the repo.
+RUN pip install --no-cache-dir \
+    "ems @ git+https://github.com/stefanriegel/EMS.git@main"
 
-COPY backend/ backend/
-COPY frontend/dist frontend/dist
-COPY ha-addon/run.sh /run.sh
+# Copy the pre-built frontend dist (committed to ha-addon/ by deploy script)
+# If dist/ doesn't exist, create an empty placeholder so the COPY doesn't fail.
+COPY dist/ frontend/dist/
+
+COPY run.sh /run.sh
 RUN chmod +x /run.sh
 
 LABEL \
-  io.hass.version="0.3.0" \
+  io.hass.version="${BUILD_VERSION}" \
   io.hass.type="addon" \
   io.hass.arch="aarch64|amd64"
 
