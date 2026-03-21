@@ -81,15 +81,13 @@ export function DeviceDetail({ devices }: Props) {
         <Row label="L2 Voltage" value={n(vc?.l2_voltage_v, "V", 1)} />
         <Row label="L3 Power" value={n(vc?.l3_power_w)} />
         <Row label="L3 Voltage" value={n(vc?.l3_voltage_v, "V", 1)} />
-      </div>
-    </section>
         <Row label="Grid Power" value={n(vc?.grid_power_w, "W", 0)} />
         <Row label="Grid L1" value={n(vc?.grid_l1_power_w, "W", 0)} />
         <Row label="Grid L2" value={n(vc?.grid_l2_power_w, "W", 0)} />
         <Row label="Grid L3" value={n(vc?.grid_l3_power_w, "W", 0)} />
         <Row label="Total PV" value={n(vc?.pv_on_grid_w, "W", 0)} />
         <Row label="Consumption" value={n(vc?.consumption_w, "W", 0)} />
-      </Box>
-    </Box>
+      </div>
+    </section>
   );
 }
