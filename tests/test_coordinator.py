@@ -719,3 +719,208 @@ class TestGetDeviceSnapshot:
         assert result["huawei"]["max_charge_w"] == 0
         assert result["huawei"]["max_discharge_w"] == 0
         assert result["victron"]["available"] is False
+
+
+# ===========================================================================
+# PV surplus headroom weighting (OPT-01) — replaces Huawei-first
+# ===========================================================================
+
+
+class TestPvSurplusHeadroomWeighting:
+    """OPT-01: PV surplus weighted by SoC headroom, not Huawei-first."""
+
+    async def test_equal_soc_equal_split(self):
+        coord, _, _ = _make_coordinator()
+        h_w, v_w = coord._allocate_charge(
+            surplus_w=4000.0,
+            h_snap=_snap(soc=50.0, charge_headroom_w=5000.0),
+            v_snap=_snap(soc=50.0, charge_headroom_w=8000.0),
+        )
+        assert abs(h_w - 2000.0) < 1.0
+        assert abs(v_w - 2000.0) < 1.0
+
+    async def test_lower_soc_gets_more(self):
+        coord, _, _ = _make_coordinator()
+        h_w, v_w = coord._allocate_charge(
+            surplus_w=3000.0,
+            h_snap=_snap(soc=80.0, charge_headroom_w=5000.0),
+            v_snap=_snap(soc=50.0, charge_headroom_w=8000.0),
+        )
+        # Huawei headroom=15, Victron headroom=45, total=60
+        # h_share = 3000*(15/60) = 750, v_share = 3000*(45/60) = 2250
+        assert v_w > h_w
+
+    async def test_both_full_returns_zero(self):
+        coord, _, _ = _make_coordinator()
+        h_w, v_w = coord._allocate_charge(
+            surplus_w=3000.0,
+            h_snap=_snap(soc=96.0, charge_headroom_w=0.0),
+            v_snap=_snap(soc=96.0, charge_headroom_w=0.0),
+        )
+        assert h_w == 0.0
+        assert v_w == 0.0
+
+    async def test_overflow_routing_when_rate_limited(self):
+        coord, _, _ = _make_coordinator()
+        h_w, v_w = coord._allocate_charge(
+            surplus_w=6000.0,
+            h_snap=_snap(soc=50.0, charge_headroom_w=2000.0),
+            v_snap=_snap(soc=50.0, charge_headroom_w=8000.0),
+        )
+        assert h_w == 2000.0
+        assert v_w == 4000.0
+
+    async def test_one_at_max_soc_all_to_other(self):
+        coord, _, _ = _make_coordinator()
+        h_w, v_w = coord._allocate_charge(
+            surplus_w=3000.0,
+            h_snap=_snap(soc=96.0, charge_headroom_w=0.0),
+            v_snap=_snap(soc=50.0, charge_headroom_w=8000.0),
+        )
+        assert h_w == 0.0
+        assert v_w == 3000.0
+
+
+# ===========================================================================
+# Min-SoC profiles (OPT-05)
+# ===========================================================================
+
+
+class TestMinSocProfiles:
+    """OPT-05: Time-of-day min-SoC profiles with wraparound."""
+
+    def test_normal_window_matches(self):
+        from backend.config import MinSocWindow
+        coord, _, _ = _make_coordinator(
+            sys_config=SystemConfig(
+                huawei_min_soc_profile=[
+                    MinSocWindow(6, 16, 30.0),
+                    MinSocWindow(16, 22, 20.0),
+                ],
+            ),
+        )
+        from datetime import datetime
+        now = datetime(2026, 3, 22, 10, 0)  # 10:00 -> matches (6,16,30)
+        result = coord._get_effective_min_soc("huawei", now)
+        assert result == 30.0
+
+    def test_wrapping_window_matches_late_night(self):
+        from backend.config import MinSocWindow
+        coord, _, _ = _make_coordinator(
+            sys_config=SystemConfig(
+                huawei_min_soc_profile=[MinSocWindow(22, 6, 10.0)],
+            ),
+        )
+        from datetime import datetime
+        now = datetime(2026, 3, 22, 23, 0)  # 23:00 -> matches (22,6,10)
+        result = coord._get_effective_min_soc("huawei", now)
+        assert result == 10.0
+
+    def test_wrapping_window_matches_early_morning(self):
+        from backend.config import MinSocWindow
+        coord, _, _ = _make_coordinator(
+            sys_config=SystemConfig(
+                huawei_min_soc_profile=[MinSocWindow(22, 6, 10.0)],
+            ),
+        )
+        from datetime import datetime
+        now = datetime(2026, 3, 22, 2, 0)  # 02:00 -> matches (22,6,10)
+        result = coord._get_effective_min_soc("huawei", now)
+        assert result == 10.0
+
+    def test_no_profile_returns_static(self):
+        coord, _, _ = _make_coordinator(
+            sys_config=SystemConfig(huawei_min_soc_pct=12.0),
+        )
+        from datetime import datetime
+        now = datetime(2026, 3, 22, 10, 0)
+        result = coord._get_effective_min_soc("huawei", now)
+        assert result == 12.0
+
+    def test_profile_gap_returns_static(self):
+        from backend.config import MinSocWindow
+        coord, _, _ = _make_coordinator(
+            sys_config=SystemConfig(
+                huawei_min_soc_pct=10.0,
+                huawei_min_soc_profile=[
+                    MinSocWindow(6, 16, 30.0),
+                    MinSocWindow(16, 22, 20.0),
+                ],
+            ),
+        )
+        from datetime import datetime
+        now = datetime(2026, 3, 22, 23, 0)  # 23:00 -> gap -> static 10.0
+        result = coord._get_effective_min_soc("huawei", now)
+        assert result == 10.0
+
+    async def test_run_cycle_uses_effective_min_soc(self):
+        from backend.config import MinSocWindow
+        coord, h_ctrl, v_ctrl = _make_coordinator(
+            sys_config=SystemConfig(
+                huawei_min_soc_pct=10.0,
+                huawei_min_soc_profile=[MinSocWindow(0, 24, 40.0)],
+                victron_min_soc_pct=15.0,
+                victron_min_soc_profile=[MinSocWindow(0, 24, 40.0)],
+            ),
+        )
+        # Both at 35% SoC -- above static min but below profile min (40%)
+        h_ctrl.poll = AsyncMock(return_value=_snap(soc=35.0, grid_power_w=None))
+        v_ctrl.poll = AsyncMock(return_value=_snap(soc=35.0, grid_power_w=500.0))
+
+        await coord._run_cycle()
+
+        h_cmd = h_ctrl.execute.call_args[0][0]
+        v_cmd = v_ctrl.execute.call_args[0][0]
+        # With profile min=40%, both at 35% should be below min -> HOLDING
+        assert h_cmd.role == BatteryRole.HOLDING
+        assert v_cmd.role == BatteryRole.HOLDING
+
+
+# ===========================================================================
+# Grid charge staggering (OPT-02, OPT-03)
+# ===========================================================================
+
+
+class TestGridChargeStaggering:
+    """OPT-02/OPT-03: Both batteries charge in parallel; Huawei finishes first."""
+
+    async def test_both_charge_simultaneously(self):
+        coord, _, _ = _make_coordinator()
+        slot = MagicMock()
+        slot.battery = "huawei"
+        slot.grid_charge_power_w = 5000
+        slot.target_soc_pct = 90.0
+
+        h_snap = _snap(soc=50.0)
+        v_snap = _snap(soc=50.0)
+        h_cmd, v_cmd = coord._compute_grid_charge_commands(slot, h_snap, v_snap)
+        assert h_cmd.role == BatteryRole.GRID_CHARGE
+        assert h_cmd.target_watts == 5000
+
+    async def test_huawei_target_met_redirects_to_victron(self):
+        coord, _, _ = _make_coordinator()
+        slot = MagicMock()
+        slot.battery = "huawei"
+        slot.grid_charge_power_w = 5000
+        slot.target_soc_pct = 90.0
+
+        h_snap = _snap(soc=92.0)  # Above target
+        v_snap = _snap(soc=50.0)
+        h_cmd, v_cmd = coord._compute_grid_charge_commands(slot, h_snap, v_snap)
+        # Huawei target met -> power redirects to Victron
+        assert h_cmd.target_watts == 0
+        assert v_cmd.role == BatteryRole.GRID_CHARGE
+        assert v_cmd.target_watts == 5000
+
+    async def test_both_at_target_produces_valid_commands(self):
+        coord, _, _ = _make_coordinator()
+        slot = MagicMock()
+        slot.battery = "victron"
+        slot.grid_charge_power_w = 3000
+        slot.target_soc_pct = 90.0
+
+        h_snap = _snap(soc=92.0)
+        v_snap = _snap(soc=92.0)
+        h_cmd, v_cmd = coord._compute_grid_charge_commands(slot, h_snap, v_snap)
+        assert isinstance(h_cmd, ControllerCommand)
+        assert isinstance(v_cmd, ControllerCommand)
