@@ -233,7 +233,28 @@ async def get_health(
         "huawei_working_mode": orchestrator.get_working_mode() if orchestrator is not None else None,
         "ha_entities_count": ha_entities_count,
         "ha_entities_available": ha_entities_available,
+        "integrations": orchestrator.get_integration_health() if orchestrator is not None else {},
     }
+
+
+@api_router.get("/decisions")
+async def get_decisions_endpoint(
+    limit: int = 20,
+    orchestrator: Coordinator | None = Depends(get_orchestrator),
+) -> list[dict[str, Any]]:
+    """Return the last N coordinator dispatch decisions, newest first.
+
+    Query parameters
+    ----------------
+    limit
+        Maximum number of entries to return. Default 20, max 100 (per D-13).
+
+    Returns 503 if the coordinator is not running (setup-only mode).
+    """
+    if orchestrator is None:
+        raise HTTPException(status_code=503, detail="Coordinator not running")
+    clamped = min(max(limit, 1), 100)
+    return orchestrator.get_decisions(limit=clamped)
 
 
 @api_router.get("/config")
@@ -694,7 +715,24 @@ async def get_devices(
             }
         }
     """
-    return orchestrator.get_device_snapshot()
+    snapshot = orchestrator.get_device_snapshot()
+    state = orchestrator.get_state()
+
+    # Merge role and health data from coordinator state
+    if state is not None:
+        snapshot["huawei"]["role"] = getattr(state, "huawei_role", "HOLDING")
+        snapshot["huawei"]["setpoint_w"] = state.huawei_discharge_setpoint_w
+        snapshot["victron"]["role"] = getattr(state, "victron_role", "HOLDING")
+        snapshot["victron"]["setpoint_w"] = state.victron_discharge_setpoint_w
+        snapshot["pool_status"] = getattr(state, "pool_status", "NORMAL")
+    else:
+        snapshot["huawei"]["role"] = "HOLDING"
+        snapshot["huawei"]["setpoint_w"] = 0
+        snapshot["victron"]["role"] = "HOLDING"
+        snapshot["victron"]["setpoint_w"] = 0
+        snapshot["pool_status"] = "OFFLINE"
+
+    return snapshot
 
 
 # ---------------------------------------------------------------------------

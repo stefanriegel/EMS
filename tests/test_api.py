@@ -72,6 +72,9 @@ class MockOrchestrator:
     def get_device_snapshot(self) -> dict:
         return self._device_snapshot
 
+    def get_integration_health(self) -> dict[str, dict]:
+        return {}
+
 
 def _make_state(**overrides: Any) -> UnifiedPoolState:
     """Return a fully-populated :class:`UnifiedPoolState` with sensible defaults.
