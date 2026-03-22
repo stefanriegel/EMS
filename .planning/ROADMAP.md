@@ -31,11 +31,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Victron Modbus unit IDs are configurable at startup (not hardcoded)
   4. Huawei driver works through the same abstract interface as the Victron driver (read state, write setpoint)
   5. Both drivers use canonical sign convention (positive = charge, negative = discharge) with conversion only inside the driver
-**Plans**: 2 plans
+**Plans**: 3 plans
 
 Plans:
 - [x] 01-01-PLAN.md — Modbus TCP driver, BatteryDriver Protocol, VictronConfig, and driver tests
 - [x] 01-02-PLAN.md — Protocol conformance verification for both drivers and package exports
+- [ ] 01-03-PLAN.md — Gap closure: fix VictronDriver instantiation in main.py
 
 ### Phase 2: Independent Controllers & Coordinator
 **Goal**: Each battery system operates through its own controller with the coordinator allocating demand -- no oscillation, no cross-system coupling
@@ -121,7 +122,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Victron Modbus TCP Driver | 0/2 | Planning complete | - |
+| 1. Victron Modbus TCP Driver | 2/3 | Gap closure planned | - |
 | 2. Independent Controllers & Coordinator | 0/? | Not started | - |
 | 3. PV & Tariff Optimization | 0/? | Not started | - |
 | 4. Integration & Monitoring | 0/? | Not started | - |
