@@ -64,11 +64,11 @@ Plans:
   2. During cheap tariff windows, each battery charges independently at its own rate with the faster charger starting first
   3. Grid charge is skipped when solar forecast covers expected demand (predictive pre-charging)
   4. Min-SoC floors change by time-of-day (e.g., 30% until 16:00, 10% after 22:00) per configurable profiles
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 03-01: TBD
-- [ ] 03-02: TBD
+- [ ] 03-01-PLAN.md — Coordinator optimizations: SoC-headroom PV surplus weighting, time-of-day min-SoC profiles, grid charge staggering verification
+- [ ] 03-02-PLAN.md — Scheduler predictive pre-charging: solar-aware grid charge target reduction
 
 ### Phase 4: Integration & Monitoring
 **Goal**: All external systems (EVCC, InfluxDB, HA, Telegram) integrate with the dual-battery architecture and every dispatch decision is traceable
@@ -124,7 +124,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 |-------|----------------|--------|-----------|
 | 1. Victron Modbus TCP Driver | 2/3 | Gap closure planned | - |
 | 2. Independent Controllers & Coordinator | 0/3 | Planned | - |
-| 3. PV & Tariff Optimization | 0/? | Not started | - |
+| 3. PV & Tariff Optimization | 0/2 | Planned | - |
 | 4. Integration & Monitoring | 0/? | Not started | - |
 | 5. Dashboard | 0/? | Not started | - |
 | 6. Deployment & Hardening | 0/? | Not started | - |
