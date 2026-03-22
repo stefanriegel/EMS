@@ -100,7 +100,7 @@ Plans:
 
 Plans:
 - [x] 05-01-PLAN.md — Types, BatteryStatus dual-battery card, 5-node EnergyFlowCard SVG rewrite
-- [ ] 05-02-PLAN.md — DecisionLog, useDecisions hook, OptimizationCard timeline, DeviceDetail restructure, App.tsx grid wiring, E2E tests
+- [x] 05-02-PLAN.md — DecisionLog, useDecisions hook, OptimizationCard timeline, DeviceDetail restructure, App.tsx grid wiring, E2E tests
 
 ### Phase 6: Deployment & Hardening
 **Goal**: The dual-battery EMS runs as a production HA Add-on with automated service discovery and guided first-run setup

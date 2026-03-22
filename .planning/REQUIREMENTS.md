@@ -49,10 +49,10 @@ Requirements for initial release. Each maps to roadmap phases.
 ### Frontend
 
 - [x] **UI-01**: Reworked dashboard showing per-system state (SoC, power, role, health)
-- [ ] **UI-02**: Decision log view: last N coordinator decisions with reasoning
+- [x] **UI-02**: Decision log view: last N coordinator decisions with reasoning
 - [x] **UI-03**: Per-system power flow visualization
 - [x] **UI-04**: Role indicator per battery (PRIMARY/SECONDARY/HOLDING/CHARGING)
-- [ ] **UI-05**: Tariff schedule with per-battery charge targets
+- [x] **UI-05**: Tariff schedule with per-battery charge targets
 
 ### Deployment
 
@@ -123,10 +123,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INT-07 | Phase 4 | Complete |
 | INT-08 | Phase 4 | Complete |
 | UI-01 | Phase 5 | Complete |
-| UI-02 | Phase 5 | Pending |
+| UI-02 | Phase 5 | Complete |
 | UI-03 | Phase 5 | Complete |
 | UI-04 | Phase 5 | Complete |
-| UI-05 | Phase 5 | Pending |
+| UI-05 | Phase 5 | Complete |
 | DEP-01 | Phase 6 | Pending |
 | DEP-02 | Phase 6 | Pending |
 | DEP-03 | Phase 6 | Pending |
