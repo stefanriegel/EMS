@@ -1,4 +1,4 @@
-# Requirements: EMS v2 — Independent Dual-Battery Control
+# Requirements: EMS v2 -- Independent Dual-Battery Control
 
 **Defined:** 2026-03-22
 **Core Value:** Both battery systems operate independently with zero oscillation to maximize PV self-consumption
@@ -81,7 +81,7 @@ Explicitly excluded. Documented to prevent scope creep.
 
 | Feature | Reason |
 |---------|--------|
-| Virtual coupling / unified battery pool | Fundamentally opposed to the architecture — this is the v1 problem being solved |
+| Virtual coupling / unified battery pool | Fundamentally opposed to the architecture -- this is the v1 problem being solved |
 | Proportional setpoint splitting | Special case of virtual coupling; causes oscillation with asymmetric systems |
 | Real-time SoC balancing between batteries | Wastes 15-20% energy through double conversion losses |
 | Cloud-based optimization | Adds latency, requires internet, 5s control loop incompatible with cloud round-trip |
@@ -95,13 +95,47 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (populated by roadmapper) | | |
+| CTRL-01 | Phase 2 | Pending |
+| CTRL-02 | Phase 2 | Pending |
+| CTRL-03 | Phase 2 | Pending |
+| CTRL-04 | Phase 2 | Pending |
+| CTRL-05 | Phase 2 | Pending |
+| CTRL-06 | Phase 2 | Pending |
+| CTRL-07 | Phase 2 | Pending |
+| CTRL-08 | Phase 2 | Pending |
+| DRV-01 | Phase 1 | Pending |
+| DRV-02 | Phase 1 | Pending |
+| DRV-03 | Phase 1 | Pending |
+| DRV-04 | Phase 1 | Pending |
+| DRV-05 | Phase 1 | Pending |
+| DRV-06 | Phase 1 | Pending |
+| OPT-01 | Phase 3 | Pending |
+| OPT-02 | Phase 3 | Pending |
+| OPT-03 | Phase 3 | Pending |
+| OPT-04 | Phase 3 | Pending |
+| OPT-05 | Phase 3 | Pending |
+| INT-01 | Phase 4 | Pending |
+| INT-02 | Phase 4 | Pending |
+| INT-03 | Phase 4 | Pending |
+| INT-04 | Phase 4 | Pending |
+| INT-05 | Phase 4 | Pending |
+| INT-06 | Phase 4 | Pending |
+| INT-07 | Phase 4 | Pending |
+| INT-08 | Phase 4 | Pending |
+| UI-01 | Phase 5 | Pending |
+| UI-02 | Phase 5 | Pending |
+| UI-03 | Phase 5 | Pending |
+| UI-04 | Phase 5 | Pending |
+| UI-05 | Phase 5 | Pending |
+| DEP-01 | Phase 6 | Pending |
+| DEP-02 | Phase 6 | Pending |
+| DEP-03 | Phase 6 | Pending |
 
 **Coverage:**
 - v1 requirements: 30 total
-- Mapped to phases: 0
-- Unmapped: 30 ⚠️
+- Mapped to phases: 30
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-22*
-*Last updated: 2026-03-22 after initial definition*
+*Last updated: 2026-03-22 after roadmap creation*
