@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-stopped_at: Completed 03-01-PLAN.md
-last_updated: "2026-03-22T09:36:07.530Z"
+stopped_at: Completed 04-01-PLAN.md
+last_updated: "2026-03-22T11:56:28.720Z"
 progress:
   total_phases: 6
   completed_phases: 3
-  total_plans: 8
-  completed_plans: 8
+  total_plans: 11
+  completed_plans: 9
 ---
 
 # Project State
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-22)
 
 **Core value:** Both battery systems operate independently with zero oscillation to maximize PV self-consumption
-**Current focus:** Phase 03 — pv-tariff-optimization
+**Current focus:** Phase 04 — integration-monitoring
 
 ## Current Position
 
-Phase: 4
-Plan: Not started
+Phase: 04 (integration-monitoring) — EXECUTING
+Plan: 2 of 3
 
 ## Performance Metrics
 
@@ -54,6 +54,7 @@ Plan: Not started
 | Phase 02 P03 | 4min | 2 tasks | 3 files |
 | Phase 03 P02 | 2min | 2 tasks | 2 files |
 | Phase 03 P01 | 4min | 2 tasks | 4 files |
+| Phase 04 P01 | 5min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -76,6 +77,9 @@ Recent decisions affecting current work:
 - [Phase 03]: 1.2x threshold for full skip, 0.8x discount for partial solar coverage in formula fallback
 - [Phase 03]: SoC headroom weighting uses (full_soc - current_soc) proportional split for PV surplus
 - [Phase 03]: Min-SoC profiles use first-match with wrapping window support; static fallback when no match
+- [Phase 04]: Roles stored as InfluxDB fields (not tags) in ems_decision to avoid high-cardinality tag explosion
+- [Phase 04]: HA MQTT availability entities use device_class=None to avoid binary_sensor platform pitfall
+- [Phase 04]: extra_fields parameter on HA MQTT publish() for per-phase Victron data not in CoordinatorState
 
 ### Pending Todos
 
@@ -89,6 +93,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-22T09:32:22.165Z
-Stopped at: Completed 03-01-PLAN.md
+Last session: 2026-03-22T11:56:28.718Z
+Stopped at: Completed 04-01-PLAN.md
 Resume file: None

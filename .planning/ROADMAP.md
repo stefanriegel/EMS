@@ -83,7 +83,7 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 04-01-PLAN.md — Models (DecisionEntry, IntegrationStatus), per-system InfluxDB write methods, HA MQTT entity expansion
+- [x] 04-01-PLAN.md — Models (DecisionEntry, IntegrationStatus), per-system InfluxDB write methods, HA MQTT entity expansion
 - [ ] 04-02-PLAN.md — Coordinator wiring: decision ring buffer, integration health tracking, per-cycle InfluxDB/HA MQTT calls
 - [ ] 04-03-PLAN.md — API endpoints: /api/decisions, expanded /api/health, per-system role fields in /api/state and /api/devices
 
