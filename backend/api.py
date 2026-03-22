@@ -56,7 +56,7 @@ from pydantic import BaseModel, Field
 
 from backend.config import SystemConfig
 from backend.influx_reader import InfluxMetricsReader
-from backend.orchestrator import Orchestrator
+from backend.coordinator import Coordinator
 from backend.schedule_models import ChargeSchedule
 from backend.scheduler import Scheduler
 from backend.tariff import CompositeTariffEngine
@@ -117,10 +117,11 @@ class SystemConfigRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def get_orchestrator(request: Request) -> Orchestrator:
-    """FastAPI dependency that returns the running :class:`Orchestrator`.
+def get_orchestrator(request: Request) -> Coordinator:
+    """FastAPI dependency that returns the running :class:`Coordinator`.
 
-    Reads ``request.app.state.orchestrator``.  Tests override this via::
+    Reads ``request.app.state.orchestrator`` (backward-compat attribute name).
+    Tests override this via::
 
         app.dependency_overrides[get_orchestrator] = lambda: mock_orchestrator
     """
@@ -174,7 +175,7 @@ def _health_status(state: Any) -> str:
 
 @api_router.get("/state")
 async def get_state(
-    orchestrator: Orchestrator = Depends(get_orchestrator),
+    orchestrator: Coordinator = Depends(get_orchestrator),
 ) -> dict[str, Any]:
     """Return the current unified pool state snapshot.
 
@@ -185,14 +186,14 @@ async def get_state(
     """
     state = orchestrator.get_state()
     if state is None:
-        raise HTTPException(status_code=503, detail="Orchestrator not yet ready")
+        raise HTTPException(status_code=503, detail="Coordinator not yet ready")
     return _state_to_dict(state)
 
 
 @api_router.get("/health")
 async def get_health(
     request: Request,
-    orchestrator: Orchestrator | None = Depends(get_orchestrator),
+    orchestrator: Coordinator | None = Depends(get_orchestrator),
 ) -> dict[str, Any]:
     """Return a structured health report.
 
@@ -237,7 +238,7 @@ async def get_health(
 
 @api_router.get("/config")
 async def get_config(
-    orchestrator: Orchestrator = Depends(get_orchestrator),
+    orchestrator: Coordinator = Depends(get_orchestrator),
 ) -> dict[str, Any]:
     """Return the current system configuration."""
     return _config_to_dict(orchestrator.sys_config)
@@ -246,7 +247,7 @@ async def get_config(
 @api_router.post("/config")
 async def post_config(
     body: SystemConfigRequest,
-    orchestrator: Orchestrator = Depends(get_orchestrator),
+    orchestrator: Coordinator = Depends(get_orchestrator),
 ) -> dict[str, Any]:
     """Update the system configuration at runtime.
 
@@ -658,11 +659,11 @@ async def get_optimization_schedule(
 
 @api_router.get("/devices")
 async def get_devices(
-    orchestrator: Orchestrator = Depends(get_orchestrator),
+    orchestrator: Coordinator = Depends(get_orchestrator),
 ) -> dict[str, Any]:
     """Return a per-device telemetry snapshot.
 
-    Response shape mirrors ``Orchestrator.get_device_snapshot()``:
+    Response shape mirrors ``Coordinator.get_device_snapshot()``:
 
     .. code-block:: json
 
@@ -804,7 +805,7 @@ async def ws_state(
             await ws.close(code=4401)
             return
 
-    orchestrator: Orchestrator = ws.app.state.orchestrator
+    orchestrator: Coordinator = ws.app.state.orchestrator
     tariff_engine = getattr(ws.app.state, "tariff_engine", None)
 
     await manager.connect(ws)
