@@ -36,7 +36,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 Plans:
 - [x] 01-01-PLAN.md — Modbus TCP driver, BatteryDriver Protocol, VictronConfig, and driver tests
 - [x] 01-02-PLAN.md — Protocol conformance verification for both drivers and package exports
-- [ ] 01-03-PLAN.md — Gap closure: fix VictronDriver instantiation in main.py
+- [x] 01-03-PLAN.md — Gap closure: fix VictronDriver instantiation in main.py
 
 ### Phase 2: Independent Controllers & Coordinator
 **Goal**: Each battery system operates through its own controller with the coordinator allocating demand -- no oscillation, no cross-system coupling
