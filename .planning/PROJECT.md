@@ -26,15 +26,15 @@ Both battery systems operate independently with zero oscillation — coordinated
 - ✓ Victron MultiPlus-II Modbus TCP driver (read state + write setpoints) — Phase 1
 - ✓ Unified driver interface (LifecycleDriver + BatteryDriver Protocol) — Phase 1
 - ✓ Canonical sign convention (positive=charge) with per-driver conversion — Phase 1
+- ✓ Independent control paths per battery system (HuaweiController, VictronController) — Phase 2
+- ✓ Dynamic role assignment (PRIMARY_DISCHARGE, SECONDARY_DISCHARGE, CHARGING, HOLDING, GRID_CHARGE) based on SoC — Phase 2
+- ✓ Anti-oscillation: per-system hysteresis dead-bands (Huawei 300W, Victron 150W), ramp limiting, 2-cycle debounce — Phase 2
+- ✓ Coordinated dispatch: Coordinator assigns roles and allocates watts without direct driver access — Phase 2
+- ✓ Per-system failure isolation (3 consecutive failures → safe state, survivor gets full P_target) — Phase 2
 
 ### Active
 
-- [ ] Independent control paths per battery system (no unified SoC aggregation)
 - [ ] ~~Victron MultiPlus-II control via Modbus TCP (replacing MQTT)~~ → Validated in Phase 1
-- [ ] Dynamic role assignment (base load, peak shaving, charging) based on SoC/tariff/PV
-- [ ] Anti-oscillation: hysteresis, soft-start/soft-stop per battery
-- [ ] Coordinated dispatch: total charge/discharge power remains stable
-- [ ] Per-system failure isolation (one system down, other unaffected)
 - [ ] Nightly charge scheduler with per-battery targets
 - [ ] Reworked React dashboard with per-system visibility and decision transparency
 - [ ] Per-system metrics and reporting in InfluxDB
@@ -80,7 +80,7 @@ Both battery systems operate independently with zero oscillation — coordinated
 | Fresh rewrite over incremental refactor | Current unified orchestrator architecture is fundamentally incompatible with independent control | — Pending |
 | Victron Modbus TCP instead of MQTT | More precise ESS control via direct register writes | — Pending |
 | Dynamic roles instead of fixed specialization | SoC/tariff/PV conditions change throughout the day; fixed roles waste capacity | — Pending |
-| Independent controllers with coordinator pattern | Prevents oscillation while allowing optimization; each system is autonomous | — Pending |
+| Independent controllers with coordinator pattern | Prevents oscillation while allowing optimization; each system is autonomous | ✓ Validated Phase 2 |
 
 ## Evolution
 
@@ -100,4 +100,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-22 after Phase 1 completion*
+*Last updated: 2026-03-22 after Phase 2 completion*
