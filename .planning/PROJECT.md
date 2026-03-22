@@ -23,11 +23,14 @@ Both battery systems operate independently with zero oscillation — coordinated
 - ✓ ML consumption forecaster (HA SQLite statistics) — existing
 - ✓ JWT-based authentication — existing
 - ✓ Setup wizard for first-run configuration — existing
+- ✓ Victron MultiPlus-II Modbus TCP driver (read state + write setpoints) — Phase 1
+- ✓ Unified driver interface (LifecycleDriver + BatteryDriver Protocol) — Phase 1
+- ✓ Canonical sign convention (positive=charge) with per-driver conversion — Phase 1
 
 ### Active
 
 - [ ] Independent control paths per battery system (no unified SoC aggregation)
-- [ ] Victron MultiPlus-II control via Modbus TCP (replacing MQTT)
+- [ ] ~~Victron MultiPlus-II control via Modbus TCP (replacing MQTT)~~ → Validated in Phase 1
 - [ ] Dynamic role assignment (base load, peak shaving, charging) based on SoC/tariff/PV
 - [ ] Anti-oscillation: hysteresis, soft-start/soft-stop per battery
 - [ ] Coordinated dispatch: total charge/discharge power remains stable
@@ -97,4 +100,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-22 after initialization*
+*Last updated: 2026-03-22 after Phase 1 completion*
