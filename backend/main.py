@@ -288,7 +288,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             host=victron_cfg.host,
             port=victron_cfg.port,
             timeout_s=victron_cfg.timeout_s,
-            discovery_timeout_s=victron_cfg.discovery_timeout_s,
+            vebus_unit_id=victron_cfg.vebus_unit_id,
+            system_unit_id=victron_cfg.system_unit_id,
         )
 
         await huawei.connect()
