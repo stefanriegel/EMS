@@ -110,10 +110,12 @@ Plans:
   1. HA Add-on installs and runs on both aarch64 and amd64 architectures
   2. Supervisor service discovery automatically detects MQTT broker, EVCC, and InfluxDB
   3. Setup wizard guides configuration of both battery systems including Victron Modbus host, port, and unit IDs
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 06-01: TBD
+- [ ] 06-01-PLAN.md — Dockerfile consolidation, stale ha-addon cleanup, config.yaml + run.sh + translations for v2 fields
+- [ ] 06-02-PLAN.md — Backend wizard migration: EmsSetupConfig + Modbus TCP probe + VictronConfig forward compat
+- [ ] 06-03-PLAN.md — Frontend wizard: Modbus TCP Step 2 + Modul3 Step 5 + CSS classes + E2E tests
 
 ## Progress
 
@@ -127,4 +129,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | 3. PV & Tariff Optimization | 0/2 | Planned | - |
 | 4. Integration & Monitoring | 0/3 | Planned | - |
 | 5. Dashboard | 0/2 | Planned | - |
-| 6. Deployment & Hardening | 0/? | Not started | - |
+| 6. Deployment & Hardening | 0/3 | Planned | - |
