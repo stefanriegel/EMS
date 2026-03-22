@@ -31,6 +31,10 @@ Both battery systems operate independently with zero oscillation — coordinated
 - ✓ Anti-oscillation: per-system hysteresis dead-bands (Huawei 300W, Victron 150W), ramp limiting, 2-cycle debounce — Phase 2
 - ✓ Coordinated dispatch: Coordinator assigns roles and allocates watts without direct driver access — Phase 2
 - ✓ Per-system failure isolation (3 consecutive failures → safe state, survivor gets full P_target) — Phase 2
+- ✓ SoC-headroom-weighted PV surplus distribution (not 50/50 or Huawei-first) — Phase 3
+- ✓ Tariff-aware grid charging with per-battery independent charge rates — Phase 3
+- ✓ Predictive pre-charging: skip/reduce grid charge when solar forecast covers demand — Phase 3
+- ✓ Time-of-day min-SoC profiles per battery system (configurable windows) — Phase 3
 
 ### Active
 
@@ -39,7 +43,7 @@ Both battery systems operate independently with zero oscillation — coordinated
 - [ ] Reworked React dashboard with per-system visibility and decision transparency
 - [ ] Per-system metrics and reporting in InfluxDB
 - [ ] HA Add-on as primary deployment target
-- [ ] Tariff optimization with per-battery dispatch strategy
+- [ ] ~~Tariff optimization with per-battery dispatch strategy~~ → Validated in Phase 3
 - [ ] Production-ready alerting and monitoring
 
 ### Out of Scope
@@ -79,7 +83,9 @@ Both battery systems operate independently with zero oscillation — coordinated
 |----------|-----------|---------|
 | Fresh rewrite over incremental refactor | Current unified orchestrator architecture is fundamentally incompatible with independent control | — Pending |
 | Victron Modbus TCP instead of MQTT | More precise ESS control via direct register writes | — Pending |
-| Dynamic roles instead of fixed specialization | SoC/tariff/PV conditions change throughout the day; fixed roles waste capacity | — Pending |
+| Dynamic roles instead of fixed specialization | SoC/tariff/PV conditions change throughout the day; fixed roles waste capacity | ✓ Validated Phase 2+3 |
+| SoC-headroom weighting for PV surplus | Proportional distribution by available capacity, not battery order | ✓ Validated Phase 3 |
+| Predictive pre-charging with solar forecast | Skip grid charge when solar covers demand (1.2x threshold) | ✓ Validated Phase 3 |
 | Independent controllers with coordinator pattern | Prevents oscillation while allowing optimization; each system is autonomous | ✓ Validated Phase 2 |
 
 ## Evolution
@@ -100,4 +106,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-22 after Phase 2 completion*
+*Last updated: 2026-03-22 after Phase 3 completion*
