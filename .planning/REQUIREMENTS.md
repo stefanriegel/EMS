@@ -24,7 +24,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **DRV-02**: Victron Modbus TCP driver reads system state (SoC, per-phase power, grid power, ESS mode)
 - [x] **DRV-03**: Victron Modbus TCP driver writes ESS setpoints (total and per-phase AC power)
 - [x] **DRV-04**: Victron Modbus unit IDs configurable (not hardcoded)
-- [ ] **DRV-05**: Huawei driver retained from v1, adapted to work with per-battery controller interface
+- [x] **DRV-05**: Huawei driver retained from v1, adapted to work with per-battery controller interface
 - [x] **DRV-06**: Canonical sign convention: positive = charge, negative = discharge, conversion only in drivers
 
 ### PV & Tariff Optimization
@@ -107,7 +107,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DRV-02 | Phase 1 | Complete |
 | DRV-03 | Phase 1 | Complete |
 | DRV-04 | Phase 1 | Complete |
-| DRV-05 | Phase 1 | Pending |
+| DRV-05 | Phase 1 | Complete |
 | DRV-06 | Phase 1 | Complete |
 | OPT-01 | Phase 3 | Pending |
 | OPT-02 | Phase 3 | Pending |
