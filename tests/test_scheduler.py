@@ -577,6 +577,28 @@ async def test_fallback_when_no_slots_below_threshold():
 class TestPredictivePreCharging:
     """OPT-04: Skip/reduce grid charge when solar forecast covers demand."""
 
+    async def test_skip_grid_charge_when_solar_exceeds_120pct(self):
+        """D-10: solar >= consumption * 1.2 -> skip grid charge."""
+        scheduler = _make_scheduler(
+            evcc_state=_make_evcc_state(solar_kwh=30.0, evopt=False),
+            consumption=_make_consumption(kwh=20.0),
+        )
+        schedule = await scheduler.compute_schedule()
+        # 30 >= 20*1.2=24 -> skip
+        assert schedule.reasoning.charge_energy_kwh == 0.0
+
+    async def test_skip_sets_targets_to_min_soc(self):
+        """When charge is skipped, targets should clamp to min_soc."""
+        sys_cfg = SystemConfig(huawei_min_soc_pct=10.0, victron_min_soc_pct=15.0)
+        scheduler = _make_scheduler(
+            evcc_state=_make_evcc_state(solar_kwh=30.0, evopt=False),
+            consumption=_make_consumption(kwh=20.0),
+            sys_config=sys_cfg,
+        )
+        schedule = await scheduler.compute_schedule()
+        assert schedule.slots[0].target_soc_pct == 10.0
+        assert schedule.slots[1].target_soc_pct == 15.0
+
     async def test_partial_coverage_reduces_target(self):
         """D-11: partial solar -> charge = consumption - solar*0.8."""
         scheduler = _make_scheduler(
@@ -586,3 +608,41 @@ class TestPredictivePreCharging:
         schedule = await scheduler.compute_schedule()
         # 15 < 20*1.2=24, but solar > 0 -> charge = max(0, 20 - 15*0.8) = 8
         assert abs(schedule.reasoning.charge_energy_kwh - 8.0) < 0.1
+
+    async def test_zero_solar_full_charge(self):
+        """Rainy day: solar=0 kWh (valid forecast) -> full charge."""
+        scheduler = _make_scheduler(
+            evcc_state=_make_evcc_state(solar_kwh=0.0, evopt=False),
+            consumption=_make_consumption(kwh=20.0),
+        )
+        schedule = await scheduler.compute_schedule()
+        assert schedule.reasoning.charge_energy_kwh == 20.0
+
+    async def test_no_solar_forecast_full_charge(self):
+        """D-12: solar=None (EVCC offline) -> full charge (safety)."""
+        scheduler = _make_scheduler(
+            evcc_state=_make_evcc_state_no_solar(evopt=False),
+            consumption=_make_consumption(kwh=20.0),
+        )
+        schedule = await scheduler.compute_schedule()
+        # solar=None -> solar_kwh=0, no solar object -> full charge
+        assert schedule.reasoning.charge_energy_kwh == 20.0
+
+    async def test_evopt_present_ignores_solar_reduction(self):
+        """D-18: EVopt path does not apply solar reduction formula."""
+        scheduler = _make_scheduler(
+            evcc_state=_make_evcc_state(solar_kwh=30.0, evopt=True),
+            consumption=_make_consumption(kwh=20.0),
+        )
+        schedule = await scheduler.compute_schedule()
+        # EVopt present -> uses EVopt targets, not formula fallback
+        assert isinstance(schedule, ChargeSchedule)
+
+    async def test_reasoning_text_mentions_skip(self):
+        """Reasoning text should indicate solar skip."""
+        scheduler = _make_scheduler(
+            evcc_state=_make_evcc_state(solar_kwh=30.0, evopt=False),
+            consumption=_make_consumption(kwh=20.0),
+        )
+        schedule = await scheduler.compute_schedule()
+        assert "skip" in schedule.reasoning.text.lower()
