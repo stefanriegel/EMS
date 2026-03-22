@@ -52,7 +52,7 @@ Plans:
 
 Plans:
 - [x] 02-01-PLAN.md — Controller model types (enums, dataclasses) and per-battery controllers (HuaweiController, VictronController) with TDD
-- [ ] 02-02-PLAN.md — Coordinator class with role assignment, allocation, hysteresis, ramp limiting, and debounce (TDD)
+- [x] 02-02-PLAN.md — Coordinator class with role assignment, allocation, hysteresis, ramp limiting, and debounce (TDD)
 - [ ] 02-03-PLAN.md — Integration wiring: update main.py lifespan and API layer for coordinator
 
 ### Phase 3: PV & Tariff Optimization
