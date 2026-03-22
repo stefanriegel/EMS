@@ -326,7 +326,11 @@ class Coordinator:
         self._last_h_snap = h_snap
         self._last_v_snap = v_snap
 
-        # 2. Check EVCC hold mode
+        # 2. Check EVCC hold mode — read live value from driver
+        if self._evcc_monitor is not None:
+            self._evcc_battery_mode = getattr(
+                self._evcc_monitor, "evcc_battery_mode", "normal"
+            )
         evcc_hold = self._evcc_battery_mode == "hold"
         if evcc_hold:
             h_cmd = ControllerCommand(

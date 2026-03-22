@@ -453,6 +453,30 @@ class TestEvccHold:
             cmd = call[0][0]
             assert cmd.evcc_hold is True
 
+    async def test_evcc_hold_reads_from_monitor(self):
+        """INT-01: coordinator reads live evcc_battery_mode from injected monitor."""
+        coord, h_ctrl, v_ctrl = _make_coordinator()
+
+        # Create a mock EVCC monitor with battery_mode attribute
+        evcc_monitor = MagicMock()
+        evcc_monitor.evcc_battery_mode = "hold"
+        coord.set_evcc_monitor(evcc_monitor)
+
+        h_snap = _snap(soc=50.0, grid_power_w=1000.0)
+        v_snap = _snap(soc=50.0, grid_power_w=1000.0)
+        h_ctrl.poll = AsyncMock(return_value=h_snap)
+        v_ctrl.poll = AsyncMock(return_value=v_snap)
+
+        await coord._run_cycle()
+
+        # Both controllers should receive HOLDING commands from live monitor read
+        for call in h_ctrl.execute.call_args_list:
+            cmd = call[0][0]
+            assert cmd.evcc_hold is True
+        for call in v_ctrl.execute.call_args_list:
+            cmd = call[0][0]
+            assert cmd.evcc_hold is True
+
 
 # ===========================================================================
 # Failover (D-10, CTRL-05)
