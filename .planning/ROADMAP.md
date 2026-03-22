@@ -96,11 +96,11 @@ Plans:
   2. Last N coordinator decisions are visible with human-readable reasoning for each
   3. Power flow visualization shows per-system charge/discharge with direction indicators
   4. Tariff schedule view shows per-battery charge targets and upcoming windows
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 05-01: TBD
-- [ ] 05-02: TBD
+- [ ] 05-01-PLAN.md — Types, BatteryStatus dual-battery card, 5-node EnergyFlowCard SVG rewrite
+- [ ] 05-02-PLAN.md — DecisionLog, useDecisions hook, OptimizationCard timeline, DeviceDetail restructure, App.tsx grid wiring, E2E tests
 
 ### Phase 6: Deployment & Hardening
 **Goal**: The dual-battery EMS runs as a production HA Add-on with automated service discovery and guided first-run setup
@@ -126,5 +126,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | 2. Independent Controllers & Coordinator | 0/3 | Planned | - |
 | 3. PV & Tariff Optimization | 0/2 | Planned | - |
 | 4. Integration & Monitoring | 0/3 | Planned | - |
-| 5. Dashboard | 0/? | Not started | - |
+| 5. Dashboard | 0/2 | Planned | - |
 | 6. Deployment & Hardening | 0/? | Not started | - |
