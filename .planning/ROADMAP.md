@@ -99,7 +99,7 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 05-01-PLAN.md — Types, BatteryStatus dual-battery card, 5-node EnergyFlowCard SVG rewrite
+- [x] 05-01-PLAN.md — Types, BatteryStatus dual-battery card, 5-node EnergyFlowCard SVG rewrite
 - [ ] 05-02-PLAN.md — DecisionLog, useDecisions hook, OptimizationCard timeline, DeviceDetail restructure, App.tsx grid wiring, E2E tests
 
 ### Phase 6: Deployment & Hardening
