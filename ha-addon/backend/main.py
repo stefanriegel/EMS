@@ -394,29 +394,37 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.orchestrator = orchestrator
         app.state.metrics_reader = metrics_reader
 
-        # --- EVCC MQTT driver ---
+        # --- EVCC MQTT driver (optional — skipped if host is not configured) ---
         evcc_mqtt_cfg = EvccMqttConfig.from_env()
-        evcc_driver = EvccMqttDriver(host=evcc_mqtt_cfg.host, port=evcc_mqtt_cfg.port)
-        await evcc_driver.connect()
-        orchestrator.set_evcc_monitor(evcc_driver)
-        app.state.evcc_driver = evcc_driver
-        logger.info(
-            "EVCC MQTT driver connected — host=%s:%d", evcc_mqtt_cfg.host, evcc_mqtt_cfg.port
-        )
+        try:
+            evcc_driver = EvccMqttDriver(host=evcc_mqtt_cfg.host, port=evcc_mqtt_cfg.port)
+            await evcc_driver.connect()
+            orchestrator.set_evcc_monitor(evcc_driver)
+            app.state.evcc_driver = evcc_driver
+            logger.info(
+                "EVCC MQTT driver connected — host=%s:%d", evcc_mqtt_cfg.host, evcc_mqtt_cfg.port
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("EVCC MQTT driver failed to connect — running without EVCC monitoring: %s", exc)
+            app.state.evcc_driver = None
 
-        # --- HA MQTT client ---
+        # --- HA MQTT client (optional — skipped if host is not configured) ---
         ha_mqtt_cfg = HaMqttConfig.from_env()
-        ha_client = HomeAssistantMqttClient(
-            host=ha_mqtt_cfg.host,
-            port=ha_mqtt_cfg.port,
-            username=ha_mqtt_cfg.username,
-            password=ha_mqtt_cfg.password,
-        )
-        await ha_client.connect()
-        app.state.ha_mqtt_client = ha_client
-        logger.info(
-            "HA MQTT client connecting — host=%s:%d", ha_mqtt_cfg.host, ha_mqtt_cfg.port
-        )
+        try:
+            ha_client = HomeAssistantMqttClient(
+                host=ha_mqtt_cfg.host,
+                port=ha_mqtt_cfg.port,
+                username=ha_mqtt_cfg.username,
+                password=ha_mqtt_cfg.password,
+            )
+            await ha_client.connect()
+            app.state.ha_mqtt_client = ha_client
+            logger.info(
+                "HA MQTT client connecting — host=%s:%d", ha_mqtt_cfg.host, ha_mqtt_cfg.port
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("HA MQTT client failed to connect — running without HA MQTT: %s", exc)
+            app.state.ha_mqtt_client = None
 
         # --- Telegram notifier ---
         telegram_cfg = TelegramConfig.from_env()
