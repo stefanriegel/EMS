@@ -13,6 +13,9 @@ Covers:
 - EVCC hold mode
 - Failover (survivor gets full P_target)
 - State building (CoordinatorState backward-compat)
+- Decision ring buffer and integration health tracking
+- Per-cycle InfluxDB and HA MQTT integration calls
+- Graceful degradation on integration failures
 """
 from __future__ import annotations
 
@@ -28,6 +31,8 @@ from backend.controller_model import (
     ControllerCommand,
     ControllerSnapshot,
     CoordinatorState,
+    DecisionEntry,
+    IntegrationStatus,
     PoolStatus,
 )
 from backend.coordinator import Coordinator
@@ -933,3 +938,224 @@ class TestGridChargeStaggering:
         h_cmd, v_cmd = coord._compute_grid_charge_commands(slot, h_snap, v_snap)
         assert isinstance(h_cmd, ControllerCommand)
         assert isinstance(v_cmd, ControllerCommand)
+
+
+# ===========================================================================
+# Decision ring buffer (INT-04)
+# ===========================================================================
+
+
+class TestDecisionRingBuffer:
+    """Decision entries are created on role changes and EVCC hold."""
+
+    def test_decisions_deque_exists_with_maxlen(self):
+        coord, _, _ = _make_coordinator()
+        assert hasattr(coord, "_decisions")
+        assert coord._decisions.maxlen == 100
+
+    async def test_role_change_creates_decision_entry(self):
+        """When a role changes between cycles, a decision entry is logged."""
+        coord, h_ctrl, v_ctrl = _make_coordinator()
+        # First cycle: discharge (creates a role change from HOLDING)
+        h_ctrl.poll = AsyncMock(return_value=_snap(soc=80.0, grid_power_w=None))
+        v_ctrl.poll = AsyncMock(return_value=_snap(soc=50.0, grid_power_w=1000.0))
+        await coord._run_cycle()
+        # Debounce: need second cycle for role to commit
+        await coord._run_cycle()
+
+        decisions = coord.get_decisions()
+        assert len(decisions) > 0
+        # Should have at least one role_change trigger
+        triggers = [d["trigger"] for d in decisions]
+        assert "role_change" in triggers
+
+    async def test_no_decision_when_unchanged(self):
+        """No decision entry when roles and allocations are unchanged."""
+        coord, h_ctrl, v_ctrl = _make_coordinator()
+        # Both holding with no grid power -> idle
+        h_ctrl.poll = AsyncMock(return_value=_snap(soc=50.0, grid_power_w=None, master_active_power_w=None))
+        v_ctrl.poll = AsyncMock(return_value=_snap(soc=50.0, grid_power_w=0.0))
+
+        await coord._run_cycle()
+        initial_count = len(coord._decisions)
+
+        # Same state -> no new decision
+        await coord._run_cycle()
+        assert len(coord._decisions) == initial_count
+
+    async def test_evcc_hold_creates_hold_signal_decision(self):
+        """EVCC hold creates a decision entry with trigger='hold_signal'."""
+        coord, h_ctrl, v_ctrl = _make_coordinator()
+        # First, set up a non-HOLDING state
+        coord._prev_h_role = "PRIMARY_DISCHARGE"
+        coord._prev_v_role = "SECONDARY_DISCHARGE"
+
+        coord._evcc_battery_mode = "hold"
+        h_ctrl.poll = AsyncMock(return_value=_snap(soc=50.0, grid_power_w=1000.0))
+        v_ctrl.poll = AsyncMock(return_value=_snap(soc=50.0, grid_power_w=1000.0))
+
+        await coord._run_cycle()
+
+        decisions = coord.get_decisions()
+        assert len(decisions) > 0
+        hold_entries = [d for d in decisions if d["trigger"] == "hold_signal"]
+        assert len(hold_entries) >= 1
+        assert hold_entries[0]["reasoning"] == "EVCC batteryMode=hold"
+        assert hold_entries[0]["huawei_role"] == "HOLDING"
+        assert hold_entries[0]["victron_role"] == "HOLDING"
+
+    def test_get_decisions_returns_newest_first(self):
+        coord, _, _ = _make_coordinator()
+        # Manually add entries
+        for i in range(5):
+            coord._decisions.append(DecisionEntry(
+                timestamp=f"2026-01-01T00:00:0{i}Z",
+                trigger="role_change",
+                huawei_role="HOLDING",
+                victron_role="HOLDING",
+                p_target_w=float(i * 100),
+                huawei_allocation_w=0.0,
+                victron_allocation_w=0.0,
+                pool_status="NORMAL",
+                reasoning=f"entry {i}",
+            ))
+        result = coord.get_decisions(limit=3)
+        assert len(result) == 3
+        # Newest first: p_target_w=400, 300, 200
+        assert result[0]["p_target_w"] == 400.0
+        assert result[1]["p_target_w"] == 300.0
+        assert result[2]["p_target_w"] == 200.0
+
+
+# ===========================================================================
+# Integration writes — InfluxDB and HA MQTT (INT-03, INT-05)
+# ===========================================================================
+
+
+class TestIntegrationWrites:
+    """Per-cycle integration calls to InfluxDB writer and HA MQTT client."""
+
+    async def test_writer_called_per_cycle(self):
+        """When _writer is set, write_coordinator_state and write_per_system_metrics are called."""
+        coord, h_ctrl, v_ctrl = _make_coordinator()
+        mock_writer = AsyncMock()
+        coord._writer = mock_writer
+
+        h_ctrl.poll = AsyncMock(return_value=_snap(soc=70.0, grid_power_w=None, master_active_power_w=None))
+        v_ctrl.poll = AsyncMock(return_value=_snap(soc=50.0, grid_power_w=0.0))
+
+        await coord._run_cycle()
+
+        mock_writer.write_coordinator_state.assert_called_once()
+        mock_writer.write_per_system_metrics.assert_called_once()
+
+    async def test_ha_mqtt_client_called_per_cycle(self):
+        """When _ha_mqtt_client is set, publish is called with extra_fields."""
+        coord, h_ctrl, v_ctrl = _make_coordinator()
+        mock_ha = AsyncMock()
+        coord._ha_mqtt_client = mock_ha
+
+        h_ctrl.poll = AsyncMock(return_value=_snap(soc=70.0, grid_power_w=None, master_active_power_w=None))
+        v_ctrl.poll = AsyncMock(return_value=_snap(
+            soc=50.0, grid_power_w=0.0,
+            grid_l1_power_w=100.0, grid_l2_power_w=200.0, grid_l3_power_w=300.0,
+        ))
+
+        await coord._run_cycle()
+
+        mock_ha.publish.assert_called_once()
+        call_args = mock_ha.publish.call_args
+        extra = call_args[1].get("extra_fields") or call_args[0][1] if len(call_args[0]) > 1 else call_args[1].get("extra_fields")
+        assert extra is not None
+        assert "victron_l1_power_w" in extra
+        assert "victron_l2_power_w" in extra
+        assert "victron_l3_power_w" in extra
+
+    async def test_writer_failure_does_not_crash_cycle(self):
+        """InfluxDB write failure is caught — _run_cycle completes."""
+        coord, h_ctrl, v_ctrl = _make_coordinator()
+        mock_writer = AsyncMock()
+        mock_writer.write_coordinator_state.side_effect = Exception("InfluxDB down")
+        coord._writer = mock_writer
+
+        h_ctrl.poll = AsyncMock(return_value=_snap(soc=50.0, grid_power_w=None, master_active_power_w=None))
+        v_ctrl.poll = AsyncMock(return_value=_snap(soc=50.0, grid_power_w=0.0))
+
+        # Should NOT raise
+        await coord._run_cycle()
+        assert coord.get_state() is not None
+
+    async def test_ha_mqtt_failure_does_not_crash_cycle(self):
+        """HA MQTT publish failure is caught — _run_cycle completes."""
+        coord, h_ctrl, v_ctrl = _make_coordinator()
+        mock_ha = AsyncMock()
+        mock_ha.publish.side_effect = Exception("MQTT down")
+        coord._ha_mqtt_client = mock_ha
+
+        h_ctrl.poll = AsyncMock(return_value=_snap(soc=50.0, grid_power_w=None, master_active_power_w=None))
+        v_ctrl.poll = AsyncMock(return_value=_snap(soc=50.0, grid_power_w=0.0))
+
+        # Should NOT raise
+        await coord._run_cycle()
+        assert coord.get_state() is not None
+
+
+# ===========================================================================
+# Integration health tracking (INT-03)
+# ===========================================================================
+
+
+class TestIntegrationHealth:
+    """Integration health status tracked per service."""
+
+    async def test_influxdb_healthy_after_successful_write(self):
+        coord, h_ctrl, v_ctrl = _make_coordinator()
+        mock_writer = AsyncMock()
+        coord._writer = mock_writer
+
+        h_ctrl.poll = AsyncMock(return_value=_snap(soc=50.0, grid_power_w=None, master_active_power_w=None))
+        v_ctrl.poll = AsyncMock(return_value=_snap(soc=50.0, grid_power_w=0.0))
+
+        await coord._run_cycle()
+
+        health = coord.get_integration_health()
+        assert health["influxdb"]["available"] is True
+        assert health["influxdb"]["last_error"] is None
+
+    async def test_influxdb_unhealthy_after_failed_write(self):
+        coord, h_ctrl, v_ctrl = _make_coordinator()
+        mock_writer = AsyncMock()
+        mock_writer.write_coordinator_state.side_effect = Exception("connection refused")
+        coord._writer = mock_writer
+
+        h_ctrl.poll = AsyncMock(return_value=_snap(soc=50.0, grid_power_w=None, master_active_power_w=None))
+        v_ctrl.poll = AsyncMock(return_value=_snap(soc=50.0, grid_power_w=0.0))
+
+        await coord._run_cycle()
+
+        health = coord.get_integration_health()
+        assert health["influxdb"]["available"] is False
+        assert "connection refused" in health["influxdb"]["last_error"]
+
+    def test_get_integration_health_returns_all_services(self):
+        coord, _, _ = _make_coordinator()
+        health = coord.get_integration_health()
+        assert "influxdb" in health
+        assert "ha_mqtt" in health
+        assert "evcc" in health
+        assert "telegram" in health
+
+
+# ===========================================================================
+# set_ha_mqtt_client (INT-05)
+# ===========================================================================
+
+
+class TestSetHaMqttClient:
+    """set_ha_mqtt_client stores the client on the coordinator."""
+
+    def test_set_ha_mqtt_client_stores_client(self):
+        coord, _, _ = _make_coordinator()
+        mock_client = MagicMock()
+        coord.set_ha_mqtt_client(mock_client)
+        assert coord._ha_mqtt_client is mock_client
