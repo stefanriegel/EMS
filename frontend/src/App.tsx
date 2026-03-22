@@ -20,12 +20,14 @@ import { Route, Switch, useLocation } from "wouter";
 import { useEmsSocket } from "./hooks/useEmsSocket";
 import { useEmsState } from "./hooks/useEmsState";
 import { EnergyFlowCard } from "./components/EnergyFlowCard";
-import { PoolOverview } from "./components/PoolOverview";
+import { BatteryStatus } from "./components/BatteryStatus";
+import { DecisionLog } from "./components/DecisionLog";
 import { DeviceDetail } from "./components/DeviceDetail";
 import { TariffCard } from "./components/TariffCard";
 import { OptimizationCard } from "./components/OptimizationCard";
 import { EvccCard } from "./components/EvccCard";
 import { LoadsCard } from "./components/LoadsCard";
+import { useDecisions } from "./hooks/useDecisions";
 import { SetupWizard } from "./pages/SetupWizard";
 import { Login } from "./pages/Login";
 import type { PoolState, DevicesPayload } from "./types";
@@ -67,6 +69,7 @@ function FallbackConsumer({
 function DashboardLayout() {
   const ws = useEmsSocket(WS_URL);
   const useFallback = !ws.connected && ws.retryCount > 0;
+  const decisions = useDecisions(20, 30_000);
 
   const [fbPool, setFbPool] = useState<PoolState | null>(null);
   const [fbDevices, setFbDevices] = useState<DevicesPayload | null>(null);
@@ -108,16 +111,17 @@ function DashboardLayout() {
 
         <div className="dashboard-grid">
           <EnergyFlowCard pool={pool} devices={devices} />
-          <LoadsCard loads={loads} />
-          <PoolOverview pool={pool ?? null} connected={ws.connected} />
-          <DeviceDetail devices={devices} />
-          <TariffCard tariff={tariff} />
+          <BatteryStatus pool={pool} devices={devices} connected={ws.connected} />
+          <DecisionLog decisions={decisions} />
           <OptimizationCard optimization={optimization} />
+          <TariffCard tariff={tariff} />
+          <LoadsCard loads={loads} />
           <EvccCard
             evcc={evcc}
             controlState={pool?.control_state ?? "IDLE"}
             haMqttConnected={haMqttConnected}
           />
+          <DeviceDetail devices={devices} pool={pool} />
         </div>
       </main>
 

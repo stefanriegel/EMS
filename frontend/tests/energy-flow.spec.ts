@@ -21,6 +21,10 @@ test('energy flow card is visible at 375px mobile viewport with no console error
   const svgEl = page.locator('[data-testid="energy-flow-card"] svg');
   await expect(svgEl).toBeVisible();
 
+  // Verify both battery nodes exist in the 5-node SVG
+  await expect(page.locator('[data-testid="ef-huawei-node"]')).toBeVisible();
+  await expect(page.locator('[data-testid="ef-victron-node"]')).toBeVisible();
+
   // Take screenshot and save to tests/screenshots/
   const screenshotDir = path.join(__dirname, 'screenshots');
   if (!fs.existsSync(screenshotDir)) fs.mkdirSync(screenshotDir, { recursive: true });

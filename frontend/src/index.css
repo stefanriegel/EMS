@@ -107,19 +107,13 @@ html, body {
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: 1fr 1fr;
   gap: 1rem;
   max-width: 1400px;
   margin: 0 auto;
 }
 
-@media (max-width: 1024px) {
-  .dashboard-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
-@media (max-width: 640px) {
+@media (max-width: 768px) {
   .dashboard-grid {
     grid-template-columns: 1fr;
   }
