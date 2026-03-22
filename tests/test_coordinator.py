@@ -658,3 +658,64 @@ class TestCtrl02NoDriverAccess:
         allowed = {"poll", "execute"}
         assert h_called.issubset(allowed), f"Unexpected Huawei calls: {h_called - allowed}"
         assert v_called.issubset(allowed), f"Unexpected Victron calls: {v_called - allowed}"
+
+
+class TestGetDeviceSnapshot:
+    """Test Coordinator.get_device_snapshot() with real ControllerSnapshot objects."""
+
+    def _make_coordinator(self):
+        h_ctrl = AsyncMock()
+        v_ctrl = AsyncMock()
+        sys_cfg = SystemConfig()
+        orch_cfg = OrchestratorConfig()
+        coord = Coordinator(h_ctrl, v_ctrl, sys_cfg, orch_cfg)
+        return coord
+
+    def test_device_snapshot_with_available_huawei(self):
+        coord = self._make_coordinator()
+        h_snap = ControllerSnapshot(
+            soc_pct=75.0,
+            power_w=-3000.0,
+            available=True,
+            role=BatteryRole.PRIMARY_DISCHARGE,
+            consecutive_failures=0,
+            timestamp=time.monotonic(),
+            max_charge_power_w=5000,
+            max_discharge_power_w=5000,
+        )
+        v_snap = ControllerSnapshot(
+            soc_pct=60.0,
+            power_w=1000.0,
+            available=True,
+            role=BatteryRole.HOLDING,
+            consecutive_failures=0,
+            timestamp=time.monotonic(),
+        )
+        coord._last_h_snap = h_snap
+        coord._last_v_snap = v_snap
+        result = coord.get_device_snapshot()
+        assert result["huawei"]["available"] is True
+        assert result["huawei"]["total_power_w"] == -3000
+        assert result["huawei"]["max_charge_w"] == 5000
+        assert result["huawei"]["max_discharge_w"] == 5000
+        assert result["victron"]["available"] is True
+        assert result["victron"]["battery_power_w"] == 1000.0
+
+    def test_device_snapshot_with_none_max_power(self):
+        coord = self._make_coordinator()
+        h_snap = ControllerSnapshot(
+            soc_pct=50.0,
+            power_w=0.0,
+            available=True,
+            role=BatteryRole.HOLDING,
+            consecutive_failures=0,
+            timestamp=time.monotonic(),
+            max_charge_power_w=None,
+            max_discharge_power_w=None,
+        )
+        coord._last_h_snap = h_snap
+        coord._last_v_snap = None
+        result = coord.get_device_snapshot()
+        assert result["huawei"]["max_charge_w"] == 0
+        assert result["huawei"]["max_discharge_w"] == 0
+        assert result["victron"]["available"] is False

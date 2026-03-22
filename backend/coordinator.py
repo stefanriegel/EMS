@@ -183,13 +183,13 @@ class Coordinator:
             huawei_dict: dict = {
                 "available": True,
                 "pack1_soc_pct": h_snap.soc_pct,
-                "pack1_power_w": int(h_snap.current_power_w),
+                "pack1_power_w": int(h_snap.power_w),
                 "pack2_soc_pct": None,
                 "pack2_power_w": None,
                 "total_soc_pct": h_snap.soc_pct,
-                "total_power_w": int(h_snap.current_power_w),
-                "max_charge_w": int(h_snap.max_charge_power_w),
-                "max_discharge_w": int(h_snap.max_discharge_power_w),
+                "total_power_w": int(h_snap.power_w),
+                "max_charge_w": int(h_snap.max_charge_power_w or 0),
+                "max_discharge_w": int(h_snap.max_discharge_power_w or 0),
                 "master_pv_power_w": None,
                 "slave_pv_power_w": None,
             }
@@ -212,7 +212,7 @@ class Coordinator:
             victron_dict: dict = {
                 "available": True,
                 "soc_pct": v_snap.soc_pct,
-                "battery_power_w": v_snap.current_power_w,
+                "battery_power_w": v_snap.power_w,
                 "l1_power_w": 0.0,
                 "l2_power_w": 0.0,
                 "l3_power_w": 0.0,
