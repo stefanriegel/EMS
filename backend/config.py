@@ -119,6 +119,22 @@ class VictronConfig:
 
 
 @dataclass
+class MinSocWindow:
+    """A time-of-day window with a minimum SoC floor.
+
+    Attributes:
+        start_hour: Start hour (0-23, inclusive).
+        end_hour:   End hour (0-23, exclusive). Wraps around midnight
+                    when start_hour > end_hour (e.g., 22 to 6).
+        min_soc_pct: Minimum SoC percentage during this window.
+    """
+
+    start_hour: int
+    end_hour: int
+    min_soc_pct: float
+
+
+@dataclass
 class SystemConfig:
     """Per-system SoC limits and feed-in rules for the unified battery pool.
 
@@ -152,6 +168,12 @@ class SystemConfig:
 
     victron_feed_in_allowed: bool = False
     """Whether the Victron system may export to the grid (default False)."""
+
+    huawei_min_soc_profile: list[MinSocWindow] | None = None
+    """Time-of-day min-SoC profile for Huawei. None = use static huawei_min_soc_pct."""
+
+    victron_min_soc_profile: list[MinSocWindow] | None = None
+    """Time-of-day min-SoC profile for Victron. None = use static victron_min_soc_pct."""
 
 
 @dataclass

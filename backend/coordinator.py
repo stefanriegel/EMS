@@ -15,10 +15,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from dataclasses import dataclass
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
-from backend.config import OrchestratorConfig, SystemConfig
+from backend.config import MinSocWindow, OrchestratorConfig, SystemConfig
 from backend.controller_model import (
     BatteryRole,
     ControllerCommand,
@@ -370,9 +373,13 @@ class Coordinator:
             h_snap.soc_pct, v_snap.soc_pct
         )
 
-        # Check if both are below min SoC → HOLDING
-        h_below_min = h_snap.soc_pct <= self._sys_config.huawei_min_soc_pct
-        v_below_min = v_snap.soc_pct <= self._sys_config.victron_min_soc_pct
+        # Check if both are below min SoC → HOLDING (profile-aware)
+        _tz = ZoneInfo(os.environ.get("MODUL3_TIMEZONE", "Europe/Berlin"))
+        now_local = datetime.now(tz=_tz)
+        h_min_soc = self._get_effective_min_soc("huawei", now_local)
+        v_min_soc = self._get_effective_min_soc("victron", now_local)
+        h_below_min = h_snap.soc_pct <= h_min_soc
+        v_below_min = v_snap.soc_pct <= v_min_soc
         if h_below_min and v_below_min:
             h_role_raw = BatteryRole.HOLDING
             v_role_raw = BatteryRole.HOLDING
@@ -568,28 +575,75 @@ class Coordinator:
         h_snap: ControllerSnapshot,
         v_snap: ControllerSnapshot,
     ) -> tuple[float, float]:
-        """Allocate PV surplus to charge batteries.
+        """Allocate PV surplus weighted by SoC headroom (OPT-01, per D-02).
 
-        D-03: Fill Huawei (30kWh) first, then Victron (64kWh).
-        D-04: When one battery at 95% SoC, all surplus to the other.
+        headroom = full_soc_pct - current_soc. Battery with more headroom
+        gets proportionally more. Charge rate limits respected; overflow
+        routes to the other battery (D-03). Battery at full_soc_pct gets
+        zero (D-04).
 
         Returns (h_charge_w, v_charge_w) — both positive (charge).
         """
-        h_headroom = h_snap.charge_headroom_w
-        v_headroom = v_snap.charge_headroom_w
+        h_headroom_soc = max(0.0, self._full_soc_pct - h_snap.soc_pct)
+        v_headroom_soc = max(0.0, self._full_soc_pct - v_snap.soc_pct)
+        total_headroom = h_headroom_soc + v_headroom_soc
 
-        # D-04: full SoC routing
-        if h_snap.soc_pct >= self._full_soc_pct:
-            h_headroom = 0.0
-        if v_snap.soc_pct >= self._full_soc_pct:
-            v_headroom = 0.0
+        if total_headroom <= 0.0:
+            return 0.0, 0.0
 
-        # D-03: Huawei first
-        h_charge = min(surplus_w, h_headroom)
-        remaining = surplus_w - h_charge
-        v_charge = min(remaining, v_headroom)
+        # Proportional split by SoC headroom
+        h_share = surplus_w * (h_headroom_soc / total_headroom)
+        v_share = surplus_w * (v_headroom_soc / total_headroom)
+
+        # Clamp to charge rate limits
+        h_max = h_snap.charge_headroom_w
+        v_max = v_snap.charge_headroom_w
+
+        h_charge = min(h_share, h_max)
+        v_charge = min(v_share, v_max)
+
+        # Overflow routing (D-03)
+        h_overflow = max(0.0, h_share - h_max)
+        v_overflow = max(0.0, v_share - v_max)
+
+        h_charge += min(v_overflow, max(0.0, h_max - h_charge))
+        v_charge += min(h_overflow, max(0.0, v_max - v_charge))
 
         return h_charge, v_charge
+
+    # ------------------------------------------------------------------
+    # Min-SoC profiles (OPT-05, D-13, D-15, D-16)
+    # ------------------------------------------------------------------
+
+    def _get_effective_min_soc(
+        self, system: str, now_local: datetime
+    ) -> float:
+        """Return effective min-SoC for the given system at the given local time.
+
+        Evaluates profiles from SystemConfig; first matching window wins.
+        Falls back to static min_soc if no profiles configured (D-15).
+        """
+        if system == "huawei":
+            profiles = self._sys_config.huawei_min_soc_profile
+            static = self._sys_config.huawei_min_soc_pct
+        else:
+            profiles = self._sys_config.victron_min_soc_profile
+            static = self._sys_config.victron_min_soc_pct
+
+        if not profiles:
+            return static
+
+        current_hour = now_local.hour
+        for window in profiles:
+            if window.start_hour <= window.end_hour:
+                if window.start_hour <= current_hour < window.end_hour:
+                    return window.min_soc_pct
+            else:
+                # Wrapping window (e.g., 22 to 6)
+                if current_hour >= window.start_hour or current_hour < window.end_hour:
+                    return window.min_soc_pct
+
+        return static
 
     # ------------------------------------------------------------------
     # Hysteresis (CTRL-03, D-06)
@@ -803,6 +857,12 @@ class Coordinator:
         h_setpoint = int(abs(h_cmd.target_watts)) if h_cmd.target_watts < 0 else 0
         v_setpoint = int(abs(v_cmd.target_watts)) if v_cmd.target_watts < 0 else 0
 
+        # Effective min-SoC from profiles
+        _tz = ZoneInfo(os.environ.get("MODUL3_TIMEZONE", "Europe/Berlin"))
+        now_local = datetime.now(tz=_tz)
+        h_eff_min = self._get_effective_min_soc("huawei", now_local)
+        v_eff_min = self._get_effective_min_soc("victron", now_local)
+
         return CoordinatorState(
             combined_soc_pct=combined_soc,
             huawei_soc_pct=h_soc,
@@ -821,4 +881,6 @@ class Coordinator:
             huawei_role=h_cmd.role.value,
             victron_role=v_cmd.role.value,
             pool_status=pool_status,
+            huawei_effective_min_soc_pct=h_eff_min,
+            victron_effective_min_soc_pct=v_eff_min,
         )

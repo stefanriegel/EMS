@@ -237,26 +237,35 @@ class TestAllocation:
 
 
 class TestPvSurplusRouting:
-    """PV surplus charge routing: Huawei first, then Victron."""
+    """PV surplus charge routing — superseded by TestPvSurplusHeadroomWeighting.
 
-    async def test_surplus_fills_huawei_first(self):
+    These tests verify headroom-weighted allocation behavior (OPT-01).
+    The old Huawei-first logic was replaced by proportional SoC headroom
+    weighting in Phase 3.
+    """
+
+    async def test_equal_soc_splits_evenly(self):
+        """Equal SoC = equal headroom = equal split."""
         coord, _, _ = _make_coordinator()
         h_w, v_w = coord._allocate_charge(
             surplus_w=3000.0,
             h_snap=_snap(soc=50.0, charge_headroom_w=5000.0),
             v_snap=_snap(soc=50.0, charge_headroom_w=8000.0),
         )
-        # Huawei gets first bite; surplus fully fits in Huawei headroom
-        assert h_w == 3000.0
-        assert v_w == 0.0
+        # Equal SoC headroom → 50/50 split
+        assert abs(h_w - 1500.0) < 1.0
+        assert abs(v_w - 1500.0) < 1.0
 
-    async def test_overflow_to_victron(self):
+    async def test_overflow_when_rate_limited(self):
+        """Surplus clamped to charge rate, overflow to other."""
         coord, _, _ = _make_coordinator()
         h_w, v_w = coord._allocate_charge(
             surplus_w=7000.0,
             h_snap=_snap(soc=50.0, charge_headroom_w=3000.0),
             v_snap=_snap(soc=50.0, charge_headroom_w=8000.0),
         )
+        # Equal SoC: 3500 each by headroom, Huawei clamped to 3000
+        # Overflow 500 routes to Victron: 3500 + 500 = 4000
         assert h_w == 3000.0
         assert v_w == 4000.0
 

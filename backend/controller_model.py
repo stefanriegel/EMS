@@ -174,3 +174,9 @@ class CoordinatorState:
 
     pool_status: str = "NORMAL"
     """Health status of the combined pool."""
+
+    huawei_effective_min_soc_pct: float = 10.0
+    """Effective min-SoC for Huawei (from profile or static fallback)."""
+
+    victron_effective_min_soc_pct: float = 15.0
+    """Effective min-SoC for Victron (from profile or static fallback)."""
