@@ -80,12 +80,12 @@ Plans:
   3. Every external integration (InfluxDB, EVCC, HA, Telegram) degrades gracefully when unavailable -- system continues operating
   4. Each dispatch decision is logged with structured reasoning (WHY this allocation, not just WHAT)
   5. InfluxDB stores separate measurements for Huawei and Victron; HA MQTT discovery publishes per-system entities
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 04-01: TBD
-- [ ] 04-02: TBD
-- [ ] 04-03: TBD
+- [ ] 04-01-PLAN.md — Models (DecisionEntry, IntegrationStatus), per-system InfluxDB write methods, HA MQTT entity expansion
+- [ ] 04-02-PLAN.md — Coordinator wiring: decision ring buffer, integration health tracking, per-cycle InfluxDB/HA MQTT calls
+- [ ] 04-03-PLAN.md — API endpoints: /api/decisions, expanded /api/health, per-system role fields in /api/state and /api/devices
 
 ### Phase 5: Dashboard
 **Goal**: Users see and understand both battery systems, their roles, power flows, and the reasoning behind dispatch decisions
@@ -125,6 +125,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | 1. Victron Modbus TCP Driver | 2/3 | Gap closure planned | - |
 | 2. Independent Controllers & Coordinator | 0/3 | Planned | - |
 | 3. PV & Tariff Optimization | 0/2 | Planned | - |
-| 4. Integration & Monitoring | 0/? | Not started | - |
+| 4. Integration & Monitoring | 0/3 | Planned | - |
 | 5. Dashboard | 0/? | Not started | - |
 | 6. Deployment & Hardening | 0/? | Not started | - |
