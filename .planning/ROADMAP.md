@@ -48,12 +48,12 @@ Plans:
   3. When one battery system loses communication, it enters safe state (zero-power) while the other continues operating unaffected
   4. Setpoint changes ramp smoothly (soft-start/soft-stop) and stay within per-system hysteresis dead-bands (Huawei ~300-500W, Victron ~100-200W)
   5. Higher-SoC system discharges first; coordinator never directly writes to hardware
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 02-01: TBD
-- [ ] 02-02: TBD
-- [ ] 02-03: TBD
+- [ ] 02-01-PLAN.md — Controller model types (enums, dataclasses) and per-battery controllers (HuaweiController, VictronController) with TDD
+- [ ] 02-02-PLAN.md — Coordinator class with role assignment, allocation, hysteresis, ramp limiting, and debounce (TDD)
+- [ ] 02-03-PLAN.md — Integration wiring: update main.py lifespan and API layer for coordinator
 
 ### Phase 3: PV & Tariff Optimization
 **Goal**: The system makes intelligent charge/discharge decisions based on PV surplus, tariff windows, solar forecasts, and time-of-day profiles
@@ -123,7 +123,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Victron Modbus TCP Driver | 2/3 | Gap closure planned | - |
-| 2. Independent Controllers & Coordinator | 0/? | Not started | - |
+| 2. Independent Controllers & Coordinator | 0/3 | Planned | - |
 | 3. PV & Tariff Optimization | 0/? | Not started | - |
 | 4. Integration & Monitoring | 0/? | Not started | - |
 | 5. Dashboard | 0/? | Not started | - |
