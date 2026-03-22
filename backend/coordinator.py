@@ -14,11 +14,13 @@ Sign convention (coordinator canonical):
 from __future__ import annotations
 
 import asyncio
+import dataclasses as _dc
 import logging
 import os
 import time
+from collections import deque
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from backend.config import MinSocWindow, OrchestratorConfig, SystemConfig
@@ -27,6 +29,8 @@ from backend.controller_model import (
     ControllerCommand,
     ControllerSnapshot,
     CoordinatorState,
+    DecisionEntry,
+    IntegrationStatus,
     PoolStatus,
 )
 
@@ -77,6 +81,22 @@ class Coordinator:
         self._scheduler = None
         self._evcc_monitor = None
         self._notifier = None
+        self._ha_mqtt_client = None
+
+        # Decision ring buffer (INT-04)
+        self._decisions: deque[DecisionEntry] = deque(maxlen=100)
+        self._prev_h_role: str = "HOLDING"
+        self._prev_v_role: str = "HOLDING"
+        self._prev_h_alloc_w: float = 0.0
+        self._prev_v_alloc_w: float = 0.0
+
+        # Integration health tracking (INT-03)
+        self._integration_health: dict[str, IntegrationStatus] = {
+            "influxdb": IntegrationStatus(service="influxdb", available=False),
+            "ha_mqtt": IntegrationStatus(service="ha_mqtt", available=False),
+            "evcc": IntegrationStatus(service="evcc", available=False),
+            "telegram": IntegrationStatus(service="telegram", available=False),
+        }
 
         # EVCC battery mode (updated externally via set_evcc_monitor callback)
         self._evcc_battery_mode: str = "normal"
@@ -148,6 +168,20 @@ class Coordinator:
     def set_notifier(self, notifier) -> None:
         """Inject the Telegram notifier."""
         self._notifier = notifier
+
+    def set_ha_mqtt_client(self, client) -> None:
+        """Inject the HA MQTT client for per-cycle state publishing."""
+        self._ha_mqtt_client = client
+
+    def get_decisions(self, limit: int = 20) -> list[dict]:
+        """Return the last *limit* decision entries, newest first."""
+        entries = list(self._decisions)[-limit:]
+        entries.reverse()
+        return [_dc.asdict(e) for e in entries]
+
+    def get_integration_health(self) -> dict[str, dict]:
+        """Return integration health status for /api/health."""
+        return {k: _dc.asdict(v) for k, v in self._integration_health.items()}
 
     def get_last_error(self) -> str | None:
         """Return the most recent controller error, or None.
@@ -304,6 +338,24 @@ class Coordinator:
             await self._huawei_ctrl.execute(h_cmd)
             await self._victron_ctrl.execute(v_cmd)
             self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
+            # Log hold signal as specific trigger
+            if self._prev_h_role != "HOLDING" or self._prev_v_role != "HOLDING":
+                hold_entry = DecisionEntry(
+                    timestamp=datetime.now(tz=timezone.utc).isoformat(),
+                    trigger="hold_signal",
+                    huawei_role="HOLDING",
+                    victron_role="HOLDING",
+                    p_target_w=0.0,
+                    huawei_allocation_w=0.0,
+                    victron_allocation_w=0.0,
+                    pool_status=self._state.pool_status,
+                    reasoning="EVCC batteryMode=hold",
+                )
+                self._decisions.append(hold_entry)
+                self._prev_h_role = "HOLDING"
+                self._prev_v_role = "HOLDING"
+                logger.info("decision: hold_signal — EVCC batteryMode=hold")
+            await self._write_integrations(h_snap, v_snap, h_cmd, v_cmd, None)
             return
 
         # 3. Check grid charge
@@ -316,6 +368,8 @@ class Coordinator:
             await self._victron_ctrl.execute(v_cmd)
             self._grid_charge_was_active = True
             self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
+            decision = self._check_and_log_decision(h_cmd, v_cmd, 0.0)
+            await self._write_integrations(h_snap, v_snap, h_cmd, v_cmd, decision)
             return
 
         # Grid charge cleanup on slot exit
@@ -325,6 +379,8 @@ class Coordinator:
             await self._victron_ctrl.execute(v_cmd)
             self._grid_charge_was_active = False
             self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
+            decision = self._check_and_log_decision(h_cmd, v_cmd, 0.0)
+            await self._write_integrations(h_snap, v_snap, h_cmd, v_cmd, decision)
             return
 
         # 4. Compute P_target
@@ -354,6 +410,8 @@ class Coordinator:
             await self._huawei_ctrl.execute(h_cmd)
             await self._victron_ctrl.execute(v_cmd)
             self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
+            decision = self._check_and_log_decision(h_cmd, v_cmd, p_target)
+            await self._write_integrations(h_snap, v_snap, h_cmd, v_cmd, decision)
             return
 
         # 6. Discharge path
@@ -366,6 +424,8 @@ class Coordinator:
             await self._huawei_ctrl.execute(h_cmd)
             await self._victron_ctrl.execute(v_cmd)
             self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
+            decision = self._check_and_log_decision(h_cmd, v_cmd, 0.0)
+            await self._write_integrations(h_snap, v_snap, h_cmd, v_cmd, decision)
             return
 
         # Assign discharge roles
@@ -418,6 +478,8 @@ class Coordinator:
         await self._huawei_ctrl.execute(h_cmd)
         await self._victron_ctrl.execute(v_cmd)
         self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
+        decision = self._check_and_log_decision(h_cmd, v_cmd, p_target)
+        await self._write_integrations(h_snap, v_snap, h_cmd, v_cmd, decision)
 
     # ------------------------------------------------------------------
     # P_target computation
@@ -809,6 +871,136 @@ class Coordinator:
         h_cmd = ControllerCommand(role=BatteryRole.HOLDING, target_watts=0)
         v_cmd = ControllerCommand(role=BatteryRole.HOLDING, target_watts=0)
         return h_cmd, v_cmd
+
+    # ------------------------------------------------------------------
+    # Decision logging (INT-04)
+    # ------------------------------------------------------------------
+
+    def _check_and_log_decision(
+        self,
+        h_cmd: ControllerCommand,
+        v_cmd: ControllerCommand,
+        p_target: float,
+    ) -> DecisionEntry | None:
+        """Log decision if roles changed or allocation shifted significantly."""
+        h_role = h_cmd.role.value
+        v_role = v_cmd.role.value
+        h_alloc = h_cmd.target_watts
+        v_alloc = v_cmd.target_watts
+
+        trigger = None
+        reasons: list[str] = []
+
+        if h_role != self._prev_h_role:
+            trigger = "role_change"
+            reasons.append(f"Huawei {self._prev_h_role} -> {h_role}")
+        if v_role != self._prev_v_role:
+            trigger = "role_change"
+            reasons.append(f"Victron {self._prev_v_role} -> {v_role}")
+
+        # Allocation shift beyond dead-band (max of both dead-bands = 300W)
+        if trigger is None:
+            h_shift = abs(h_alloc - self._prev_h_alloc_w)
+            v_shift = abs(v_alloc - self._prev_v_alloc_w)
+            if h_shift > 300.0 or v_shift > 300.0:
+                trigger = "allocation_shift"
+                reasons.append(
+                    f"H: {self._prev_h_alloc_w:.0f} -> {h_alloc:.0f}W, "
+                    f"V: {self._prev_v_alloc_w:.0f} -> {v_alloc:.0f}W"
+                )
+
+        if trigger is not None:
+            reasoning = "; ".join(reasons) if reasons else trigger
+            entry = DecisionEntry(
+                timestamp=datetime.now(tz=timezone.utc).isoformat(),
+                trigger=trigger,
+                huawei_role=h_role,
+                victron_role=v_role,
+                p_target_w=p_target,
+                huawei_allocation_w=h_alloc,
+                victron_allocation_w=v_alloc,
+                pool_status=self._state.pool_status if self._state else "NORMAL",
+                reasoning=reasoning,
+            )
+            self._decisions.append(entry)
+            logger.info("decision: %s — %s", trigger, reasoning)
+
+            self._prev_h_role = h_role
+            self._prev_v_role = v_role
+            self._prev_h_alloc_w = h_alloc
+            self._prev_v_alloc_w = v_alloc
+            return entry
+
+        self._prev_h_alloc_w = h_alloc
+        self._prev_v_alloc_w = v_alloc
+        return None
+
+    # ------------------------------------------------------------------
+    # Integration writes (INT-03, INT-05)
+    # ------------------------------------------------------------------
+
+    async def _write_integrations(
+        self,
+        h_snap: ControllerSnapshot,
+        v_snap: ControllerSnapshot,
+        h_cmd: ControllerCommand,
+        v_cmd: ControllerCommand,
+        decision_entry: DecisionEntry | None,
+    ) -> None:
+        """Fire-and-forget integration calls at end of each cycle."""
+        now = datetime.now(tz=timezone.utc)
+
+        # InfluxDB writes
+        if self._writer is not None:
+            try:
+                await self._writer.write_coordinator_state(self._state)
+                await self._writer.write_per_system_metrics(
+                    h_snap, v_snap, h_cmd.role.value, v_cmd.role.value
+                )
+                self._integration_health["influxdb"].available = True
+                self._integration_health["influxdb"].last_seen = now
+                self._integration_health["influxdb"].last_error = None
+            except Exception as exc:
+                logger.warning("influx integration failed: %s", exc)
+                self._integration_health["influxdb"].available = False
+                self._integration_health["influxdb"].last_error = str(exc)
+
+            # Write decision entry if one was produced this cycle
+            if decision_entry is not None:
+                try:
+                    await self._writer.write_decision(decision_entry)
+                except Exception as exc:
+                    logger.warning("influx decision write failed: %s", exc)
+
+        # HA MQTT publish
+        if self._ha_mqtt_client is not None:
+            try:
+                extra = {
+                    "huawei_power_w": h_snap.power_w,
+                    "victron_power_w": v_snap.power_w,
+                    "victron_l1_power_w": v_snap.grid_l1_power_w or 0.0,
+                    "victron_l2_power_w": v_snap.grid_l2_power_w or 0.0,
+                    "victron_l3_power_w": v_snap.grid_l3_power_w or 0.0,
+                }
+                await self._ha_mqtt_client.publish(self._state, extra_fields=extra)
+                self._integration_health["ha_mqtt"].available = True
+                self._integration_health["ha_mqtt"].last_seen = now
+                self._integration_health["ha_mqtt"].last_error = None
+            except Exception as exc:
+                logger.warning("ha mqtt integration failed: %s", exc)
+                self._integration_health["ha_mqtt"].available = False
+                self._integration_health["ha_mqtt"].last_error = str(exc)
+
+        # Update EVCC health based on monitor availability
+        if self._evcc_monitor is not None:
+            evcc_connected = getattr(self._evcc_monitor, "evcc_available", False)
+            self._integration_health["evcc"].available = evcc_connected
+            if evcc_connected:
+                self._integration_health["evcc"].last_seen = now
+
+        # Update Telegram health
+        if self._notifier is not None:
+            self._integration_health["telegram"].available = True
 
     # ------------------------------------------------------------------
     # State building

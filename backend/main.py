@@ -440,9 +440,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             )
             await ha_client.connect()
             app.state.ha_mqtt_client = ha_client
+            coordinator.set_ha_mqtt_client(ha_client)
             logger.info(
                 "HA MQTT client connecting — host=%s:%d", ha_mqtt_cfg.host, ha_mqtt_cfg.port
             )
+            logger.info("Coordinator: HA MQTT client wired")
         except Exception as exc:  # noqa: BLE001
             logger.warning("HA MQTT client failed to connect — running without HA MQTT: %s", exc)
             app.state.ha_mqtt_client = None
