@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 
 
@@ -180,3 +181,33 @@ class CoordinatorState:
 
     victron_effective_min_soc_pct: float = 15.0
     """Effective min-SoC for Victron (from profile or static fallback)."""
+
+
+@dataclass
+class DecisionEntry:
+    """Single coordinator dispatch decision for the audit trail."""
+
+    timestamp: str
+    """ISO 8601 UTC timestamp of this decision."""
+
+    trigger: str
+    """Decision trigger: role_change, hold_signal, slot_start, slot_end, failover, allocation_shift."""
+
+    huawei_role: str
+    victron_role: str
+    p_target_w: float
+    huawei_allocation_w: float
+    victron_allocation_w: float
+    pool_status: str
+    reasoning: str
+    """Human-readable WHY text."""
+
+
+@dataclass
+class IntegrationStatus:
+    """Health status of a single external integration."""
+
+    service: str
+    available: bool
+    last_error: str | None = None
+    last_seen: datetime | None = None

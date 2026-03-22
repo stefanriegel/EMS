@@ -18,6 +18,13 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from backend.config import InfluxConfig
+from backend.controller_model import (
+    BatteryRole,
+    ControllerSnapshot,
+    CoordinatorState,
+    DecisionEntry,
+    IntegrationStatus,
+)
 from backend.influx_writer import InfluxMetricsWriter
 from backend.unified_model import ControlState, UnifiedPoolState
 from datetime import datetime, timezone
@@ -345,3 +352,377 @@ class TestConstructorLogging:
         assert "prod-bucket" in full_log, "bucket must appear in construction log"
         # Token must NEVER appear
         assert "test-token" not in full_log, "Token must NOT appear in logs"
+
+
+# ---------------------------------------------------------------------------
+# DecisionEntry / IntegrationStatus model tests
+# ---------------------------------------------------------------------------
+
+class TestDecisionEntry:
+    def test_instantiation(self):
+        """DecisionEntry can be instantiated with all required fields."""
+        entry = DecisionEntry(
+            timestamp="2026-03-22T12:00:00Z",
+            trigger="role_change",
+            huawei_role="PRIMARY_DISCHARGE",
+            victron_role="SECONDARY_DISCHARGE",
+            p_target_w=-5000.0,
+            huawei_allocation_w=-3000.0,
+            victron_allocation_w=-2000.0,
+            pool_status="NORMAL",
+            reasoning="Huawei higher SoC, assigned primary",
+        )
+        assert entry.trigger == "role_change"
+        assert entry.huawei_role == "PRIMARY_DISCHARGE"
+        assert entry.p_target_w == -5000.0
+        assert entry.reasoning == "Huawei higher SoC, assigned primary"
+
+
+class TestIntegrationStatus:
+    def test_instantiation(self):
+        """IntegrationStatus can be instantiated with all fields."""
+        status = IntegrationStatus(
+            service="influxdb",
+            available=True,
+            last_error=None,
+            last_seen=datetime(2026, 3, 22, 12, 0, 0, tzinfo=timezone.utc),
+        )
+        assert status.service == "influxdb"
+        assert status.available is True
+        assert status.last_error is None
+
+    def test_defaults(self):
+        """Optional fields default to None."""
+        status = IntegrationStatus(service="evcc", available=False)
+        assert status.last_error is None
+        assert status.last_seen is None
+
+
+# ---------------------------------------------------------------------------
+# Helpers for new InfluxDB methods
+# ---------------------------------------------------------------------------
+
+def _make_huawei_snapshot(**overrides) -> ControllerSnapshot:
+    defaults = dict(
+        soc_pct=80.0,
+        power_w=-3000.0,
+        available=True,
+        role=BatteryRole.PRIMARY_DISCHARGE,
+        consecutive_failures=0,
+        timestamp=1234567.89,
+        charge_headroom_w=500.0,
+    )
+    defaults.update(overrides)
+    return ControllerSnapshot(**defaults)
+
+
+def _make_victron_snapshot(**overrides) -> ControllerSnapshot:
+    defaults = dict(
+        soc_pct=68.5,
+        power_w=-2000.0,
+        available=True,
+        role=BatteryRole.SECONDARY_DISCHARGE,
+        consecutive_failures=0,
+        timestamp=1234567.89,
+        charge_headroom_w=1200.0,
+        grid_l1_power_w=100.0,
+        grid_l2_power_w=200.0,
+        grid_l3_power_w=300.0,
+    )
+    defaults.update(overrides)
+    return ControllerSnapshot(**defaults)
+
+
+def _make_coordinator_state(**overrides) -> CoordinatorState:
+    defaults = dict(
+        combined_soc_pct=72.3,
+        huawei_soc_pct=80.0,
+        victron_soc_pct=68.5,
+        huawei_available=True,
+        victron_available=True,
+        control_state="DISCHARGE",
+        huawei_discharge_setpoint_w=3000,
+        victron_discharge_setpoint_w=2000,
+        combined_power_w=-5000.0,
+        huawei_charge_headroom_w=500,
+        victron_charge_headroom_w=1200.0,
+        timestamp=1234567.89,
+        huawei_role="PRIMARY_DISCHARGE",
+        victron_role="SECONDARY_DISCHARGE",
+        pool_status="NORMAL",
+    )
+    defaults.update(overrides)
+    return CoordinatorState(**defaults)
+
+
+# ---------------------------------------------------------------------------
+# write_per_system_metrics tests
+# ---------------------------------------------------------------------------
+
+class TestWritePerSystemMetrics:
+    @pytest.mark.anyio
+    async def test_writes_two_points(self):
+        """write_per_system_metrics must call write_api.write once with two Points."""
+        client = _make_mock_client()
+        writer = InfluxMetricsWriter(client, bucket="ems")
+        h = _make_huawei_snapshot()
+        v = _make_victron_snapshot()
+
+        await writer.write_per_system_metrics(h, v, "PRIMARY_DISCHARGE", "SECONDARY_DISCHARGE")
+
+        client.write_api().write.assert_called_once()
+        _, kwargs = client.write_api().write.call_args
+        records = kwargs["record"]
+        assert len(records) == 2
+        names = [r._name for r in records]
+        assert "ems_huawei" in names
+        assert "ems_victron" in names
+
+    @pytest.mark.anyio
+    async def test_huawei_point_fields(self):
+        """ems_huawei Point must have soc_pct, power_w, charge_headroom_w fields."""
+        client = _make_mock_client()
+        writer = InfluxMetricsWriter(client, bucket="ems")
+        h = _make_huawei_snapshot(soc_pct=80.0, power_w=-3000.0, charge_headroom_w=500.0)
+        v = _make_victron_snapshot()
+
+        await writer.write_per_system_metrics(h, v, "PRIMARY_DISCHARGE", "SECONDARY_DISCHARGE")
+
+        _, kwargs = client.write_api().write.call_args
+        records = kwargs["record"]
+        huawei_pt = [r for r in records if r._name == "ems_huawei"][0]
+        fields = dict(huawei_pt._fields)
+        assert fields["soc_pct"] == 80.0
+        assert fields["power_w"] == -3000.0
+        assert fields["charge_headroom_w"] == 500.0
+
+    @pytest.mark.anyio
+    async def test_victron_point_has_per_phase_fields(self):
+        """ems_victron Point must include l1/l2/l3 and grid_l1/l2/l3 fields."""
+        client = _make_mock_client()
+        writer = InfluxMetricsWriter(client, bucket="ems")
+        h = _make_huawei_snapshot()
+        v = _make_victron_snapshot(
+            grid_l1_power_w=100.0, grid_l2_power_w=200.0, grid_l3_power_w=300.0,
+        )
+
+        await writer.write_per_system_metrics(h, v, "PRIMARY_DISCHARGE", "SECONDARY_DISCHARGE")
+
+        _, kwargs = client.write_api().write.call_args
+        records = kwargs["record"]
+        victron_pt = [r for r in records if r._name == "ems_victron"][0]
+        fields = dict(victron_pt._fields)
+        assert "grid_l1_power_w" in fields
+        assert "grid_l2_power_w" in fields
+        assert "grid_l3_power_w" in fields
+
+    @pytest.mark.anyio
+    async def test_huawei_point_tags(self):
+        """ems_huawei Point must have role and available tags."""
+        client = _make_mock_client()
+        writer = InfluxMetricsWriter(client, bucket="ems")
+        h = _make_huawei_snapshot(available=True)
+        v = _make_victron_snapshot()
+
+        await writer.write_per_system_metrics(h, v, "PRIMARY_DISCHARGE", "SECONDARY_DISCHARGE")
+
+        _, kwargs = client.write_api().write.call_args
+        records = kwargs["record"]
+        huawei_pt = [r for r in records if r._name == "ems_huawei"][0]
+        tags = dict(huawei_pt._tags)
+        assert tags["role"] == "PRIMARY_DISCHARGE"
+        assert tags["available"] == "true"
+
+    @pytest.mark.anyio
+    async def test_fire_and_forget(self):
+        """write_per_system_metrics must swallow exceptions."""
+        client = _make_mock_client()
+        client.write_api().write = AsyncMock(side_effect=Exception("connection refused"))
+        writer = InfluxMetricsWriter(client, bucket="ems")
+        h = _make_huawei_snapshot()
+        v = _make_victron_snapshot()
+
+        # Must not raise
+        await writer.write_per_system_metrics(h, v, "PRIMARY_DISCHARGE", "SECONDARY_DISCHARGE")
+
+
+# ---------------------------------------------------------------------------
+# write_decision tests
+# ---------------------------------------------------------------------------
+
+class TestWriteDecision:
+    @pytest.mark.anyio
+    async def test_writes_ems_decision_point(self):
+        """write_decision must write an ems_decision Point."""
+        client = _make_mock_client()
+        writer = InfluxMetricsWriter(client, bucket="ems")
+        entry = DecisionEntry(
+            timestamp="2026-03-22T12:00:00Z",
+            trigger="role_change",
+            huawei_role="PRIMARY_DISCHARGE",
+            victron_role="SECONDARY_DISCHARGE",
+            p_target_w=-5000.0,
+            huawei_allocation_w=-3000.0,
+            victron_allocation_w=-2000.0,
+            pool_status="NORMAL",
+            reasoning="Huawei higher SoC",
+        )
+
+        await writer.write_decision(entry)
+
+        client.write_api().write.assert_called_once()
+        _, kwargs = client.write_api().write.call_args
+        record = kwargs["record"]
+        assert record._name == "ems_decision"
+
+    @pytest.mark.anyio
+    async def test_trigger_as_tag(self):
+        """trigger must be a tag, not a field."""
+        client = _make_mock_client()
+        writer = InfluxMetricsWriter(client, bucket="ems")
+        entry = DecisionEntry(
+            timestamp="2026-03-22T12:00:00Z",
+            trigger="failover",
+            huawei_role="HOLDING",
+            victron_role="PRIMARY_DISCHARGE",
+            p_target_w=-5000.0,
+            huawei_allocation_w=0.0,
+            victron_allocation_w=-5000.0,
+            pool_status="DEGRADED",
+            reasoning="Huawei offline",
+        )
+
+        await writer.write_decision(entry)
+
+        _, kwargs = client.write_api().write.call_args
+        record = kwargs["record"]
+        tags = dict(record._tags)
+        assert tags["trigger"] == "failover"
+
+    @pytest.mark.anyio
+    async def test_roles_as_fields_not_tags(self):
+        """huawei_role and victron_role must be fields (not tags) per D-25 pitfall 5."""
+        client = _make_mock_client()
+        writer = InfluxMetricsWriter(client, bucket="ems")
+        entry = DecisionEntry(
+            timestamp="2026-03-22T12:00:00Z",
+            trigger="role_change",
+            huawei_role="PRIMARY_DISCHARGE",
+            victron_role="CHARGING",
+            p_target_w=-3000.0,
+            huawei_allocation_w=-3000.0,
+            victron_allocation_w=0.0,
+            pool_status="NORMAL",
+            reasoning="Test",
+        )
+
+        await writer.write_decision(entry)
+
+        _, kwargs = client.write_api().write.call_args
+        record = kwargs["record"]
+        fields = dict(record._fields)
+        tags = dict(record._tags)
+        assert "huawei_role" in fields
+        assert "victron_role" in fields
+        assert "huawei_role" not in tags
+        assert "victron_role" not in tags
+
+    @pytest.mark.anyio
+    async def test_fire_and_forget(self):
+        """write_decision must swallow exceptions."""
+        client = _make_mock_client()
+        client.write_api().write = AsyncMock(side_effect=Exception("timeout"))
+        writer = InfluxMetricsWriter(client, bucket="ems")
+        entry = DecisionEntry(
+            timestamp="2026-03-22T12:00:00Z",
+            trigger="role_change",
+            huawei_role="HOLDING",
+            victron_role="HOLDING",
+            p_target_w=0.0,
+            huawei_allocation_w=0.0,
+            victron_allocation_w=0.0,
+            pool_status="OFFLINE",
+            reasoning="Both offline",
+        )
+
+        # Must not raise
+        await writer.write_decision(entry)
+
+
+# ---------------------------------------------------------------------------
+# write_coordinator_state tests
+# ---------------------------------------------------------------------------
+
+class TestWriteCoordinatorState:
+    @pytest.mark.anyio
+    async def test_writes_ems_system_point(self):
+        """write_coordinator_state must write an ems_system Point."""
+        client = _make_mock_client()
+        writer = InfluxMetricsWriter(client, bucket="ems")
+        state = _make_coordinator_state()
+
+        await writer.write_coordinator_state(state)
+
+        client.write_api().write.assert_called_once()
+        _, kwargs = client.write_api().write.call_args
+        record = kwargs["record"]
+        assert record._name == "ems_system"
+
+    @pytest.mark.anyio
+    async def test_control_state_as_string(self):
+        """control_state must be used as plain string (not .value)."""
+        client = _make_mock_client()
+        writer = InfluxMetricsWriter(client, bucket="ems")
+        state = _make_coordinator_state(control_state="DISCHARGE")
+
+        await writer.write_coordinator_state(state)
+
+        _, kwargs = client.write_api().write.call_args
+        record = kwargs["record"]
+        tags = dict(record._tags)
+        assert tags["control_state"] == "DISCHARGE"
+
+    @pytest.mark.anyio
+    async def test_has_role_and_pool_tags(self):
+        """ems_system Point must include huawei_role, victron_role, pool_status as tags."""
+        client = _make_mock_client()
+        writer = InfluxMetricsWriter(client, bucket="ems")
+        state = _make_coordinator_state(
+            huawei_role="CHARGING",
+            victron_role="HOLDING",
+            pool_status="DEGRADED",
+        )
+
+        await writer.write_coordinator_state(state)
+
+        _, kwargs = client.write_api().write.call_args
+        record = kwargs["record"]
+        tags = dict(record._tags)
+        assert tags["huawei_role"] == "CHARGING"
+        assert tags["victron_role"] == "HOLDING"
+        assert tags["pool_status"] == "DEGRADED"
+
+    @pytest.mark.anyio
+    async def test_existing_write_system_state_still_works(self):
+        """Existing write_system_state must still work unchanged with UnifiedPoolState."""
+        client = _make_mock_client()
+        writer = InfluxMetricsWriter(client, bucket="ems")
+        state = _make_state()
+
+        await writer.write_system_state(state)
+
+        client.write_api().write.assert_called_once()
+        _, kwargs = client.write_api().write.call_args
+        record = kwargs["record"]
+        assert record._name == "ems_system"
+
+    @pytest.mark.anyio
+    async def test_fire_and_forget(self):
+        """write_coordinator_state must swallow exceptions."""
+        client = _make_mock_client()
+        client.write_api().write = AsyncMock(side_effect=Exception("timeout"))
+        writer = InfluxMetricsWriter(client, bucket="ems")
+        state = _make_coordinator_state()
+
+        # Must not raise
+        await writer.write_coordinator_state(state)
