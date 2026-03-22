@@ -112,6 +112,10 @@ class Coordinator:
         # Grid charge tracking
         self._grid_charge_was_active: bool = False
 
+        # Last snapshots (for get_device_snapshot / get_last_error)
+        self._last_h_snap: ControllerSnapshot | None = None
+        self._last_v_snap: ControllerSnapshot | None = None
+
     # ------------------------------------------------------------------
     # Public interface
     # ------------------------------------------------------------------
@@ -141,6 +145,107 @@ class Coordinator:
     def set_notifier(self, notifier) -> None:
         """Inject the Telegram notifier."""
         self._notifier = notifier
+
+    def get_last_error(self) -> str | None:
+        """Return the most recent controller error, or None.
+
+        Checks both controllers for failure state and returns the first
+        non-empty error.  Maintains the same interface as Orchestrator so
+        the API layer's /health endpoint works unchanged.
+        """
+        h_snap = self._last_h_snap
+        v_snap = self._last_v_snap
+        if h_snap is not None and not h_snap.available:
+            return f"Huawei controller unavailable (failures={h_snap.consecutive_failures})"
+        if v_snap is not None and not v_snap.available:
+            return f"Victron controller unavailable (failures={v_snap.consecutive_failures})"
+        return None
+
+    def get_working_mode(self) -> int | None:
+        """Return the Huawei working mode, or None if not available.
+
+        The Coordinator does not track working mode directly (the
+        HuaweiController/HuaweiDriver handles mode internally).  Returns
+        None for backward compatibility with the API /health endpoint.
+        """
+        return None
+
+    def get_device_snapshot(self) -> dict:
+        """Return a per-device telemetry snapshot for the /api/devices endpoint.
+
+        Sources data from the last controller snapshots.  Returns safe
+        defaults when controllers have no data yet.
+        """
+        h_snap = self._last_h_snap
+        v_snap = self._last_v_snap
+
+        if h_snap is not None and h_snap.available:
+            huawei_dict: dict = {
+                "available": True,
+                "pack1_soc_pct": h_snap.soc_pct,
+                "pack1_power_w": int(h_snap.current_power_w),
+                "pack2_soc_pct": None,
+                "pack2_power_w": None,
+                "total_soc_pct": h_snap.soc_pct,
+                "total_power_w": int(h_snap.current_power_w),
+                "max_charge_w": int(h_snap.max_charge_power_w),
+                "max_discharge_w": int(h_snap.max_discharge_power_w),
+                "master_pv_power_w": None,
+                "slave_pv_power_w": None,
+            }
+        else:
+            huawei_dict = {
+                "available": False,
+                "pack1_soc_pct": 0.0,
+                "pack1_power_w": 0,
+                "pack2_soc_pct": None,
+                "pack2_power_w": None,
+                "total_soc_pct": 0.0,
+                "total_power_w": 0,
+                "max_charge_w": 0,
+                "max_discharge_w": 0,
+                "master_pv_power_w": None,
+                "slave_pv_power_w": None,
+            }
+
+        if v_snap is not None and v_snap.available:
+            victron_dict: dict = {
+                "available": True,
+                "soc_pct": v_snap.soc_pct,
+                "battery_power_w": v_snap.current_power_w,
+                "l1_power_w": 0.0,
+                "l2_power_w": 0.0,
+                "l3_power_w": 0.0,
+                "l1_voltage_v": 0.0,
+                "l2_voltage_v": 0.0,
+                "l3_voltage_v": 0.0,
+                "grid_power_w": 0.0,
+                "grid_l1_power_w": 0.0,
+                "grid_l2_power_w": 0.0,
+                "grid_l3_power_w": 0.0,
+                "consumption_w": None,
+                "pv_on_grid_w": None,
+            }
+        else:
+            victron_dict = {
+                "available": False,
+                "soc_pct": 0.0,
+                "battery_power_w": 0.0,
+                "l1_power_w": 0.0,
+                "l2_power_w": 0.0,
+                "l3_power_w": 0.0,
+                "l1_voltage_v": 0.0,
+                "l2_voltage_v": 0.0,
+                "l3_voltage_v": 0.0,
+                "grid_power_w": 0.0,
+                "grid_l1_power_w": 0.0,
+                "grid_l2_power_w": 0.0,
+                "grid_l3_power_w": 0.0,
+                "consumption_w": None,
+                "pv_on_grid_w": None,
+            }
+
+        return {"huawei": huawei_dict, "victron": victron_dict}
 
     async def start(self) -> None:
         """Start the control loop as an asyncio background task."""
@@ -181,6 +286,8 @@ class Coordinator:
         # 1. Poll both controllers
         h_snap = await self._huawei_ctrl.poll()
         v_snap = await self._victron_ctrl.poll()
+        self._last_h_snap = h_snap
+        self._last_v_snap = v_snap
 
         # 2. Check EVCC hold mode
         evcc_hold = self._evcc_battery_mode == "hold"

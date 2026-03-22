@@ -18,9 +18,11 @@ On startup:
 1. Both driver configs are read from environment variables
    (``HUAWEI_HOST``, ``VICTRON_HOST`` — see :mod:`backend.config`).
 2. Both drivers are instantiated and connected.
-3. An :class:`~backend.orchestrator.Orchestrator` is constructed and started.
-4. The orchestrator is stored on ``app.state.orchestrator`` for the
-   :func:`~backend.api.get_orchestrator` dependency.
+3. Per-battery :class:`~backend.huawei_controller.HuaweiController` and
+   :class:`~backend.victron_controller.VictronController` are constructed.
+4. A :class:`~backend.coordinator.Coordinator` is constructed and started.
+5. The coordinator is stored on ``app.state.orchestrator`` for the
+   :func:`~backend.api.get_orchestrator` dependency (backward compat).
 
 On shutdown (SIGINT / SIGTERM / uvicorn graceful stop):
 
@@ -61,7 +63,10 @@ from backend.ha_mqtt_client import HomeAssistantMqttClient
 from backend.influx_reader import InfluxMetricsReader
 from backend.influx_writer import InfluxMetricsWriter
 from backend.notifier import TelegramNotifier
+from backend.coordinator import Coordinator
+from backend.huawei_controller import HuaweiController
 from backend.orchestrator import Orchestrator
+from backend.victron_controller import VictronController
 from backend.scheduler import Scheduler
 from backend.tariff import CompositeTariffEngine
 from influxdb_client.client.influxdb_client_async import InfluxDBClientAsync
@@ -179,10 +184,12 @@ async def _nightly_scheduler_loop(
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """FastAPI lifespan context manager.
 
-    Connects both drivers, starts the orchestrator control loop, and stores
-    the orchestrator on ``app.state.orchestrator`` for the DI layer.
+    Connects both drivers, creates per-battery controllers (HuaweiController,
+    VictronController), starts the Coordinator control loop, and stores
+    the coordinator on ``app.state.orchestrator`` for the DI layer (backward
+    compat — the API dependency ``get_orchestrator()`` reads this attribute).
 
-    On shutdown (after the ``yield``), the orchestrator is stopped gracefully
+    On shutdown (after the ``yield``), the coordinator is stopped gracefully
     and both drivers are disconnected.
 
     If ``HUAWEI_HOST`` / ``VICTRON_HOST`` are absent (and no wizard config is
@@ -190,7 +197,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     ``app.state.orchestrator`` is set to ``None`` and only the setup endpoints
     are served.  Existing ``GET /api/state`` callers will receive 503 via the
     ``get_orchestrator()`` dependency — which is the correct signal that the
-    orchestrator is not running.
+    coordinator is not running.
     """
     # --- Load wizard-persisted config and inject into env (setdefault = env vars win) ---
     config_path = os.environ.get("EMS_CONFIG_PATH", EMS_CONFIG_PATH)
@@ -389,18 +396,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
         app.state.sched_task = sched_task
 
-        # --- Start orchestrator ---
-        orchestrator = Orchestrator(
-            huawei, victron, sys_cfg, orch_cfg,
+        # --- Start coordinator (replaces Orchestrator) ---
+        huawei_ctrl = HuaweiController(huawei, sys_cfg, loop_interval_s=orch_cfg.loop_interval_s)
+        victron_ctrl = VictronController(victron, sys_cfg, loop_interval_s=orch_cfg.loop_interval_s)
+        coordinator = Coordinator(
+            huawei_ctrl=huawei_ctrl,
+            victron_ctrl=victron_ctrl,
+            sys_config=sys_cfg,
+            orch_config=orch_cfg,
             writer=metrics_writer,
             tariff_engine=tariff_engine,
         )
-        await orchestrator.start()
-        logger.info("Orchestrator control loop started")
-        orchestrator.set_scheduler(scheduler)
-        logger.info("Orchestrator: scheduler wired for GRID_CHARGE slot detection")
+        await coordinator.start()
+        logger.info("Coordinator control loop started (replaces Orchestrator)")
+        coordinator.set_scheduler(scheduler)
+        logger.info("Coordinator: scheduler wired for GRID_CHARGE slot detection")
 
-        app.state.orchestrator = orchestrator
+        app.state.orchestrator = coordinator  # backward compat: API uses same attribute name
         app.state.metrics_reader = metrics_reader
 
         # --- EVCC MQTT driver (optional — skipped if host is not configured) ---
@@ -408,7 +420,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         try:
             evcc_driver = EvccMqttDriver(host=evcc_mqtt_cfg.host, port=evcc_mqtt_cfg.port)
             await evcc_driver.connect()
-            orchestrator.set_evcc_monitor(evcc_driver)
+            coordinator.set_evcc_monitor(evcc_driver)
             app.state.evcc_driver = evcc_driver
             logger.info(
                 "EVCC MQTT driver connected — host=%s:%d", evcc_mqtt_cfg.host, evcc_mqtt_cfg.port
@@ -448,8 +460,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.info("Telegram notifier disabled — TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set")
         app.state.notifier = notifier
         if notifier is not None:
-            orchestrator.set_notifier(notifier)
-            logger.info("Orchestrator: Telegram notifier wired")
+            coordinator.set_notifier(notifier)
+            logger.info("Coordinator: Telegram notifier wired")
 
         # --- HA REST client (multi-entity or single-entity fallback) ---
         ha_rest_cfg = HaRestConfig.from_env()
@@ -518,7 +530,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # --- Shutdown ---
     if app.state.orchestrator is not None:
-        logger.info("EMS shutting down — stopping orchestrator")
+        logger.info("EMS shutting down — stopping coordinator")
         await app.state.orchestrator.stop()
     if getattr(app.state, "sched_task", None) is not None:
         app.state.sched_task.cancel()
