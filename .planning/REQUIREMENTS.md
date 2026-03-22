@@ -9,12 +9,12 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Independent Control
 
-- [ ] **CTRL-01**: Each battery system has a dedicated controller with its own state machine, hysteresis, and debounce
+- [x] **CTRL-01**: Each battery system has a dedicated controller with its own state machine, hysteresis, and debounce
 - [ ] **CTRL-02**: Coordinator allocates demand across controllers without directly writing to hardware
 - [ ] **CTRL-03**: Per-system hysteresis dead-band: Huawei ~300-500 W, Victron ~100-200 W (configurable)
-- [ ] **CTRL-04**: Each controller enters safe state independently on communication loss (zero-power, no cross-system impact)
+- [x] **CTRL-04**: Each controller enters safe state independently on communication loss (zero-power, no cross-system impact)
 - [ ] **CTRL-05**: Total household power remains stable when coordinator reassigns load between systems
-- [ ] **CTRL-06**: Dynamic role assignment (PRIMARY_DISCHARGE, SECONDARY_DISCHARGE, CHARGING, HOLDING, GRID_CHARGE) based on SoC, tariff, PV
+- [x] **CTRL-06**: Dynamic role assignment (PRIMARY_DISCHARGE, SECONDARY_DISCHARGE, CHARGING, HOLDING, GRID_CHARGE) based on SoC, tariff, PV
 - [ ] **CTRL-07**: Anti-oscillation ramps: soft-start/soft-stop with configurable ramp rate per system
 - [ ] **CTRL-08**: SoC-based discharge priority: higher-SoC system discharges first
 
@@ -95,12 +95,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| CTRL-01 | Phase 2 | Pending |
+| CTRL-01 | Phase 2 | Complete |
 | CTRL-02 | Phase 2 | Pending |
 | CTRL-03 | Phase 2 | Pending |
-| CTRL-04 | Phase 2 | Pending |
+| CTRL-04 | Phase 2 | Complete |
 | CTRL-05 | Phase 2 | Pending |
-| CTRL-06 | Phase 2 | Pending |
+| CTRL-06 | Phase 2 | Complete |
 | CTRL-07 | Phase 2 | Pending |
 | CTRL-08 | Phase 2 | Pending |
 | DRV-01 | Phase 1 | Complete |
