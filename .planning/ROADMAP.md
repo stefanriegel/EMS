@@ -67,7 +67,7 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 03-01-PLAN.md — Coordinator optimizations: SoC-headroom PV surplus weighting, time-of-day min-SoC profiles, grid charge staggering verification
+- [x] 03-01-PLAN.md — Coordinator optimizations: SoC-headroom PV surplus weighting, time-of-day min-SoC profiles, grid charge staggering verification
 - [x] 03-02-PLAN.md — Scheduler predictive pre-charging: solar-aware grid charge target reduction
 
 ### Phase 4: Integration & Monitoring
