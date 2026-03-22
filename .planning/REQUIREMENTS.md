@@ -37,12 +37,12 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Integration & Monitoring
 
-- [ ] **INT-01**: EVCC hold signal propagated to both controllers
+- [x] **INT-01**: EVCC hold signal propagated to both controllers
 - [ ] **INT-02**: Per-system SoC, power, and health exposed via API
-- [ ] **INT-03**: All external integrations optional (InfluxDB, EVCC, HA, Telegram)
+- [x] **INT-03**: All external integrations optional (InfluxDB, EVCC, HA, Telegram)
 - [x] **INT-04**: Decision transparency: structured log of WHY each dispatch decision was made
-- [ ] **INT-05**: Phase-aware Victron dispatch: per-phase L1/L2/L3 setpoints based on per-phase load
-- [ ] **INT-06**: Per-battery nightly charge targets from scheduler
+- [x] **INT-05**: Phase-aware Victron dispatch: per-phase L1/L2/L3 setpoints based on per-phase load
+- [x] **INT-06**: Per-battery nightly charge targets from scheduler
 - [x] **INT-07**: Per-system metrics in InfluxDB (separate measurements for Huawei and Victron)
 - [x] **INT-08**: HA MQTT discovery publishes per-system entities
 
@@ -114,12 +114,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OPT-03 | Phase 3 | Complete |
 | OPT-04 | Phase 3 | Complete |
 | OPT-05 | Phase 3 | Complete |
-| INT-01 | Phase 4 | Pending |
+| INT-01 | Phase 4 | Complete |
 | INT-02 | Phase 4 | Pending |
-| INT-03 | Phase 4 | Pending |
+| INT-03 | Phase 4 | Complete |
 | INT-04 | Phase 4 | Complete |
-| INT-05 | Phase 4 | Pending |
-| INT-06 | Phase 4 | Pending |
+| INT-05 | Phase 4 | Complete |
+| INT-06 | Phase 4 | Complete |
 | INT-07 | Phase 4 | Complete |
 | INT-08 | Phase 4 | Complete |
 | UI-01 | Phase 5 | Pending |

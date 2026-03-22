@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-stopped_at: Completed 04-01-PLAN.md
-last_updated: "2026-03-22T11:56:28.720Z"
+stopped_at: Completed 04-02-PLAN.md
+last_updated: "2026-03-22T12:02:17.815Z"
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 11
-  completed_plans: 9
+  completed_plans: 10
 ---
 
 # Project State
@@ -24,7 +24,7 @@ See: .planning/PROJECT.md (updated 2026-03-22)
 ## Current Position
 
 Phase: 04 (integration-monitoring) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 
 ## Performance Metrics
 
@@ -55,6 +55,7 @@ Plan: 2 of 3
 | Phase 03 P02 | 2min | 2 tasks | 2 files |
 | Phase 03 P01 | 4min | 2 tasks | 4 files |
 | Phase 04 P01 | 5min | 2 tasks | 5 files |
+| Phase 04 P02 | 3min | 1 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -80,6 +81,8 @@ Recent decisions affecting current work:
 - [Phase 04]: Roles stored as InfluxDB fields (not tags) in ems_decision to avoid high-cardinality tag explosion
 - [Phase 04]: HA MQTT availability entities use device_class=None to avoid binary_sensor platform pitfall
 - [Phase 04]: extra_fields parameter on HA MQTT publish() for per-phase Victron data not in CoordinatorState
+- [Phase 04]: Decision entries only on role changes, allocation shifts >300W, or EVCC hold -- not every cycle
+- [Phase 04]: Fire-and-forget integration writes: failures logged at WARNING, never block control loop
 
 ### Pending Todos
 
@@ -93,6 +96,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-22T11:56:28.718Z
-Stopped at: Completed 04-01-PLAN.md
+Last session: 2026-03-22T12:02:17.812Z
+Stopped at: Completed 04-02-PLAN.md
 Resume file: None
