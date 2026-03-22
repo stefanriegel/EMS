@@ -38,7 +38,7 @@ Requirements for initial release. Each maps to roadmap phases.
 ### Integration & Monitoring
 
 - [x] **INT-01**: EVCC hold signal propagated to both controllers
-- [ ] **INT-02**: Per-system SoC, power, and health exposed via API
+- [x] **INT-02**: Per-system SoC, power, and health exposed via API
 - [x] **INT-03**: All external integrations optional (InfluxDB, EVCC, HA, Telegram)
 - [x] **INT-04**: Decision transparency: structured log of WHY each dispatch decision was made
 - [x] **INT-05**: Phase-aware Victron dispatch: per-phase L1/L2/L3 setpoints based on per-phase load
@@ -115,7 +115,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OPT-04 | Phase 3 | Complete |
 | OPT-05 | Phase 3 | Complete |
 | INT-01 | Phase 4 | Complete |
-| INT-02 | Phase 4 | Pending |
+| INT-02 | Phase 4 | Complete |
 | INT-03 | Phase 4 | Complete |
 | INT-04 | Phase 4 | Complete |
 | INT-05 | Phase 4 | Complete |
