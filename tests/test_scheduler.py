@@ -567,3 +567,22 @@ async def test_fallback_when_no_slots_below_threshold():
 
     assert isinstance(schedule, ChargeSchedule)
     assert len(schedule.slots) == 2
+
+
+# ---------------------------------------------------------------------------
+# 15. Predictive pre-charging (OPT-04)
+# ---------------------------------------------------------------------------
+
+
+class TestPredictivePreCharging:
+    """OPT-04: Skip/reduce grid charge when solar forecast covers demand."""
+
+    async def test_partial_coverage_reduces_target(self):
+        """D-11: partial solar -> charge = consumption - solar*0.8."""
+        scheduler = _make_scheduler(
+            evcc_state=_make_evcc_state(solar_kwh=15.0, evopt=False),
+            consumption=_make_consumption(kwh=20.0),
+        )
+        schedule = await scheduler.compute_schedule()
+        # 15 < 20*1.2=24, but solar > 0 -> charge = max(0, 20 - 15*0.8) = 8
+        assert abs(schedule.reasoning.charge_energy_kwh - 8.0) < 0.1

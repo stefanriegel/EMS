@@ -199,13 +199,31 @@ class Scheduler:
             )
         else:
             # Formula fallback: proportion-split the net charge need
-            net_charge_kwh = max(
-                0.0,
-                min(
-                    consumption.today_expected_kwh - solar_kwh,
-                    total_capacity_kwh,
-                ),
-            )
+            # Predictive pre-charging (D-10, D-11, D-12 — OPT-04)
+            if (
+                evcc_state.solar is not None
+                and solar_kwh >= consumption.today_expected_kwh * 1.2
+            ):
+                # Full solar coverage — skip grid charge entirely (D-10)
+                net_charge_kwh = 0.0
+            elif evcc_state.solar is not None and solar_kwh > 0:
+                # Partial coverage — reduce target with 0.8 discount (D-11)
+                net_charge_kwh = max(
+                    0.0,
+                    min(
+                        consumption.today_expected_kwh - solar_kwh * 0.8,
+                        total_capacity_kwh,
+                    ),
+                )
+            else:
+                # No solar forecast (EVCC offline) or zero solar — full charge (D-12)
+                net_charge_kwh = max(
+                    0.0,
+                    min(
+                        consumption.today_expected_kwh - solar_kwh,
+                        total_capacity_kwh,
+                    ),
+                )
             if self._orch_config.huawei_capacity_kwh > 0 and total_capacity_kwh > 0:
                 raw_huawei = (
                     net_charge_kwh
@@ -257,7 +275,12 @@ class Scheduler:
         # ------------------------------------------------------------------
         # 7. Cost estimate
         # ------------------------------------------------------------------
-        charge_energy_kwh = max(0.0, consumption.today_expected_kwh - solar_kwh)
+        # For EVopt path, use simple formula; for formula fallback, use
+        # the solar-aware net_charge_kwh already computed in step 4
+        if evcc_state.evopt is not None:
+            charge_energy_kwh = max(0.0, consumption.today_expected_kwh - solar_kwh)
+        else:
+            charge_energy_kwh = net_charge_kwh
         avg_price = mean(s.effective_rate_eur_kwh for s in cheap_slots)
         cost_estimate_eur = charge_energy_kwh * avg_price
 
@@ -278,12 +301,28 @@ class Scheduler:
             end_utc=window_end,
             grid_charge_power_w=3000,
         )
-        reasoning = OptimizationReasoning(
-            text=(
+
+        # Solar-aware reasoning text
+        if evcc_state.evopt is None and evcc_state.solar is not None and charge_energy_kwh == 0.0:
+            reasoning_text = (
+                f"Solar forecast ({solar_kwh:.1f} kWh) covers expected consumption "
+                f"({consumption.today_expected_kwh:.1f} kWh) — skipping grid charge"
+            )
+        elif evcc_state.evopt is None and evcc_state.solar is not None and solar_kwh > 0:
+            reasoning_text = (
+                f"Charging {charge_energy_kwh:.1f} kWh from grid "
+                f"(solar: {solar_kwh:.1f} kWh forecast with 0.8 discount, "
+                f"consumption: {consumption.today_expected_kwh:.1f} kWh expected)"
+            )
+        else:
+            reasoning_text = (
                 f"Charging {charge_energy_kwh:.1f} kWh from grid "
                 f"(solar: {solar_kwh:.1f} kWh forecast, "
                 f"consumption: {consumption.today_expected_kwh:.1f} kWh expected)"
-            ),
+            )
+
+        reasoning = OptimizationReasoning(
+            text=reasoning_text,
             tomorrow_solar_kwh=solar_kwh,
             expected_consumption_kwh=consumption.today_expected_kwh,
             charge_energy_kwh=charge_energy_kwh,
