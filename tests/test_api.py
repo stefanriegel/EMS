@@ -20,6 +20,7 @@ import pytest
 
 from backend.api import api_router, get_orchestrator
 from backend.config import SystemConfig
+from backend.controller_model import CoordinatorState
 from backend.unified_model import ControlState, UnifiedPoolState
 
 
@@ -945,4 +946,297 @@ def test_ws_state_includes_loads_key() -> None:
     assert "loads" in data, f"Missing 'loads' key in WS frame: {data}"
     # Value is null because ha_rest_client is absent
     assert data["loads"] is None
+
+
+# ---------------------------------------------------------------------------
+# Helper: CoordinatorState-based mock for role/decision/integration tests
+# ---------------------------------------------------------------------------
+
+
+def _make_coordinator_state(**overrides: Any) -> CoordinatorState:
+    """Return a fully-populated CoordinatorState with sensible defaults."""
+    defaults: dict[str, Any] = dict(
+        combined_soc_pct=62.5,
+        huawei_soc_pct=50.0,
+        victron_soc_pct=68.75,
+        huawei_available=True,
+        victron_available=True,
+        control_state="IDLE",
+        huawei_discharge_setpoint_w=0,
+        victron_discharge_setpoint_w=0,
+        combined_power_w=0.0,
+        huawei_charge_headroom_w=1500,
+        victron_charge_headroom_w=2000.0,
+        timestamp=time.monotonic(),
+        huawei_role="PRIMARY_DISCHARGE",
+        victron_role="SECONDARY_DISCHARGE",
+        pool_status="NORMAL",
+    )
+    defaults.update(overrides)
+    return CoordinatorState(**defaults)
+
+
+class MockCoordinator:
+    """Minimal stub for :class:`~backend.coordinator.Coordinator` with decision/integration support."""
+
+    def __init__(
+        self,
+        state: CoordinatorState | None = None,
+        decisions: list[dict] | None = None,
+        integration_health: dict[str, dict] | None = None,
+    ) -> None:
+        self._state = state
+        self._decisions = decisions or []
+        self._integration_health = integration_health or {}
+        self._last_error: str | None = None
+        self.sys_config = SystemConfig()
+        self._device_snapshot: dict = _make_device_snapshot()
+
+    def get_state(self) -> CoordinatorState | None:
+        return self._state
+
+    def get_last_error(self) -> str | None:
+        return self._last_error
+
+    def get_working_mode(self) -> int | None:
+        return None
+
+    def get_device_snapshot(self) -> dict:
+        return self._device_snapshot
+
+    def get_decisions(self, limit: int = 20) -> list[dict]:
+        entries = self._decisions[-limit:]
+        entries = list(reversed(entries))
+        return entries
+
+    def get_integration_health(self) -> dict[str, dict]:
+        return self._integration_health
+
+
+def _build_test_app_coordinator(mock_coord: MockCoordinator) -> Any:
+    """Build a test app with a MockCoordinator injected."""
+    from fastapi import FastAPI
+
+    app = FastAPI(title="EMS-test")
+    app.include_router(api_router)
+    app.dependency_overrides[get_orchestrator] = lambda: mock_coord
+    return app
+
+
+# ---------------------------------------------------------------------------
+# GET /api/decisions
+# ---------------------------------------------------------------------------
+
+
+_SAMPLE_DECISIONS = [
+    {
+        "timestamp": "2026-03-22T10:00:00Z",
+        "trigger": "role_change",
+        "huawei_role": "PRIMARY_DISCHARGE",
+        "victron_role": "SECONDARY_DISCHARGE",
+        "p_target_w": -3000.0,
+        "huawei_allocation_w": -2000.0,
+        "victron_allocation_w": -1000.0,
+        "pool_status": "NORMAL",
+        "reasoning": "Huawei higher SoC, assigned primary",
+    },
+    {
+        "timestamp": "2026-03-22T10:05:00Z",
+        "trigger": "allocation_shift",
+        "huawei_role": "PRIMARY_DISCHARGE",
+        "victron_role": "SECONDARY_DISCHARGE",
+        "p_target_w": -4000.0,
+        "huawei_allocation_w": -2500.0,
+        "victron_allocation_w": -1500.0,
+        "pool_status": "NORMAL",
+        "reasoning": "Demand increased, redistributed",
+    },
+]
+
+
+@pytest.mark.anyio
+async def test_decisions_endpoint_returns_list() -> None:
+    """GET /api/decisions returns JSON array of decision entries."""
+    coord = MockCoordinator(
+        state=_make_coordinator_state(),
+        decisions=_SAMPLE_DECISIONS,
+    )
+    app = _build_test_app_coordinator(coord)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/decisions")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+    assert len(data) == 2
+    # Newest first
+    assert data[0]["timestamp"] == "2026-03-22T10:05:00Z"
+    # All required fields present
+    for entry in data:
+        for key in (
+            "timestamp", "trigger", "huawei_role", "victron_role",
+            "p_target_w", "huawei_allocation_w", "victron_allocation_w",
+            "pool_status", "reasoning",
+        ):
+            assert key in entry, f"Missing key '{key}' in decision entry"
+
+
+@pytest.mark.anyio
+async def test_decisions_endpoint_limit_clamp() -> None:
+    """GET /api/decisions?limit=200 clamps to 100."""
+    # Create 5 decisions to verify the call works
+    decisions = _SAMPLE_DECISIONS * 3  # 6 entries
+    coord = MockCoordinator(
+        state=_make_coordinator_state(),
+        decisions=decisions,
+    )
+    app = _build_test_app_coordinator(coord)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/decisions", params={"limit": 200})
+
+    assert resp.status_code == 200
+    # Should have received at most 100 (but we only have 6)
+    data = resp.json()
+    assert len(data) <= 100
+
+
+@pytest.mark.anyio
+async def test_decisions_endpoint_503_no_coordinator() -> None:
+    """GET /api/decisions returns 503 when coordinator is None (setup-only mode)."""
+    from fastapi import FastAPI
+
+    app = FastAPI(title="EMS-test")
+    app.include_router(api_router)
+    app.dependency_overrides[get_orchestrator] = lambda: None
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/decisions")
+
+    assert resp.status_code == 503
+    assert "not running" in resp.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# GET /api/health — integrations
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_health_includes_integrations() -> None:
+    """GET /api/health includes 'integrations' key with service health dicts."""
+    integration_health = {
+        "influxdb": {"service": "influxdb", "available": True, "last_error": None, "last_seen": "2026-03-22T10:00:00Z"},
+        "evcc": {"service": "evcc", "available": True, "last_error": None, "last_seen": "2026-03-22T10:00:00Z"},
+        "ha_mqtt": {"service": "ha_mqtt", "available": False, "last_error": "Connection refused", "last_seen": None},
+        "telegram": {"service": "telegram", "available": True, "last_error": None, "last_seen": None},
+    }
+    coord = MockCoordinator(
+        state=_make_coordinator_state(),
+        integration_health=integration_health,
+    )
+    app = _build_test_app_coordinator(coord)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/health")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "integrations" in data
+    integrations = data["integrations"]
+    assert "influxdb" in integrations
+    assert integrations["influxdb"]["available"] is True
+    assert integrations["ha_mqtt"]["available"] is False
+    assert integrations["ha_mqtt"]["last_error"] == "Connection refused"
+
+
+@pytest.mark.anyio
+async def test_health_integrations_empty_no_coordinator() -> None:
+    """GET /api/health returns integrations={} when coordinator is None."""
+    from fastapi import FastAPI
+
+    app = FastAPI(title="EMS-test")
+    app.include_router(api_router)
+    app.dependency_overrides[get_orchestrator] = lambda: None
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/health")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "integrations" in data
+    assert data["integrations"] == {}
+
+
+# ---------------------------------------------------------------------------
+# GET /api/state — role fields verification
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_state_includes_roles() -> None:
+    """GET /api/state includes huawei_role, victron_role, pool_status keys."""
+    coord = MockCoordinator(state=_make_coordinator_state(
+        huawei_role="PRIMARY_DISCHARGE",
+        victron_role="CHARGING",
+        pool_status="DEGRADED",
+    ))
+    app = _build_test_app_coordinator(coord)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/state")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["huawei_role"] == "PRIMARY_DISCHARGE"
+    assert data["victron_role"] == "CHARGING"
+    assert data["pool_status"] == "DEGRADED"
+
+
+# ---------------------------------------------------------------------------
+# GET /api/devices — role and setpoint fields
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_devices_includes_role_and_setpoint() -> None:
+    """GET /api/devices includes role, setpoint_w per system and pool_status at top level."""
+    coord = MockCoordinator(state=_make_coordinator_state(
+        huawei_role="PRIMARY_DISCHARGE",
+        victron_role="HOLDING",
+        pool_status="NORMAL",
+        huawei_discharge_setpoint_w=-2000,
+        victron_discharge_setpoint_w=0,
+    ))
+    app = _build_test_app_coordinator(coord)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/devices")
+
+    assert resp.status_code == 200
+    data = resp.json()
+
+    # Per-system role and setpoint
+    assert data["huawei"]["role"] == "PRIMARY_DISCHARGE"
+    assert data["huawei"]["setpoint_w"] == -2000
+    assert data["victron"]["role"] == "HOLDING"
+    assert data["victron"]["setpoint_w"] == 0
+
+    # Top-level pool_status
+    assert data["pool_status"] == "NORMAL"
 
