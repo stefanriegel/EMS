@@ -20,12 +20,12 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Drivers
 
-- [ ] **DRV-01**: Victron MultiPlus-II controlled via Modbus TCP (replacing MQTT)
-- [ ] **DRV-02**: Victron Modbus TCP driver reads system state (SoC, per-phase power, grid power, ESS mode)
-- [ ] **DRV-03**: Victron Modbus TCP driver writes ESS setpoints (total and per-phase AC power)
-- [ ] **DRV-04**: Victron Modbus unit IDs configurable (not hardcoded)
+- [x] **DRV-01**: Victron MultiPlus-II controlled via Modbus TCP (replacing MQTT)
+- [x] **DRV-02**: Victron Modbus TCP driver reads system state (SoC, per-phase power, grid power, ESS mode)
+- [x] **DRV-03**: Victron Modbus TCP driver writes ESS setpoints (total and per-phase AC power)
+- [x] **DRV-04**: Victron Modbus unit IDs configurable (not hardcoded)
 - [ ] **DRV-05**: Huawei driver retained from v1, adapted to work with per-battery controller interface
-- [ ] **DRV-06**: Canonical sign convention: positive = charge, negative = discharge, conversion only in drivers
+- [x] **DRV-06**: Canonical sign convention: positive = charge, negative = discharge, conversion only in drivers
 
 ### PV & Tariff Optimization
 
@@ -103,12 +103,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CTRL-06 | Phase 2 | Pending |
 | CTRL-07 | Phase 2 | Pending |
 | CTRL-08 | Phase 2 | Pending |
-| DRV-01 | Phase 1 | Pending |
-| DRV-02 | Phase 1 | Pending |
-| DRV-03 | Phase 1 | Pending |
-| DRV-04 | Phase 1 | Pending |
+| DRV-01 | Phase 1 | Complete |
+| DRV-02 | Phase 1 | Complete |
+| DRV-03 | Phase 1 | Complete |
+| DRV-04 | Phase 1 | Complete |
 | DRV-05 | Phase 1 | Pending |
-| DRV-06 | Phase 1 | Pending |
+| DRV-06 | Phase 1 | Complete |
 | OPT-01 | Phase 3 | Pending |
 | OPT-02 | Phase 3 | Pending |
 | OPT-03 | Phase 3 | Pending |

@@ -34,7 +34,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 2 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — Modbus TCP driver, BatteryDriver Protocol, VictronConfig, and driver tests
+- [x] 01-01-PLAN.md — Modbus TCP driver, BatteryDriver Protocol, VictronConfig, and driver tests
 - [ ] 01-02-PLAN.md — Protocol conformance verification for both drivers and package exports
 
 ### Phase 2: Independent Controllers & Coordinator
