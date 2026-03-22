@@ -1,212 +1,185 @@
-"""Async Victron Multiplus II 3-phase MQTT driver.
+"""Async Victron Multiplus II 3-phase Modbus TCP driver.
 
-Connects to the Venus OS dbus-flashmq MQTT broker, discovers the ``portalId``
-and vebus ``instanceId`` via live subscription, subscribes to all relevant
-telemetry topics, and starts a periodic keepalive loop.
+Connects to the Venus OS GX device over Modbus TCP using pymodbus
+``AsyncModbusTcpClient``.  Reads system-level and VE.Bus registers,
+returns typed ``VictronSystemData`` snapshots, and writes Hub4
+per-phase AC power setpoints.
 
 Usage::
 
     async with VictronDriver("192.168.0.10") as driver:
-        state = driver.read_system_state()
-        driver.write_ac_power_setpoint(1, -500.0)  # L1: 500 W export
+        state = await driver.read_system_state()
+        await driver.write_ac_power_setpoint(1, -500.0)  # L1: 500 W discharge
 
-Threading model
+Sign convention
 ---------------
-paho-mqtt callbacks run in paho's own background thread (started by
-``loop_start()``).  The asyncio event loop runs in the main thread.
-All state mutations triggered by MQTT callbacks cross the boundary via
-``loop.call_soon_threadsafe()``.  Never call asyncio primitives directly
-from paho callbacks.
+Victron's native Modbus convention for battery power already matches the
+canonical EMS convention:
 
-Discovery model
----------------
-dbus-flashmq (Venus OS v3.20+) does **not** retain messages.  After
-subscribing, clients must send ``R/{portalId}/keepalive`` (empty payload) to
-trigger the first data burst.  Discovery is a two-step process:
+  * ``battery_power_w > 0``  ->  **charging**
+  * ``battery_power_w < 0``  ->  **discharging**
 
-1. Subscribe ``N/+/system/0/Serial`` → first message yields ``portalId``.
-2. Subscribe ``N/{portalId}/vebus/+/ProductId`` → first message yields
-   ``instanceId``.
-
-Both events are signalled via ``asyncio.Event`` objects.
+No sign flips are applied in read or write methods.
 
 Logging
 -------
 The module logger is ``backend.drivers.victron_driver``.  Set it to DEBUG to
-see every MQTT publish and incoming message topic + value.
+see every Modbus read/write with register addresses and raw values.
 """
 from __future__ import annotations
 
-import asyncio
-import contextlib
-import json
 import logging
-import socket
 import time
-from contextlib import suppress
 from typing import Any
 
-import paho.mqtt.client as mqtt
+from pymodbus.client import AsyncModbusTcpClient
+from pymodbus.exceptions import ConnectionException, ModbusException
 
 from backend.drivers.victron_models import VictronPhaseData, VictronSystemData
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Register addresses
+# Source: Victron CCGX-Modbus-TCP-register-list.xlsx + attributes.csv
+# https://github.com/victronenergy/dbus_modbustcp/blob/master/attributes.csv
+# ---------------------------------------------------------------------------
+
+# System registers (unit_id=100)
+_SYS_REG_BATTERY_VOLTAGE = 840   # uint16, scale 10 (raw / 10 -> V)
+_SYS_REG_BATTERY_CURRENT = 841   # int16,  scale 10 (raw / 10 -> A)
+_SYS_REG_BATTERY_POWER = 842     # int16,  scale 1  (W, positive=charging)
+_SYS_REG_BATTERY_SOC = 843       # uint16, scale 1  (%)
+_SYS_REG_GRID_L1_POWER = 820     # int16,  scale 1  (W)
+_SYS_REG_GRID_L2_POWER = 821     # int16,  scale 1  (W)
+_SYS_REG_GRID_L3_POWER = 822     # int16,  scale 1  (W)
+
+# VE.Bus registers (unit_id=227 default)
+_VB_REG_AC_OUT_L1_V = 15   # uint16, scale 10 (raw / 10 -> V)
+_VB_REG_AC_OUT_L2_V = 16   # uint16, scale 10
+_VB_REG_AC_OUT_L3_V = 17   # uint16, scale 10
+_VB_REG_AC_OUT_L1_I = 18   # int16,  scale 10 (raw / 10 -> A)
+_VB_REG_AC_OUT_L2_I = 19   # int16,  scale 10
+_VB_REG_AC_OUT_L3_I = 20   # int16,  scale 10
+_VB_REG_AC_OUT_L1_P = 23   # int16,  scale 0.1 (raw * 0.1 -> W)
+_VB_REG_AC_OUT_L2_P = 24   # int16,  scale 0.1
+_VB_REG_AC_OUT_L3_P = 25   # int16,  scale 0.1
+_VB_REG_STATE = 31          # uint16, scale 1
+_VB_REG_MODE = 33           # uint16, scale 1
+
+# Hub4 writable registers (VE.Bus unit)
+_VB_REG_HUB4_L1_SETPOINT = 37     # int16, scale 1, W
+_VB_REG_HUB4_DISABLE_CHARGE = 38  # uint16, 0=allowed, 1=disabled
+_VB_REG_HUB4_DISABLE_FEEDIN = 39  # uint16, 0=allowed, 1=disabled
+_VB_REG_HUB4_L2_SETPOINT = 40     # int16, scale 1, W
+_VB_REG_HUB4_L3_SETPOINT = 41     # int16, scale 1, W
+
+# Phase number -> setpoint register mapping
+_PHASE_SETPOINT_REG = {
+    1: _VB_REG_HUB4_L1_SETPOINT,
+    2: _VB_REG_HUB4_L2_SETPOINT,
+    3: _VB_REG_HUB4_L3_SETPOINT,
+}
+
+
+def _signed16(value: int) -> int:
+    """Interpret a 16-bit unsigned register value as signed int16.
+
+    Modbus registers are transmitted as unsigned 16-bit.  Values >= 0x8000
+    represent negative numbers in two's complement.
+    """
+    return value - 0x10000 if value >= 0x8000 else value
+
 
 class VictronDriver:
-    """Async context manager for the Victron Multiplus II 3-phase MQTT interface.
+    """Async driver for the Victron Multiplus II 3-phase system via Modbus TCP.
 
     Parameters
     ----------
     host:
-        IP address or hostname of the Venus OS MQTT broker.
+        IP address or hostname of the Venus OS GX device.
     port:
-        TCP port (default 1883).
+        TCP port (default 502 for Modbus TCP).
     timeout_s:
-        General operation timeout in seconds (default 10.0).
-    discovery_timeout_s:
-        Maximum seconds to wait for portalId / instanceId discovery
-        before raising ``asyncio.TimeoutError`` (default 15.0).
+        Per-request timeout in seconds (default 5.0).
+    system_unit_id:
+        Modbus unit ID for system-level registers (default 100).
+    vebus_unit_id:
+        Modbus unit ID for VE.Bus inverter registers (default 227).
     """
 
     def __init__(
         self,
         host: str,
-        port: int = 1883,
-        timeout_s: float = 10.0,
-        discovery_timeout_s: float = 15.0,
+        port: int = 502,
+        timeout_s: float = 5.0,
+        system_unit_id: int = 100,
+        vebus_unit_id: int = 227,
     ) -> None:
         self.host = host
         self.port = port
         self.timeout_s = timeout_s
-        self.discovery_timeout_s = discovery_timeout_s
+        self._system_unit_id = system_unit_id
+        self._vebus_unit_id = vebus_unit_id
 
-        # MQTT client (set during connect)
-        self._client: mqtt.Client | None = None
-
-        # Event loop captured at connect() for use by paho callbacks
-        self._loop: asyncio.AbstractEventLoop | None = None
-
-        # Discovered identifiers
-        self._portal_id: str | None = None
-        self._instance_id: str | None = None
-
-        # Asyncio events signalled when discovery completes
-        self._portal_event: asyncio.Event = asyncio.Event()
-        self._instance_event: asyncio.Event = asyncio.Event()
-
-        # Live telemetry state dict — mutated only in the asyncio thread
-        self._state: dict[str, Any] = {}
-
-        # Topic → field key map built after discovery
-        self._topic_map: dict[str, str] = {}
-
-        # Keepalive task
-        self._keepalive_task: asyncio.Task | None = None  # type: ignore[type-arg]
+        self._client = AsyncModbusTcpClient(
+            host=host,
+            port=port,
+            timeout=timeout_s,
+            retries=1,
+        )
 
     # ------------------------------------------------------------------
     # Connection lifecycle
     # ------------------------------------------------------------------
 
     async def connect(self) -> None:
-        """Connect to the broker, discover portalId + instanceId, and subscribe.
+        """Connect to the Modbus TCP server and verify link with a health check.
+
+        Reads the battery SoC register (843) as a health check to confirm
+        the Modbus link is live and the system unit ID is correct.
 
         Raises
         ------
         ConnectionError
-            If the broker is not reachable at TCP level.
-        asyncio.TimeoutError
-            If discovery (portalId or instanceId) does not complete within
-            ``discovery_timeout_s``.
+            If the TCP connection fails or the health check register read
+            returns an error.
         """
-        # Capture the event loop before spawning background thread
-        self._loop = asyncio.get_event_loop()
-
-        # TCP pre-flight — fast failure before handing off to paho
-        try:
-            s = socket.create_connection((self.host, self.port), timeout=3.0)
-            s.close()
-        except Exception as exc:
-            msg = f"{type(exc).__name__} connecting to {self.host}:{self.port}: {exc}"
-            logger.error("Victron TCP pre-flight failed: %s", msg)
-            raise ConnectionError(msg) from exc
-
-        # Create paho client (paho 2.x requires explicit CallbackAPIVersion)
-        self._client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-        self._client.on_message = self._on_message
-
-        # Non-blocking connect + background thread
-        self._client.connect_async(self.host, self.port)
-        self._client.loop_start()
-
-        # --- Step 1: discover portalId ---
-        self._client.subscribe("N/+/system/0/Serial")
-        try:
-            await asyncio.wait_for(
-                self._portal_event.wait(),
-                timeout=self.discovery_timeout_s,
+        connected = await self._client.connect()
+        if not connected:
+            raise ConnectionError(
+                f"Failed to connect to Victron Modbus TCP at {self.host}:{self.port}"
             )
-        except asyncio.TimeoutError:
-            logger.warning(
-                "Victron discovery timeout: portalId not found within %.1fs",
-                self.discovery_timeout_s,
-            )
-            raise
 
-        # Send initial keepalive (empty payload) — triggers the first data burst
-        # from dbus-flashmq.  Must happen *before* step 2 to ensure the broker
-        # starts emitting the vebus/+/ProductId message we need.
-        self._client.publish(f"R/{self._portal_id}/keepalive", b"", qos=0)
-
-        # --- Step 2: discover instanceId ---
-        self._client.subscribe(f"N/{self._portal_id}/vebus/+/ProductId")
-        try:
-            await asyncio.wait_for(
-                self._instance_event.wait(),
-                timeout=self.discovery_timeout_s,
+        # Health check: read SoC register to verify link and unit ID
+        result = await self._client.read_holding_registers(
+            address=_SYS_REG_BATTERY_SOC,
+            count=1,
+            slave=self._system_unit_id,
+        )
+        if result.isError():
+            self._client.close()
+            raise ConnectionError(
+                f"Victron health check failed: cannot read SoC register 843 "
+                f"from unit {self._system_unit_id} at {self.host}:{self.port}"
             )
-        except asyncio.TimeoutError:
-            logger.warning(
-                "Victron discovery timeout: instanceId not found within %.1fs",
-                self.discovery_timeout_s,
-            )
-            raise
 
+        initial_soc = result.registers[0]
         logger.info(
-            "Victron MQTT connected: portalId=%s instanceId=%s",
-            self._portal_id,
-            self._instance_id,
+            "Victron Modbus TCP connected: %s:%d (system_unit=%d, vebus_unit=%d, "
+            "initial SoC=%d%%)",
+            self.host,
+            self.port,
+            self._system_unit_id,
+            self._vebus_unit_id,
+            initial_soc,
         )
 
-        # Build the topic → field key map now that both IDs are known
-        self._topic_map = self._build_topic_map()
-
-        # Subscribe to all data topics
-        for topic in self._topic_map:
-            self._client.subscribe(topic)
-
-        # Activate ESS external control mode (Hub4Mode=3) so setpoints take effect
-        self.write_ess_mode(3)
-        logger.debug("Victron ESS mode set to 3 (external control)")
-
-        # Start 30s keepalive loop
-        self._keepalive_task = asyncio.create_task(self._keepalive_loop())
-
     async def close(self) -> None:
-        """Cancel the keepalive task and disconnect from the broker."""
-        if self._keepalive_task is not None and not self._keepalive_task.done():
-            self._keepalive_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await asyncio.shield(self._keepalive_task)
-            self._keepalive_task = None
-
-        if self._client is not None:
-            self._client.loop_stop()
-            self._client.disconnect()
-            self._client = None
-
+        """Close the Modbus TCP connection."""
+        self._client.close()
         logger.debug(
-            "Victron MQTT disconnected from %s:%d", self.host, self.port
+            "Victron Modbus TCP disconnected from %s:%d", self.host, self.port
         )
 
     # ------------------------------------------------------------------
@@ -221,214 +194,160 @@ class VictronDriver:
         await self.close()
 
     # ------------------------------------------------------------------
-    # Topic map
+    # Reconnect helper
     # ------------------------------------------------------------------
 
-    def _build_topic_map(self) -> dict[str, str]:
-        """Return the full MQTT topic → state field key mapping.
+    async def _with_reconnect(self, coro_factory):
+        """Execute ``coro_factory()`` and retry once on Modbus/connection failure.
 
-        Called after both ``_portal_id`` and ``_instance_id`` are known.
-        Topic keys include the full ``N/{portalId}/...`` prefix so they can
-        be compared directly against ``message.topic``.
-        """
-        p = self._portal_id
-        i = self._instance_id
-        return {
-            # Battery
-            f"N/{p}/system/0/Dc/Battery/Soc": "battery_soc_pct",
-            f"N/{p}/system/0/Dc/Battery/Power": "battery_power_w",
-            f"N/{p}/system/0/Dc/Battery/Current": "battery_current_a",
-            f"N/{p}/system/0/Dc/Battery/Voltage": "battery_voltage_v",
-            # Per-phase AC output
-            f"N/{p}/vebus/{i}/Ac/Out/L1/P": "l1_power_w",
-            f"N/{p}/vebus/{i}/Ac/Out/L1/I": "l1_current_a",
-            f"N/{p}/vebus/{i}/Ac/Out/L1/V": "l1_voltage_v",
-            f"N/{p}/vebus/{i}/Ac/Out/L2/P": "l2_power_w",
-            f"N/{p}/vebus/{i}/Ac/Out/L2/I": "l2_current_a",
-            f"N/{p}/vebus/{i}/Ac/Out/L2/V": "l2_voltage_v",
-            f"N/{p}/vebus/{i}/Ac/Out/L3/P": "l3_power_w",
-            f"N/{p}/vebus/{i}/Ac/Out/L3/I": "l3_current_a",
-            f"N/{p}/vebus/{i}/Ac/Out/L3/V": "l3_voltage_v",
-            # AcPowerSetpoint readbacks
-            f"N/{p}/vebus/{i}/Hub4/L1/AcPowerSetpoint": "l1_setpoint_w",
-            f"N/{p}/vebus/{i}/Hub4/L2/AcPowerSetpoint": "l2_setpoint_w",
-            f"N/{p}/vebus/{i}/Hub4/L3/AcPowerSetpoint": "l3_setpoint_w",
-            # VE.Bus control state
-            f"N/{p}/vebus/{i}/State": "vebus_state",
-            f"N/{p}/vebus/{i}/Mode": "vebus_mode",
-            # System state
-            f"N/{p}/system/0/SystemState/State": "system_state",
-            # ESS settings
-            f"N/{p}/settings/0/Settings/CGwacs/Hub4Mode": "ess_mode",
-            f"N/{p}/settings/0/Settings/CGwacs/BatteryLife/MinimumSocLimit": "min_soc_limit_pct",
-        }
-
-    # ------------------------------------------------------------------
-    # MQTT callbacks
-    # ------------------------------------------------------------------
-
-    def _on_message(
-        self,
-        client: mqtt.Client,  # noqa: ARG002
-        userdata: Any,  # noqa: ARG002
-        message: mqtt.MQTTMessage,
-    ) -> None:
-        """paho callback — runs in paho's background thread.
-
-        Crosses the asyncio thread boundary via ``call_soon_threadsafe``.
-        Never touch asyncio primitives directly here.
-        """
-        assert self._loop is not None
-        self._loop.call_soon_threadsafe(
-            self._process_message, message.topic, message.payload
-        )
-
-    def _process_message(self, topic: str, payload: bytes) -> None:
-        """Process an MQTT message — runs in the asyncio event loop thread.
-
-        Updates ``self._state`` and signals discovery events when the relevant
-        topics arrive.
+        On the first ``ModbusException`` or ``ConnectionException``, closes
+        the client, reconnects, and retries exactly once.
         """
         try:
-            data = json.loads(payload)
-        except (json.JSONDecodeError, ValueError):
-            return
-
-        value = data.get("value")
-        if value is None:
-            return
-
-        logger.debug("MQTT rx: topic=%s value=%s", topic, value)
-
-        # Discovery: portalId from N/+/system/0/Serial
-        segments = topic.split("/")
-        if (
-            len(segments) == 5
-            and segments[0] == "N"
-            and segments[2] == "system"
-            and segments[3] == "0"
-            and segments[4] == "Serial"
-            and not self._portal_event.is_set()
-        ):
-            self._portal_id = segments[1]
-            self._portal_event.set()
-            logger.debug("Victron portalId discovered: %s", self._portal_id)
-            return
-
-        # Discovery: instanceId from N/{portal}/vebus/+/ProductId
-        if (
-            len(segments) == 5
-            and segments[0] == "N"
-            and segments[2] == "vebus"
-            and segments[4] == "ProductId"
-            and not self._instance_event.is_set()
-        ):
-            self._instance_id = segments[3]
-            self._instance_event.set()
-            logger.debug("Victron instanceId discovered: %s", self._instance_id)
-            return
-
-        # Normal telemetry: update state dict via topic map
-        field_key = self._topic_map.get(topic)
-        if field_key is not None:
-            self._state[field_key] = value
-
-    # ------------------------------------------------------------------
-    # Keepalive loop
-    # ------------------------------------------------------------------
-
-    async def _keepalive_loop(self) -> None:
-        """Send periodic MQTT keepalives to keep dbus-flashmq publishing.
-
-        The initial keepalive (empty payload) is sent in ``connect()`` to
-        trigger the first data burst.  Subsequent keepalives use
-        ``suppress-republish`` to avoid re-triggering a full burst.
-        """
-        payload = json.dumps({"keepalive-options": ["suppress-republish"]})
-        try:
-            while True:
-                await asyncio.sleep(30)
-                if self._client is not None and self._portal_id is not None:
-                    self._client.publish(
-                        f"R/{self._portal_id}/keepalive", payload, qos=0
-                    )
-                    logger.debug(
-                        "MQTT keepalive sent to R/%s/keepalive", self._portal_id
-                    )
-        except asyncio.CancelledError:
-            return
+            return await coro_factory()
+        except (ModbusException, ConnectionException) as exc:
+            logger.warning(
+                "Modbus error on %s:%d (%s) -- reconnecting and retrying",
+                self.host,
+                self.port,
+                type(exc).__name__,
+            )
+            self._client.close()
+            await self.connect()
+            return await coro_factory()
 
     # ------------------------------------------------------------------
     # Read
     # ------------------------------------------------------------------
 
-    def read_system_state(self) -> VictronSystemData:
-        """Return a snapshot of the current system state.
+    async def read_system_state(self) -> VictronSystemData:
+        """Read all relevant registers and return a typed system snapshot.
 
-        All fields not yet received via MQTT are ``None``.  The caller
-        (S03 orchestrator) should check ``timestamp`` against
-        ``time.monotonic()`` to detect stale data.
+        Makes batched ``read_holding_registers`` calls to minimize TCP
+        round-trips.  Applies scale factors and signed int16 conversion
+        as documented in the Victron register list.
 
         Returns
         -------
         VictronSystemData
-            Snapshot of ``self._state`` at call time.
+            Snapshot with battery state, per-phase AC data, grid power,
+            and ESS control registers.
         """
-        s = self._state
 
-        def _phase(prefix: str) -> VictronPhaseData:
-            return VictronPhaseData(
-                power_w=s.get(f"{prefix}_power_w", 0.0),
-                current_a=s.get(f"{prefix}_current_a", 0.0),
-                voltage_v=s.get(f"{prefix}_voltage_v", 0.0),
-                setpoint_w=s.get(f"{prefix}_setpoint_w"),
+        async def _do() -> VictronSystemData:
+            # --- System battery registers 840-843 (4 consecutive) ---
+            sys_bat = await self._client.read_holding_registers(
+                address=_SYS_REG_BATTERY_VOLTAGE,
+                count=4,
+                slave=self._system_unit_id,
+            )
+            bat_voltage_v = sys_bat.registers[0] / 10.0
+            bat_current_a = _signed16(sys_bat.registers[1]) / 10.0
+            bat_power_w = float(_signed16(sys_bat.registers[2]))
+            bat_soc_pct = float(sys_bat.registers[3])
+
+            # --- System grid registers 820-822 (3 consecutive) ---
+            sys_grid = await self._client.read_holding_registers(
+                address=_SYS_REG_GRID_L1_POWER,
+                count=3,
+                slave=self._system_unit_id,
+            )
+            grid_l1_w = float(_signed16(sys_grid.registers[0]))
+            grid_l2_w = float(_signed16(sys_grid.registers[1]))
+            grid_l3_w = float(_signed16(sys_grid.registers[2]))
+            grid_total_w = grid_l1_w + grid_l2_w + grid_l3_w
+
+            # --- VE.Bus AC output voltage 15-17 (3 consecutive) ---
+            vb_volt = await self._client.read_holding_registers(
+                address=_VB_REG_AC_OUT_L1_V,
+                count=3,
+                slave=self._vebus_unit_id,
+            )
+            l1_voltage_v = vb_volt.registers[0] / 10.0
+            l2_voltage_v = vb_volt.registers[1] / 10.0
+            l3_voltage_v = vb_volt.registers[2] / 10.0
+
+            # --- VE.Bus AC output current 18-20 (3 consecutive) ---
+            vb_curr = await self._client.read_holding_registers(
+                address=_VB_REG_AC_OUT_L1_I,
+                count=3,
+                slave=self._vebus_unit_id,
+            )
+            l1_current_a = _signed16(vb_curr.registers[0]) / 10.0
+            l2_current_a = _signed16(vb_curr.registers[1]) / 10.0
+            l3_current_a = _signed16(vb_curr.registers[2]) / 10.0
+
+            # --- VE.Bus AC output power 23-25 (3 consecutive) ---
+            vb_pow = await self._client.read_holding_registers(
+                address=_VB_REG_AC_OUT_L1_P,
+                count=3,
+                slave=self._vebus_unit_id,
+            )
+            l1_power_w = _signed16(vb_pow.registers[0]) * 0.1
+            l2_power_w = _signed16(vb_pow.registers[1]) * 0.1
+            l3_power_w = _signed16(vb_pow.registers[2]) * 0.1
+
+            # --- VE.Bus state register 31 ---
+            vb_state = await self._client.read_holding_registers(
+                address=_VB_REG_STATE,
+                count=1,
+                slave=self._vebus_unit_id,
+            )
+            vebus_state = int(vb_state.registers[0])
+
+            # --- VE.Bus mode register 33 ---
+            vb_mode = await self._client.read_holding_registers(
+                address=_VB_REG_MODE,
+                count=1,
+                slave=self._vebus_unit_id,
+            )
+            ess_mode = int(vb_mode.registers[0])
+
+            return VictronSystemData(
+                battery_soc_pct=bat_soc_pct,
+                battery_power_w=bat_power_w,
+                battery_current_a=bat_current_a,
+                battery_voltage_v=bat_voltage_v,
+                l1=VictronPhaseData(
+                    power_w=l1_power_w,
+                    current_a=l1_current_a,
+                    voltage_v=l1_voltage_v,
+                    setpoint_w=None,
+                ),
+                l2=VictronPhaseData(
+                    power_w=l2_power_w,
+                    current_a=l2_current_a,
+                    voltage_v=l2_voltage_v,
+                    setpoint_w=None,
+                ),
+                l3=VictronPhaseData(
+                    power_w=l3_power_w,
+                    current_a=l3_current_a,
+                    voltage_v=l3_voltage_v,
+                    setpoint_w=None,
+                ),
+                ess_mode=ess_mode,
+                system_state=None,  # Not available via simple register read
+                vebus_state=vebus_state,
+                grid_power_w=grid_total_w,
+                grid_l1_power_w=grid_l1_w,
+                grid_l2_power_w=grid_l2_w,
+                grid_l3_power_w=grid_l3_w,
+                consumption_w=None,   # Not available via Modbus
+                pv_on_grid_w=None,    # Not available via Modbus
+                timestamp=time.monotonic(),
             )
 
-        # Derive system-level totals from per-phase values
-        cons_l1 = s.get("consumption_l1_w")
-        cons_l2 = s.get("consumption_l2_w")
-        cons_l3 = s.get("consumption_l3_w")
-        consumption_w = (
-            (cons_l1 or 0.0) + (cons_l2 or 0.0) + (cons_l3 or 0.0)
-            if any(v is not None for v in (cons_l1, cons_l2, cons_l3))
-            else None
-        )
-
-        pv_l1 = s.get("pv_on_grid_l1_w")
-        pv_l2 = s.get("pv_on_grid_l2_w")
-        pv_l3 = s.get("pv_on_grid_l3_w")
-        pv_on_grid_w = (
-            (pv_l1 or 0.0) + (pv_l2 or 0.0) + (pv_l3 or 0.0)
-            if any(v is not None for v in (pv_l1, pv_l2, pv_l3))
-            else None
-        )
-
-        return VictronSystemData(
-            battery_soc_pct=s.get("battery_soc_pct", 0.0),
-            battery_power_w=s.get("battery_power_w", 0.0),
-            battery_current_a=s.get("battery_current_a", 0.0),
-            battery_voltage_v=s.get("battery_voltage_v", 0.0),
-            l1=_phase("l1"),
-            l2=_phase("l2"),
-            l3=_phase("l3"),
-            ess_mode=s.get("ess_mode"),
-            system_state=s.get("system_state"),
-            vebus_state=s.get("vebus_state"),
-            grid_power_w=s.get("grid_power_w"),
-            grid_l1_power_w=s.get("grid_l1_power_w"),
-            grid_l2_power_w=s.get("grid_l2_power_w"),
-            grid_l3_power_w=s.get("grid_l3_power_w"),
-            consumption_w=consumption_w,
-            pv_on_grid_w=pv_on_grid_w,
-            timestamp=time.monotonic(),
-        )
+        return await self._with_reconnect(_do)
 
     # ------------------------------------------------------------------
     # Write methods
     # ------------------------------------------------------------------
 
-    def write_ac_power_setpoint(self, phase: int, watts: float) -> None:
-        """Publish a per-phase AcPowerSetpoint to the VE.Bus ESS Hub4 register.
+    async def write_ac_power_setpoint(
+        self, phase: int, watts: float
+    ) -> None:
+        """Write a per-phase AC power setpoint to the Hub4 register.
 
         Parameters
         ----------
@@ -437,61 +356,36 @@ class VictronDriver:
         watts:
             Setpoint in watts.  Positive = import from grid (charge battery /
             supply loads).  Negative = export to grid (discharge battery).
-            Note: negative values require Venus OS ≥ 3.21.
+
+            Sign convention matches canonical EMS convention (positive=charge)
+            and Victron's native Modbus convention -- no conversion needed.
 
         Raises
         ------
-        AssertionError
-            If the driver has not been connected yet.
+        ValueError
+            If phase is not 1, 2, or 3.
         """
-        assert self._client is not None, "Driver not connected — call connect() first"
-        topic = (
-            f"W/{self._portal_id}/vebus/{self._instance_id}"
-            f"/Hub4/L{phase}/AcPowerSetpoint"
-        )
-        payload = json.dumps({"value": watts})
-        logger.debug("MQTT tx: topic=%s payload=%s", topic, payload)
-        self._client.publish(topic, payload, qos=1)
+        reg = _PHASE_SETPOINT_REG.get(phase)
+        if reg is None:
+            raise ValueError(f"Invalid phase {phase}: must be 1, 2, or 3")
 
-    def write_disable_charge(self, disabled: bool) -> None:
-        """Enable or disable battery charging.
+        # Convert to int16, then mask to unsigned for the wire format
+        value = int(watts) & 0xFFFF
 
-        Parameters
-        ----------
-        disabled:
-            ``True`` to disable charging; ``False`` to re-enable it.
-        """
-        assert self._client is not None, "Driver not connected — call connect() first"
-        topic = f"W/{self._portal_id}/vebus/{self._instance_id}/Hub4/DisableCharge"
-        payload = json.dumps({"value": 1 if disabled else 0})
-        logger.debug("MQTT tx: topic=%s payload=%s", topic, payload)
-        self._client.publish(topic, payload, qos=1)
+        async def _do() -> None:
+            await self._client.write_register(
+                address=reg,
+                value=value,
+                slave=self._vebus_unit_id,
+            )
+            logger.debug(
+                "Victron setpoint: phase L%d = %d W (reg %d, raw 0x%04X, "
+                "unit %d)",
+                phase,
+                int(watts),
+                reg,
+                value,
+                self._vebus_unit_id,
+            )
 
-    def write_disable_feed_in(self, disabled: bool) -> None:
-        """Enable or disable grid feed-in (export).
-
-        Parameters
-        ----------
-        disabled:
-            ``True`` to disable feed-in; ``False`` to re-enable it.
-        """
-        assert self._client is not None, "Driver not connected — call connect() first"
-        topic = f"W/{self._portal_id}/vebus/{self._instance_id}/Hub4/DisableFeedIn"
-        payload = json.dumps({"value": 1 if disabled else 0})
-        logger.debug("MQTT tx: topic=%s payload=%s", topic, payload)
-        self._client.publish(topic, payload, qos=1)
-
-    def write_ess_mode(self, mode: int) -> None:
-        """Set the ESS Hub4Mode register.
-
-        Parameters
-        ----------
-        mode:
-            ESS mode integer.  Use ``3`` for external control (required for
-            per-phase AcPowerSetpoints to take effect).
-        """
-        assert self._client is not None, "Driver not connected — call connect() first"
-        topic = f"W/{self._portal_id}/settings/0/Settings/CGwacs/Hub4Mode"
-        payload = json.dumps({"value": mode})
-        logger.debug("MQTT tx: topic=%s payload=%s", topic, payload)
-        self._client.publish(topic, payload, qos=1)
+        await self._with_reconnect(_do)
