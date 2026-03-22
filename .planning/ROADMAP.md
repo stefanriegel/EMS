@@ -68,7 +68,7 @@ Plans:
 
 Plans:
 - [ ] 03-01-PLAN.md — Coordinator optimizations: SoC-headroom PV surplus weighting, time-of-day min-SoC profiles, grid charge staggering verification
-- [ ] 03-02-PLAN.md — Scheduler predictive pre-charging: solar-aware grid charge target reduction
+- [x] 03-02-PLAN.md — Scheduler predictive pre-charging: solar-aware grid charge target reduction
 
 ### Phase 4: Integration & Monitoring
 **Goal**: All external systems (EVCC, InfluxDB, HA, Telegram) integrate with the dual-battery architecture and every dispatch decision is traceable

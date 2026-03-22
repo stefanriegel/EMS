@@ -32,7 +32,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [ ] **OPT-01**: PV surplus distributed across both batteries based on SoC headroom and charge rate limits
 - [ ] **OPT-02**: Tariff-aware grid charging targets each battery independently (different charge rates)
 - [ ] **OPT-03**: Charge rate optimization: stagger charging in short tariff windows (faster charger first)
-- [ ] **OPT-04**: Predictive pre-charging: skip grid charge when solar forecast covers demand
+- [x] **OPT-04**: Predictive pre-charging: skip grid charge when solar forecast covers demand
 - [ ] **OPT-05**: Configurable min-SoC per time-of-day profiles (e.g., 30% until 16:00, 10% after 22:00)
 
 ### Integration & Monitoring
@@ -112,7 +112,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OPT-01 | Phase 3 | Pending |
 | OPT-02 | Phase 3 | Pending |
 | OPT-03 | Phase 3 | Pending |
-| OPT-04 | Phase 3 | Pending |
+| OPT-04 | Phase 3 | Complete |
 | OPT-05 | Phase 3 | Pending |
 | INT-01 | Phase 4 | Pending |
 | INT-02 | Phase 4 | Pending |
