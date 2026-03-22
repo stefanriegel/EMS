@@ -167,11 +167,20 @@ class TestRoleAssignment:
         h_role, v_role = coord._assign_discharge_roles(58.0, 65.0)
         assert v_role == BatteryRole.PRIMARY_DISCHARGE
 
-    async def test_both_below_min_soc_gets_holding(self):
-        coord, _, _ = _make_coordinator()
-        h_role, v_role = coord._assign_discharge_roles(5.0, 10.0)
-        assert h_role == BatteryRole.HOLDING
-        assert v_role == BatteryRole.HOLDING
+    async def test_both_below_min_soc_gets_holding_in_run_cycle(self):
+        """Both below min SoC: _run_cycle overrides roles to HOLDING."""
+        coord, h_ctrl, v_ctrl = _make_coordinator()
+        # Both below min SoC (huawei_min=10, victron_min=15)
+        h_ctrl.poll = AsyncMock(return_value=_snap(soc=5.0, grid_power_w=None))
+        v_ctrl.poll = AsyncMock(return_value=_snap(soc=10.0, grid_power_w=500.0))
+
+        await coord._run_cycle()
+
+        # Both should get HOLDING commands
+        h_cmd = h_ctrl.execute.call_args[0][0]
+        v_cmd = v_ctrl.execute.call_args[0][0]
+        assert h_cmd.role == BatteryRole.HOLDING
+        assert v_cmd.role == BatteryRole.HOLDING
 
 
 # ===========================================================================
@@ -575,6 +584,12 @@ class TestControlLoop:
         assert isinstance(state, CoordinatorState)
 
     async def test_start_stop_lifecycle(self):
+        # asyncio.create_task requires asyncio event loop — skip on trio
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pytest.skip("requires asyncio event loop")
+
         coord, h_ctrl, v_ctrl = _make_coordinator(
             orch_config=OrchestratorConfig(loop_interval_s=0.05),
         )
