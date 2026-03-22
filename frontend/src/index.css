@@ -630,6 +630,20 @@ html, body {
   transition: stroke-dashoffset 0.6s ease;
 }
 
+.soc-arc--huawei {
+  fill: none;
+  stroke: var(--color-huawei);
+  stroke-width: 4;
+  transition: stroke-dashoffset 0.6s ease;
+}
+
+.soc-arc--victron {
+  fill: none;
+  stroke: var(--color-victron);
+  stroke-width: 4;
+  transition: stroke-dashoffset 0.6s ease;
+}
+
 .node-label {
   font-family: var(--font-sans);
   font-size: 13px;
