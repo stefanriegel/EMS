@@ -53,7 +53,7 @@ Plans:
 Plans:
 - [x] 02-01-PLAN.md — Controller model types (enums, dataclasses) and per-battery controllers (HuaweiController, VictronController) with TDD
 - [x] 02-02-PLAN.md — Coordinator class with role assignment, allocation, hysteresis, ramp limiting, and debounce (TDD)
-- [ ] 02-03-PLAN.md — Integration wiring: update main.py lifespan and API layer for coordinator
+- [x] 02-03-PLAN.md — Integration wiring: update main.py lifespan and API layer for coordinator
 
 ### Phase 3: PV & Tariff Optimization
 **Goal**: The system makes intelligent charge/discharge decisions based on PV surplus, tariff windows, solar forecasts, and time-of-day profiles
