@@ -28,6 +28,27 @@ export interface PoolState {
   timestamp: number;
   grid_charge_slot_active: boolean;
   evcc_battery_mode: string;
+  huawei_role: string;
+  victron_role: string;
+  pool_status: string;
+  huawei_effective_min_soc_pct: number;
+  victron_effective_min_soc_pct: number;
+}
+
+// ---------------------------------------------------------------------------
+// Decision entry (from /api/decisions)
+// ---------------------------------------------------------------------------
+
+export interface DecisionEntry {
+  timestamp: string;
+  trigger: string;
+  huawei_role: string;
+  victron_role: string;
+  p_target_w: number;
+  huawei_allocation_w: number;
+  victron_allocation_w: number;
+  pool_status: string;
+  reasoning: string;
 }
 
 // ---------------------------------------------------------------------------
