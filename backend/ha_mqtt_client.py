@@ -58,6 +58,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _ENTITIES: list[tuple[str, str, str | None, str | None, str | None, str]] = [
+    # --- Existing 7 entities (unchanged) ---
     ("huawei_soc",        "Huawei Battery SOC",        "%",  "battery", "measurement", "huawei_soc_pct"),
     ("victron_soc",       "Victron Battery SOC",        "%",  "battery", "measurement", "victron_soc_pct"),
     ("huawei_setpoint",   "Huawei Discharge Setpoint",  "W",  "power",   "measurement", "huawei_discharge_setpoint_w"),
@@ -65,6 +66,18 @@ _ENTITIES: list[tuple[str, str, str | None, str | None, str | None, str]] = [
     ("combined_power",    "Combined Battery Power",     "W",  "power",   "measurement", "combined_power_w"),
     ("control_state",     "EMS Control State",          None, None,      None,          "control_state"),
     ("evcc_battery_mode", "EVCC Battery Mode",          None, None,      None,          "evcc_battery_mode"),
+    # --- New per-system entities (D-26 through D-31) ---
+    ("huawei_role",       "Huawei Battery Role",        None, None,      None,          "huawei_role"),
+    ("victron_role",      "Victron Battery Role",       None, None,      None,          "victron_role"),
+    ("huawei_power",      "Huawei Battery Power",       "W",  "power",   "measurement", "huawei_power_w"),
+    ("victron_power",     "Victron Battery Power",      "W",  "power",   "measurement", "victron_power_w"),
+    ("huawei_online",     "Huawei Online",              None, None,      None,          "huawei_available"),
+    ("victron_online",    "Victron Online",             None, None,      None,          "victron_available"),
+    ("pool_status",       "EMS Pool Status",            None, None,      None,          "pool_status"),
+    # Per-phase power populated by coordinator before publish
+    ("victron_l1_power",  "Victron L1 Power",           "W",  "power",   "measurement", "victron_l1_power_w"),
+    ("victron_l2_power",  "Victron L2 Power",           "W",  "power",   "measurement", "victron_l2_power_w"),
+    ("victron_l3_power",  "Victron L3 Power",           "W",  "power",   "measurement", "victron_l3_power_w"),
 ]
 
 
@@ -150,18 +163,28 @@ class HomeAssistantMqttClient:
         self._discovery_sent = False
         logger.debug("HA MQTT disconnected from %s:%d", self._host, self._port)
 
-    async def publish(self, state: UnifiedPoolState) -> None:
+    async def publish(
+        self,
+        state: Any,
+        extra_fields: dict[str, Any] | None = None,
+    ) -> None:
         """Publish a telemetry snapshot to Home Assistant.
 
-        Silently skips if not connected.  On the first successful call after
-        connect, discovery payloads are published with ``retain=True`` before
-        the state payload.
+        Accepts both ``UnifiedPoolState`` and ``CoordinatorState`` (any
+        dataclass).  Silently skips if not connected.  On the first successful
+        call after connect, discovery payloads are published with
+        ``retain=True`` before the state payload.
+
+        Args:
+            state: A dataclass snapshot (UnifiedPoolState or CoordinatorState).
+            extra_fields: Optional dict merged into the JSON payload (e.g.
+                per-phase Victron power from the controller snapshot).
         """
         if not self._connected:
             return
         try:
             self._ensure_discovery()
-            self._publish_state(state)
+            self._publish_state(state, extra_fields=extra_fields)
         except Exception as exc:
             logger.error("HA MQTT publish failed: %s", exc)
 
@@ -225,10 +248,22 @@ class HomeAssistantMqttClient:
         self._discovery_sent = True
         logger.info("HA MQTT discovery published")
 
-    def _publish_state(self, state: UnifiedPoolState) -> None:
-        """Serialize ``state`` to JSON and publish to the state topic."""
+    def _publish_state(
+        self,
+        state: Any,
+        extra_fields: dict[str, Any] | None = None,
+    ) -> None:
+        """Serialize ``state`` to JSON and publish to the state topic.
+
+        Args:
+            state: A dataclass snapshot (UnifiedPoolState or CoordinatorState).
+            extra_fields: Optional dict merged into the payload for fields not
+                present in the dataclass (e.g. per-phase Victron power).
+        """
         # control_state is a StrEnum — asdict gives its string value directly
         raw = dataclasses.asdict(state)
+        if extra_fields:
+            raw.update(extra_fields)
         payload = json.dumps(raw)
         self._client.publish(self._state_topic(), payload)
 
