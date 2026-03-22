@@ -35,16 +35,21 @@ Both battery systems operate independently with zero oscillation — coordinated
 - ✓ Tariff-aware grid charging with per-battery independent charge rates — Phase 3
 - ✓ Predictive pre-charging: skip/reduce grid charge when solar forecast covers demand — Phase 3
 - ✓ Time-of-day min-SoC profiles per battery system (configurable windows) — Phase 3
+- ✓ EVCC hold signal propagated to both controllers via coordinator — Phase 4
+- ✓ Per-system SoC, power, role, and health exposed via REST API — Phase 4
+- ✓ All external integrations optional with graceful degradation — Phase 4
+- ✓ Decision transparency: structured ring buffer with /api/decisions endpoint — Phase 4
+- ✓ Per-system InfluxDB metrics (ems_huawei, ems_victron, ems_decision) — Phase 4
+- ✓ HA MQTT discovery: 17 per-system entities with role, power, availability — Phase 4
 
 ### Active
 
 - [ ] ~~Victron MultiPlus-II control via Modbus TCP (replacing MQTT)~~ → Validated in Phase 1
-- [ ] Nightly charge scheduler with per-battery targets
+- [ ] ~~Per-system metrics and reporting in InfluxDB~~ → Validated in Phase 4
+- [ ] ~~Production-ready alerting and monitoring~~ → Validated in Phase 4
 - [ ] Reworked React dashboard with per-system visibility and decision transparency
-- [ ] Per-system metrics and reporting in InfluxDB
 - [ ] HA Add-on as primary deployment target
 - [ ] ~~Tariff optimization with per-battery dispatch strategy~~ → Validated in Phase 3
-- [ ] Production-ready alerting and monitoring
 
 ### Out of Scope
 
@@ -106,4 +111,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-22 after Phase 3 completion*
+*Last updated: 2026-03-22 after Phase 4 completion*
