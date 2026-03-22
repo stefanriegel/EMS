@@ -702,3 +702,154 @@ html, body {
   flex: 1;
 }
 
+/* ── Decision log ─────────────────────────────────────────────────────── */
+
+.decision-log-empty {
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+}
+
+.decision-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.decision-entry {
+  border-bottom: 1px solid rgba(48, 54, 61, 0.5);
+}
+
+.decision-entry:last-child {
+  border-bottom: none;
+}
+
+.decision-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+  cursor: pointer;
+  font-size: 0.78rem;
+  list-style: none;
+}
+
+.decision-summary::-webkit-details-marker {
+  display: none;
+}
+
+.decision-time {
+  min-width: 48px;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.decision-trigger {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.decision-reason {
+  flex: 1;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.decision-detail {
+  padding: 0.35rem 0 0.5rem 0;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.decision-detail-row {
+  display: flex;
+  justify-content: space-between;
+}
+
+.decision-detail-label {
+  color: var(--text-muted);
+}
+
+.decision-detail-value {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+/* ── Optimization timeline bar ────────────────────────────────────────── */
+
+.opt-timeline {
+  margin-top: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--bg-card-border);
+}
+
+.opt-timeline-axis {
+  position: relative;
+  height: 16px;
+  margin-bottom: 4px;
+}
+
+.opt-timeline-hour {
+  position: absolute;
+  transform: translateX(-50%);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  color: var(--text-muted);
+}
+
+.opt-timeline-bar {
+  position: relative;
+  height: 24px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.opt-timeline-slot {
+  position: absolute;
+  border-radius: 2px;
+  opacity: 0.8;
+}
+
+.opt-timeline-slot:hover {
+  opacity: 1;
+}
+
+/* ── Device detail collapsible ────────────────────────────────────────── */
+
+.device-collapse {
+  margin-top: 0.5rem;
+}
+
+.device-collapse summary {
+  cursor: pointer;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.3rem 0;
+}
+
+.device-collapse summary:hover {
+  color: var(--text-secondary);
+}
+
+.device-collapse-content {
+  padding-top: 0.25rem;
+}
+

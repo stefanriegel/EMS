@@ -58,6 +58,51 @@ export function OptimizationCard({ optimization }: Props) {
             )}
           </div>
 
+          {optimization.slots.length > 0 && (
+            <div className="opt-timeline" data-testid="opt-timeline">
+              <div className="opt-timeline-axis">
+                {[0, 4, 8, 12, 16, 20, 24].map((h) => (
+                  <span
+                    key={h}
+                    className="opt-timeline-hour"
+                    style={{ left: `${(h / 24) * 100}%` }}
+                  >
+                    {String(h % 24).padStart(2, "0")}
+                  </span>
+                ))}
+              </div>
+              <div className="opt-timeline-bar">
+                {optimization.slots.map((slot, i) => {
+                  const startH =
+                    new Date(slot.start_utc).getHours() +
+                    new Date(slot.start_utc).getMinutes() / 60;
+                  const endH =
+                    new Date(slot.end_utc).getHours() +
+                    new Date(slot.end_utc).getMinutes() / 60;
+                  const left = (startH / 24) * 100;
+                  const width = ((endH - startH) / 24) * 100;
+                  const isHuawei = slot.battery.toLowerCase().includes("huawei");
+                  const color = isHuawei ? "var(--color-huawei)" : "var(--color-victron)";
+                  const row = isHuawei ? 0 : 1;
+                  return (
+                    <div
+                      key={i}
+                      className="opt-timeline-slot"
+                      style={{
+                        left: `${left}%`,
+                        width: `${Math.max(width, 2)}%`,
+                        background: color,
+                        top: `${row * 50}%`,
+                        height: "50%",
+                      }}
+                      title={`${slot.battery} ${localTime(slot.start_utc)}-${localTime(slot.end_utc)} ${slot.target_soc_pct}%`}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {optimization.forecast_comparison != null && (
             <div className="opt-forecast-comparison" data-testid="opt-forecast-comparison">
               <span className="opt-fc-label">Heat Pump Forecast</span>
