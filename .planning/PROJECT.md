@@ -22,7 +22,7 @@ Both battery systems operate independently with zero oscillation — coordinated
 - ✓ HA MQTT discovery and entity publishing — existing
 - ✓ ML consumption forecaster (HA SQLite statistics) — existing
 - ✓ JWT-based authentication — existing
-- ✓ Setup wizard for first-run configuration — existing
+- ✓ Setup wizard for first-run configuration — existing (removed in v1.2, replaced by Add-on options)
 - ✓ Victron MultiPlus-II Modbus TCP driver (read state + write setpoints) — Phase 1
 - ✓ Unified driver interface (LifecycleDriver + BatteryDriver Protocol) — Phase 1
 - ✓ Canonical sign convention (positive=charge) with per-driver conversion — Phase 1
@@ -57,7 +57,21 @@ Both battery systems operate independently with zero oscillation — coordinated
 
 ### Active
 
-(All v1.1 requirements validated — see Validated section above. Next milestone requirements TBD.)
+See REQUIREMENTS.md for v1.2 milestone requirements.
+
+## Current Milestone: v1.2 Home Assistant Best Practice Alignment
+
+**Goal:** Make EMS a first-class HA citizen — proper entity model, controllable via services, accessible via Ingress, and runtime-tunable through HA entities.
+
+**Target features:**
+- Remove setup wizard — Add-on options page is the sole config surface
+- MQTT discovery overhaul — availability topics, expire_after, origin metadata, entity categories, proper naming
+- Binary sensors for system states (online/offline, grid charge active, export active)
+- HA Services — set control mode, force grid charge, set discharge setpoint (callable from automations)
+- Number/Select entities — runtime-tunable min-SoC, dead-bands, ramp rates, charge windows
+- Ingress support — dashboard accessible in HA sidebar with proper path/header handling
+- Add-on translations (en.yaml) for config option descriptions
+- Entity naming alignment with HA standards
 
 ### Out of Scope
 
@@ -129,4 +143,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 ---
-*Last updated: 2026-03-23 after v1.1 milestone*
+*Last updated: 2026-03-23 after v1.2 milestone start*
