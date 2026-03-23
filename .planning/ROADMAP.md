@@ -62,7 +62,7 @@ Plans:
 **Plans:** 2 plans
 Plans:
 - [x] 08-01-PLAN.md — EXPORTING role + seasonal config pipeline
-- [ ] 08-02-PLAN.md — Coordinator export integration + seasonal min-SoC + tests
+- [x] 08-02-PLAN.md — Coordinator export integration + seasonal min-SoC + tests
 
 ### Phase 9: Weather & Forecast Data
 **Goal**: System has multi-day solar production forecasts and extended consumption predictions available for scheduling decisions

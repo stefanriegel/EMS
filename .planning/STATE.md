@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Advanced Optimization
-status: Ready to execute
-stopped_at: Completed 08-01-PLAN.md
-last_updated: "2026-03-23T14:14:11.760Z"
+status: Phase complete — ready for verification
+stopped_at: Completed 08-02-PLAN.md
+last_updated: "2026-03-23T14:19:49.610Z"
 progress:
   total_phases: 5
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 4
-  completed_plans: 3
+  completed_plans: 4
 ---
 
 # Project State
@@ -60,6 +60,7 @@ Plan: 2 of 2
 | Phase 07 P01 | 5min | 2 tasks | 12 files |
 | Phase 07 P02 | 3min | 1 tasks | 2 files |
 | Phase 08 P01 | 3min | 2 tasks | 12 files |
+| Phase 08 P02 | 3min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -79,6 +80,8 @@ Recent decisions affecting current work:
 - [Phase 07]: Export advisory runs as post-cycle hook in _loop(), not inside _run_cycle() -- avoids 6-path duplication
 - [Phase 07]: Advisory-only in Plan 02: logs transitions but does not affect P_target (Phase 8 scope)
 - [Phase 08]: Winter months stored as comma-separated string in flat config for HA options compatibility
+- [Phase 08]: Export tests use debounce_cycles=1 for single-cycle role verification
+- [Phase 08]: Higher-SoC system gets EXPORTING role (ties go to Huawei via >= comparison)
 
 ### Pending Todos
 
@@ -93,6 +96,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-23T14:14:11.757Z
-Stopped at: Completed 08-01-PLAN.md
+Last session: 2026-03-23T14:19:49.607Z
+Stopped at: Completed 08-02-PLAN.md
 Resume file: None
