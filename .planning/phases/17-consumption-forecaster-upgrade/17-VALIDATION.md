@@ -38,12 +38,12 @@ created: 2026-03-23
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
-| 17-01-01 | 01 | 1 | FCST-01, FCST-02 | unit | `python -m pytest tests/test_consumption_forecaster.py -q -k "weather or lag"` | ✅ (extended) | ⬜ pending |
-| 17-02-01 | 02 | 1 | FCST-04, FCST-05 | unit | `python -m pytest tests/test_consumption_forecaster.py -q -k "histgradient or cv"` | ✅ (extended) | ⬜ pending |
-| 17-03-01 | 03 | 2 | FCST-03, FCST-06 | unit | `python -m pytest tests/test_consumption_forecaster.py -q -k "mape"` | ✅ (extended) | ⬜ pending |
-| 17-03-02 | 03 | 2 | FCST-07 | integration | `python -m pytest tests/test_api.py -q -k "ml_status"` | ✅ (extended) | ⬜ pending |
+| 17-01-01 | 01 | 1 | FCST-01, FCST-02, FCST-03, FCST-04, FCST-06, FCST-07 | unit | `python -m pytest tests/test_consumption_forecaster.py -q -k "weather or lag or histgbr or cv or recency or calendar or pipeline"` | to be extended | pending |
+| 17-01-02 | 01 | 1 | FCST-01, FCST-02, FCST-04 | unit | `python -m pytest tests/test_consumption_forecaster.py -q` | to be extended | pending |
+| 17-02-01 | 02 | 2 | FCST-05 | unit | `python -m pytest tests/test_consumption_forecaster.py -q -k "mape"` | to be extended | pending |
+| 17-02-02 | 02 | 2 | FCST-05 | integration | `python -m pytest tests/test_api.py -q -k "ml_status"` | to be extended | pending |
 
-*Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
+*Status: pending / green / red / flaky*
 
 ---
 
