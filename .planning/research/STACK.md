@@ -1,169 +1,275 @@
-# Stack Research: Grid Export Optimization & Multi-Day Scheduling
+# Technology Stack
 
-**Domain:** Energy management — grid export arbitrage and multi-day weather-aware charge scheduling
+**Project:** EMS v1.2 -- Home Assistant Best Practice Alignment
 **Researched:** 2026-03-23
-**Confidence:** HIGH
 
-## Executive Summary
+## Recommended Stack Changes
 
-The existing EMS stack already contains nearly everything needed for grid export optimization and multi-day scheduling. EVCC provides solar forecasts for tomorrow and day-after-tomorrow, plus export price timeseries. The fixed feed-in tariff is a single config constant. The real work is algorithmic — extending the scheduler and orchestrator with new decision logic — not adding libraries.
+This milestone requires **zero new dependencies**. All changes are configuration/code-level changes to existing libraries. This is the correct outcome -- adding dependencies for HA protocol compliance would be a smell.
 
-**No new runtime dependencies are required.** The existing `httpx`, tariff engine, consumption forecaster, and EVCC client provide all the data sources. One optional dependency (`open-meteo-solar-forecast`) is recommended only as a fallback if EVCC solar data is unavailable.
+### Existing Dependencies (No Version Changes Needed)
 
-## Recommended Stack Additions
+| Technology | Current Version | Purpose in v1.2 | Change Needed |
+|------------|----------------|------------------|---------------|
+| paho-mqtt | >=2.1 (pinned) | MQTT discovery overhaul + command topic subscriptions | **Code change only**: add `on_message` callback and `subscribe()` calls. No version bump. |
+| FastAPI | latest | Ingress path handling via `root_path` | **Code change only**: read `X-Ingress-Path` header, pass to `root_path`. |
+| uvicorn[standard] | latest | Serve behind HA Ingress reverse proxy | **No change**: already supports `--proxy-headers`. |
+| Vite | 8.0.1 (frontend) | Build SPA with dynamic base path for Ingress | **Config change only**: set `base` dynamically or use relative paths. |
 
-### Core Technologies — NONE NEEDED
+### No New Dependencies
 
-The existing stack covers all requirements:
+| Considered | Why NOT Needed |
+|------------|---------------|
+| aiomqtt / asyncio-mqtt | paho-mqtt 2.1 already works. The existing `EvccMqttDriver` proves the subscribe pattern works fine with paho's background thread + `call_soon_threadsafe`. Adding asyncio-mqtt would create two MQTT client patterns in the codebase. |
+| nginx / reverse proxy | HA Ingress proxies directly to port 8099. FastAPI + uvicorn handle this natively. |
+| PyYAML | Translations are YAML files in `ha-addon/translations/` -- edited by hand, not parsed by Python code. HA Supervisor reads them directly. |
+| Starlette middleware for path rewriting | FastAPI's built-in `root_path` mechanism handles Ingress path prefixing. A middleware would over-engineer this. |
 
-| Existing Technology | Role in New Features | Why Sufficient |
-|---------------------|---------------------|----------------|
-| CompositeTariffEngine | Export vs. import price comparison | Already computes `effective_rate_eur_kwh` per slot; adding a static `feed_in_rate_eur_kwh` config is trivial |
-| EvccClient + SolarForecast | Multi-day solar data | Already parses `tomorrow_energy_wh` and `day_after_energy_wh` from EVCC |
-| GridPriceSeries | Export price data | Already stores `export_eur_kwh` timeseries from EVCC |
-| ConsumptionForecaster | Demand prediction for export-then-buyback avoidance | GradientBoostingRegressor models already produce hourly forecasts |
-| Scheduler | Multi-day scheduling | Extend `compute_schedule()` — no new framework needed |
-| SystemConfig | Feed-in control flags | `huawei_feed_in_allowed` / `victron_feed_in_allowed` already exist |
+## Detailed Stack Analysis by Feature
 
-### Supporting Libraries — One Optional Addition
+### 1. MQTT Discovery Overhaul
 
-| Library | Version | Purpose | When to Use |
-|---------|---------|---------|-------------|
-| `open-meteo-solar-forecast` | 0.1.29 | Fallback solar forecast when EVCC is offline | Only when EVCC solar data is `None` AND multi-day scheduling needs a forecast |
+**Library:** paho-mqtt 2.1.0 (current: `>=2.1` in pyproject.toml -- already correct)
+**Confidence:** HIGH (verified against official HA MQTT docs + existing codebase pattern)
 
-**Why optional, not required:** EVCC already provides day+1 and day+2 solar forecasts via its `/api/state` endpoint (parsed into `SolarForecast.tomorrow_energy_wh` and `SolarForecast.day_after_energy_wh`). The `open-meteo-solar-forecast` library is only valuable as a resilience fallback — the EMS should not depend on it for normal operation.
+**What changes in the discovery payload (no library changes):**
 
-**If added:** `open-meteo-solar-forecast>=0.1.29` — async-native, supports Python 3.11+, uses `aiohttp` under the hood. Configure with `latitude`, `longitude`, `declination`, `azimuth`, `dc_kwp` (already known from the PV installation).
+```python
+# Current minimal discovery payload:
+{
+    "name": "Huawei Battery SOC",
+    "unique_id": "ems_huawei_soc",
+    "state_topic": "homeassistant/sensor/ems/state",
+    "value_template": "{{ value_json.huawei_soc_pct }}",
+    "device": {"identifiers": ["ems"], "name": "Energy Management System", "manufacturer": "EMS"},
+}
 
-### Development Tools — No Additions
-
-Existing pytest + pytest-anyio + pytest-mock cover all testing needs for the new algorithmic code.
-
-## What Needs to Change (Config, Not Libraries)
-
-### New Configuration Parameters
-
-These are the only additions needed — all are config fields, not dependencies:
-
-| Parameter | Type | Default | Purpose |
-|-----------|------|---------|---------|
-| `FEED_IN_RATE_EUR_KWH` | float | 0.082 | Fixed feed-in tariff rate (German EEG Einspeiseverguetung, ~8.2 ct/kWh for new installations) |
-| `EXPORT_MIN_SOC_PCT` | float | 30.0 | Don't export below this SoC — prevents export-then-buyback at higher prices |
-| `SCHEDULER_HORIZON_DAYS` | int | 2 | How many days ahead the scheduler plans (1=today+tomorrow, 2=today+2 days) |
-| `EXPORT_ENABLED` | bool | False | Master switch for grid export arbitrage |
-
-### New/Extended Dataclasses
-
-No new libraries needed — these are pure Python dataclass changes:
-
-| Model | Change | Purpose |
-|-------|--------|---------|
-| `SystemConfig` | Add `feed_in_rate_eur_kwh: float`, `export_min_soc_pct: float`, `export_enabled: bool` | Export arbitrage parameters |
-| `OrchestratorConfig` | Add `scheduler_horizon_days: int` | Multi-day horizon config |
-| `ChargeSchedule` | Add `export_windows: list[ExportWindow]` | Schedule windows where export is profitable |
-| `OptimizationReasoning` | Add `day2_solar_kwh: float`, `export_revenue_eur: float` | Multi-day reasoning fields |
-
-### Extended Existing Modules
-
-| Module | Change | Scope |
-|--------|--------|-------|
-| `scheduler.py` | Extend `compute_schedule()` to evaluate 2-day horizon, produce export windows | Medium — algorithmic, not library work |
-| `orchestrator.py` | Add export dispatch state (new `ControlState.EXPORTING`?) or extend `DISCHARGE` with export-awareness | Medium — decision logic in the control loop |
-| `tariff.py` | Add `get_export_spread()` method comparing feed-in rate to current import rate | Small — simple arithmetic |
-| `config.py` | Add feed-in rate and export config fields | Small |
-| `api.py` | Expose export windows and multi-day schedule via REST | Small |
-
-## Installation
-
-```bash
-# No new core dependencies needed.
-
-# Optional fallback solar forecast (only if EVCC solar data unreliable):
-pip install "open-meteo-solar-forecast>=0.1.29"
-
-# Or in pyproject.toml:
-# [project.optional-dependencies]
-# solar-fallback = ["open-meteo-solar-forecast>=0.1.29"]
+# v1.2 best-practice payload adds:
+{
+    # ... existing fields ...
+    "availability": [
+        {"topic": "ems/availability", "payload_available": "online", "payload_not_available": "offline"},
+        {"topic": "homeassistant/status", "payload_available": "online", "payload_not_available": "offline"},
+    ],
+    "availability_mode": "all",
+    "origin": {
+        "name": "EMS Energy Management System",
+        "sw_version": "1.2.0",
+        "support_url": "https://github.com/stefanriegel/EMS",
+    },
+    "entity_category": "diagnostic",  # for internal metrics, not for primary entities
+    "expire_after": 120,  # seconds -- 2x the control loop interval (60s cycle * 2)
+    "device": {
+        "identifiers": ["ems"],
+        "name": "EMS",
+        "manufacturer": "Stefan Riegel",
+        "model": "EMS v2",
+        "sw_version": "1.2.0",
+    },
+}
 ```
 
-## Alternatives Considered
+**Key decisions:**
+- `availability_mode: "all"` requires both the EMS availability topic AND the HA birth message to be online. This is the correct mode -- if HA restarts, entities should briefly go unavailable until both sides confirm.
+- `expire_after: 120` (2 minutes) -- the control loop runs every 5s, so 120s is generous enough to survive brief stalls without false unavailability. Do NOT use `expire_after` on entities whose state is published with `retain=True` (HA docs explicitly warn about this causing stale-state-on-restart).
+- `entity_category: "diagnostic"` for internal tuning parameters (dead-band, ramp rate). Primary battery entities (SoC, power, role) should NOT have entity_category set.
+- `origin` is required for device-based discovery and recommended for component discovery. Include it on all entities.
 
-| Recommended | Alternative | When to Use Alternative |
-|-------------|-------------|-------------------------|
-| EVCC solar forecast (existing) | `open-meteo-solar-forecast` | Only when EVCC is unreliable or offline; EVCC is preferred because it already runs on the same host and the data pipeline is proven |
-| EVCC solar forecast (existing) | `forecast-solar` (PyPI) | Only if you need 7-day horizon; note it requires API key for extended forecasts, has rate limits on free tier |
-| EVCC solar forecast (existing) | Open-Meteo raw weather API + custom PV model | Never — overengineered; building a PV production model from raw irradiance data is unnecessary when EVCC and `open-meteo-solar-forecast` already solve this |
-| Fixed feed-in rate (config constant) | Dynamic feed-in tariff via EVCC `export_eur_kwh` | When the user has a dynamic feed-in tariff (spot market); the EVCC `GridPriceSeries.export_eur_kwh` already supports this, so the code should handle both fixed and dynamic |
-| Pure Python scheduling logic | PuLP / scipy.optimize LP solver | Never for this scale — the optimization problem (should I export or store?) is a simple comparison, not a linear program; LP solvers add massive dependencies for zero benefit |
-| Pure Python scheduling logic | Google OR-Tools | Same reason — 94 kWh across 2 batteries with a fixed feed-in rate is not a combinatorial optimization problem |
+### 2. MQTT Command Topics (Subscribe Capability)
 
-## What NOT to Use
+**Library:** paho-mqtt 2.1.0 (no change)
+**Confidence:** HIGH (existing `EvccMqttDriver` proves the pattern)
 
-| Avoid | Why | Use Instead |
-|-------|-----|-------------|
-| PuLP / scipy.optimize | The export decision is `if feed_in_rate > import_rate: export`, not linear programming; adds 50+ MB of dependencies | Simple conditional logic in `scheduler.py` |
-| Google OR-Tools | Same as above — the problem is not NP-hard | Simple conditional logic |
-| Solcast API | Commercial, requires paid API key, adds cloud dependency (violates local-only constraint) | EVCC solar forecast or `open-meteo-solar-forecast` |
-| pandas | Overkill for the simple timeseries comparisons needed; numpy is already available for any array math | `numpy` (already in deps) or plain Python lists |
-| Any weather API requiring API keys | Violates the no-cloud-dependency constraint and complicates deployment | `open-meteo-solar-forecast` (no key needed) or EVCC |
+The current `HomeAssistantMqttClient` is publish-only. For number/select/switch/button entities, it must also subscribe to command topics and dispatch incoming values.
+
+**paho-mqtt subscribe pattern already proven in codebase:**
+
+```python
+# From evcc_mqtt_driver.py -- same pattern applies:
+self._client.on_message = self._on_message
+# In _on_connect:
+client.subscribe("ems/+/set")  # wildcard for all command topics
+
+# Callback (runs in paho background thread):
+def _on_message(self, client, userdata, msg):
+    # Bridge to asyncio via call_soon_threadsafe
+    if self._loop is not None:
+        self._loop.call_soon_threadsafe(self._handle_command, msg.topic, msg.payload)
+```
+
+**No API changes in paho-mqtt 2.1 for `on_message`** -- the callback signature is `def on_message(client, userdata, msg)` regardless of `CallbackAPIVersion.VERSION2`. The VERSION2 changes only affect `on_connect` and `on_disconnect` signatures (which the codebase already uses correctly).
+
+**Command topic convention for HA MQTT entities:**
+
+| Entity Type | Discovery Topic | Command Topic | State Topic |
+|-------------|----------------|---------------|-------------|
+| number | `homeassistant/number/ems/{id}/config` | `ems/number/{id}/set` | `ems/number/{id}/state` |
+| select | `homeassistant/select/ems/{id}/config` | `ems/select/{id}/set` | `ems/select/{id}/state` |
+| switch | `homeassistant/switch/ems/{id}/config` | `ems/switch/{id}/set` | `ems/switch/{id}/state` |
+| button | `homeassistant/button/ems/{id}/config` | `ems/button/{id}/set` | N/A (stateless) |
+| binary_sensor | `homeassistant/binary_sensor/ems/{id}/config` | N/A (read-only) | `ems/binary_sensor/{id}/state` |
+| sensor | `homeassistant/sensor/ems/{id}/config` | N/A (read-only) | `ems/sensor/{id}/state` |
+
+**Critical: per-entity state topics vs shared state topic.** The current implementation uses a single shared state topic (`homeassistant/sensor/ems/state`) with `value_template` to extract per-entity values. This works for sensors (read-only) but controllable entities (number, select, switch) MUST have their own `command_topic` and SHOULD have their own `state_topic`. Recommendation: keep the shared JSON state topic for sensors, use individual topics for controllable entities.
+
+### 3. New Entity Types for v1.2
+
+**No new libraries needed. Discovery payloads only.**
+
+| HA Entity Type | Use Case | Key Fields |
+|---------------|----------|------------|
+| `binary_sensor` | Huawei online, Victron online, grid charge active, export active | `device_class: "connectivity"` or `"running"`, `payload_on: "ON"`, `payload_off: "OFF"` |
+| `number` | Min SoC (Huawei/Victron), dead-band, ramp rate | `min`, `max`, `step`, `mode: "slider"` or `"box"`, `entity_category: "config"` |
+| `select` | Control mode (IDLE/DISCHARGE/CHARGE/HOLD) | `options: [...]`, `entity_category: "config"` |
+| `switch` | Force grid charge on/off | `payload_on: "ON"`, `payload_off: "OFF"` |
+| `button` | Force schedule recompute | `device_class: "restart"`, `payload_press: "PRESS"` |
+
+**entity_category usage:**
+- `"config"` -- for number/select entities that tune runtime behavior (min SoC, dead-bands). These appear under the device's "Configuration" section in HA.
+- `"diagnostic"` -- for sensors showing internal state (setpoints, roles). These appear under "Diagnostic".
+- Omitted (None) -- for primary user-facing entities (SoC, power, online status). These appear in the main entity list.
+
+### 4. HA Ingress Support
+
+**Library changes:** None. FastAPI + uvicorn handle this natively.
+**Confidence:** HIGH (verified against HA developer docs + FastAPI docs)
+
+**config.yaml additions:**
+
+```yaml
+ingress: true
+ingress_port: 8000   # Match existing uvicorn port
+ingress_entry: /
+```
+
+**Backend changes (FastAPI):**
+
+FastAPI's `root_path` mechanism handles the Ingress path prefix. The HA Supervisor proxy passes `X-Ingress-Path` as a header. Two approaches:
+
+**Option A (recommended): ASGI middleware to set root_path from header**
+
+```python
+class IngressMiddleware:
+    """Read X-Ingress-Path header and set ASGI root_path."""
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket"):
+            headers = dict(scope.get("headers", []))
+            ingress_path = headers.get(b"x-ingress-path", b"").decode()
+            if ingress_path:
+                scope["root_path"] = ingress_path
+        await self.app(scope, receive, send)
+```
+
+**Option B: uvicorn `--root-path` flag** -- only works for static path, but Ingress path is dynamic per installation.
+
+Option A is correct because the Ingress path varies per HA installation (it includes the add-on slug in the path).
+
+**Frontend changes (Vite/React):**
+
+The SPA must use relative paths for all assets and API calls. Currently:
+- API calls use relative paths like `/api/state` -- these work behind Ingress because the browser resolves them relative to the current origin.
+- Static assets: Vite's default `base: '/'` generates absolute paths (`/assets/index-xxx.js`). This breaks behind Ingress.
+
+**Fix:** Set Vite `base: './'` (relative) in production build, or inject the base path at build time. Relative paths (`./assets/...`) work universally.
+
+```typescript
+// vite.config.ts
+export default defineConfig({
+  base: './',  // Use relative paths for all assets
+  // ... existing config
+})
+```
+
+**WebSocket path:** The current WebSocket connects to `/api/ws/state`. Behind Ingress, this path is rewritten by the Supervisor proxy. As long as the frontend uses a relative WebSocket URL (constructed from `window.location`), this works automatically.
+
+**Authentication:** HA Ingress handles authentication before forwarding. The `X-Remote-User-ID`, `X-Remote-User-Name`, and `X-Remote-User-Display-Name` headers are passed to the add-on. The EMS auth middleware should detect Ingress requests (presence of `X-Ingress-Path` header or source IP `172.30.32.2`) and skip JWT auth for those requests. This is a security consideration -- only trust these headers from the Supervisor IP.
+
+**Port change:** The current config uses port 8000 with `host_network: true`. For Ingress, the internal port should match `ingress_port`. Keeping port 8000 and setting `ingress_port: 8000` is the simplest approach. The `ports` mapping can remain for direct access outside Ingress.
+
+### 5. Add-on Translations
+
+**No library changes.** Translations are static YAML files read by HA Supervisor.
+**Confidence:** HIGH (existing en.yaml and de.yaml already in place)
+
+The existing translations at `ha-addon/translations/en.yaml` and `de.yaml` already follow the correct format:
+
+```yaml
+configuration:
+  option_name:
+    name: Display Name
+    description: Description text
+network:
+  "8000/TCP": EMS web interface
+```
+
+For v1.2, the existing translations need to be updated to include descriptions for any new config options added. The format does not change.
+
+## What NOT to Add
+
+| Do NOT Add | Reason |
+|-----------|--------|
+| aiomqtt or asyncio-mqtt | Would create a second MQTT client pattern. paho-mqtt's thread-based model is proven and works fine for both publish and subscribe. |
+| Any YAML parsing library | Translations are static files, not parsed by the EMS Python code. |
+| nginx or any reverse proxy | HA Supervisor handles the Ingress proxy. FastAPI serves directly. |
+| Additional auth library | HA Ingress provides authentication. Detect Ingress via header/IP and bypass EMS JWT auth. |
+| WebSocket library beyond uvicorn | uvicorn already handles WebSocket. HA Ingress supports WebSocket proxying natively. |
+| Path rewriting middleware (beyond the thin ASGI root_path setter) | FastAPI's ASGI scope `root_path` is the standard mechanism. No third-party middleware needed. |
 
 ## Integration Points
 
-### Data Flow for Export Arbitrage
+### paho-mqtt: From Publish-Only to Pub/Sub
 
+The `HomeAssistantMqttClient` class needs these additions (not library changes):
+
+1. **`on_message` callback** -- registered in `__init__`, dispatches to a command handler
+2. **`subscribe()` call in `_on_connect`** -- subscribe to `ems/+/set` wildcard after CONNACK
+3. **Command dispatch map** -- maps topic patterns to handler functions that update `SystemConfig` / `OrchestratorConfig` or trigger actions (force grid charge, recompute schedule)
+4. **State echo** -- after processing a command, publish the new value back to the entity's state topic so HA confirms the change
+
+The threading model is identical to `EvccMqttDriver`: paho callbacks in background thread, `call_soon_threadsafe` to bridge into asyncio for state mutations.
+
+### FastAPI: Ingress Path Handling
+
+1. **Thin ASGI middleware** -- reads `X-Ingress-Path`, sets `scope["root_path"]`
+2. **Auth bypass for Ingress** -- detect Supervisor IP `172.30.32.2` or `X-Ingress-Path` header presence, skip JWT validation
+3. **No route changes** -- all `/api/*` routes work as-is because root_path is a prefix, not part of the route
+
+### Vite: Relative Base Path
+
+1. **`base: './'`** in vite.config.ts for production builds
+2. **WebSocket URL construction** -- use `window.location.host` + relative path, not hardcoded origin
+3. **No router changes** -- wouter's default behavior works with base paths
+
+## Versions Summary
+
+| Package | Version | Status | Source |
+|---------|---------|--------|--------|
+| paho-mqtt | 2.1.0 | Latest stable (Apr 2024), already pinned `>=2.1` | [PyPI](https://pypi.org/project/paho-mqtt/) |
+| FastAPI | latest (no pin) | Supports `root_path` for Ingress | [FastAPI docs](https://fastapi.tiangolo.com/advanced/behind-a-proxy/) |
+| uvicorn[standard] | latest (no pin) | Supports `--proxy-headers` | Standard |
+| Vite | 8.0.1 | Frontend build, `base` config for Ingress | Existing |
+
+## Installation
+
+No changes to `pyproject.toml` or `package.json` dependencies.
+
+```bash
+# No new packages to install
+# Existing: pip install -e . (or uv pip install -e .)
+# Existing: cd frontend && npm install
 ```
-EVCC GridPriceSeries.export_eur_kwh ---+
-                                       +---> ExportDecisionEngine ---> Orchestrator
-SystemConfig.feed_in_rate_eur_kwh ----+        |                      (dispatch export)
-                                               |
-CompositeTariffEngine.effective_rate ----------+
-  (current/upcoming import price)              (compare: export now vs. store for later self-consumption)
-```
-
-**Decision logic is simple comparison:**
-- `feed_in_rate > upcoming_import_rate` AND `soc > export_min_soc` AND `no upcoming consumption spike` --> export
-- Otherwise --> store for self-consumption
-
-### Data Flow for Multi-Day Scheduling
-
-```
-EVCC SolarForecast ------+
-  .tomorrow_energy_wh    |
-  .day_after_energy_wh   +---> MultiDayScheduler ---> ChargeSchedule
-                         |      |                      (with 2-day slots)
-ConsumptionForecaster ---+      |
-  .today_expected_kwh           |
-  (extend to multi-day)        |
-                                |
-CompositeTariffEngine ---------+
-  .get_price_schedule(day+1)
-  .get_price_schedule(day+2)
-```
-
-**Key insight:** The tariff engine's `get_price_schedule(date)` already accepts any date. Calling it for day+1 and day+2 is trivial. The consumption forecaster needs a minor extension to forecast day+2 (currently forecasts "today").
-
-## Version Compatibility
-
-| Package | Compatible With | Notes |
-|---------|-----------------|-------|
-| `open-meteo-solar-forecast>=0.1.29` | Python 3.12+ | Uses `aiohttp`; no conflicts with existing `httpx` (different async HTTP client, both work fine side by side) |
-| `open-meteo-solar-forecast>=0.1.29` | `numpy>=1.25` | No direct numpy dependency; compatible |
-| Existing `httpx` | All new features | EVCC client uses `httpx` for all HTTP calls; no change needed |
-
-## Key Architectural Decision
-
-**Do NOT split the scheduler into a separate service or add a message queue.** The multi-day extension is a natural evolution of the existing `Scheduler.compute_schedule()` method. It runs once nightly, computes a 2-day plan instead of a 1-day plan, and stores it on `Scheduler.active_schedule`. The orchestrator reads the schedule on each control cycle — same pattern as today.
-
-**Do NOT add a separate "export optimizer" service.** Export decisions are real-time (based on current SoC, current production, current import price) and belong in the orchestrator's control loop, not in a separate process.
 
 ## Sources
 
-- Codebase analysis: `backend/scheduler.py`, `backend/tariff.py`, `backend/evcc_client.py`, `backend/schedule_models.py`, `backend/config.py`, `backend/orchestrator.py` — HIGH confidence (primary source)
-- [EVCC solar forecast docs](https://docs.evcc.io/en/docs/tariffs) — EVCC provides tomorrow + day-after-tomorrow solar forecasts
-- [open-meteo-solar-forecast PyPI](https://pypi.org/project/open-meteo-solar-forecast/) — v0.1.29, async-native, Python 3.11+, no API key
-- [Open-Meteo](https://open-meteo.com/) — free weather API, no key, non-commercial
-- [open-meteo-solar-forecast GitHub](https://github.com/rany2/open-meteo-solar-forecast) — async usage, estimate fields, configuration
-
----
-*Stack research for: EMS v1.1 — Grid Export Optimization & Multi-Day Scheduling*
-*Researched: 2026-03-23*
+- [HA MQTT Integration docs](https://www.home-assistant.io/integrations/mqtt/) -- discovery payload structure, availability, origin
+- [HA MQTT Sensor](https://www.home-assistant.io/integrations/sensor.mqtt/) -- entity_category, expire_after behavior
+- [HA MQTT Number](https://www.home-assistant.io/integrations/number.mqtt/) -- command_topic, min/max/step/mode
+- [HA MQTT Select](https://www.home-assistant.io/integrations/select.mqtt/) -- command_topic, options list
+- [HA MQTT Switch](https://www.home-assistant.io/integrations/switch.mqtt/) -- payload_on/off, state vs command topics
+- [HA MQTT Button](https://www.home-assistant.io/integrations/button.mqtt/) -- payload_press, stateless action trigger
+- [HA MQTT Binary Sensor](https://www.home-assistant.io/integrations/binary_sensor.mqtt/) -- device_class connectivity/running
+- [HA Add-on Ingress docs](https://developers.home-assistant.io/docs/apps/presentation/) -- ingress config, X-Ingress-Path, port 8099 default, IP restriction
+- [HA Add-on Configuration](https://developers.home-assistant.io/docs/apps/configuration/) -- ingress_port, ingress_entry, ingress_stream, translations format
+- [FastAPI Behind a Proxy](https://fastapi.tiangolo.com/advanced/behind-a-proxy/) -- root_path mechanism
+- [paho-mqtt PyPI](https://pypi.org/project/paho-mqtt/) -- version 2.1.0 latest
+- [paho-mqtt migrations](https://eclipse.dev/paho/files/paho.mqtt.python/html/migrations.html) -- CallbackAPIVersion.VERSION2 signature details

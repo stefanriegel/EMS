@@ -1,186 +1,172 @@
 # Project Research Summary
 
-**Project:** EMS v1.1 — Grid Export Optimization & Multi-Day Weather-Aware Scheduling
-**Domain:** Battery energy management — export arbitrage with fixed feed-in tariff and multi-day solar-aware charge scheduling
+**Project:** EMS v1.2 — Home Assistant Best Practice Alignment
+**Domain:** HA Add-on MQTT integration — entity model, controllability, ingress, config simplification
 **Researched:** 2026-03-23
 **Confidence:** HIGH
 
 ## Executive Summary
 
-The EMS already has nearly everything needed for this feature set: a composite tariff engine, EVCC-sourced solar forecasts for today, tomorrow, and day-after-tomorrow, a GradientBoosting consumption forecaster, and an independent dual-battery coordinator. The v1.1 work is overwhelmingly algorithmic — adding decision logic, extending existing models, and wiring up new components — not adding infrastructure. No new core runtime dependencies are required. The only recommended optional addition is `open-meteo-solar-forecast>=0.1.29` as a fallback when EVCC solar data is unavailable.
+EMS v1.2 is a polish-and-alignment milestone, not a feature milestone. The goal is to make the existing dual-battery EMS behave as a first-class Home Assistant citizen: proper MQTT discovery payloads, bidirectional entity control, Ingress dashboard access, and wizard removal. Mature integrations like EMS-ESP32, Zigbee2MQTT, and Tasmota define the pattern — and that pattern is well-documented in official HA developer docs. Zero new dependencies are required; every change is configuration or code-level against libraries already in the project.
 
-The central challenge is economic correctness of the export-vs-store decision. With a fixed German feed-in rate (~0.082 EUR/kWh) far below typical peak import rates (0.25-0.28 EUR/kWh), the primary export scenario is batteries-full with ongoing PV production — not discharge-to-grid arbitrage. The critical failure mode is the export-then-buyback loop: exporting now at 0.082 EUR/kWh, then importing replacement energy at 0.25 EUR/kWh hours later. Every export decision must check a forward-looking consumption reserve floor before acting. The multi-day scheduling extension faces a parallel risk — cascading forecast errors across days — which requires independent daily plans with confidence discounts, not a single chained 3-day binding schedule.
+The recommended approach is a strictly ordered four-phase delivery. The first priority is wizard removal and config migration, because it simplifies the startup code before anything else changes and avoids a critical data-loss risk for existing users. MQTT discovery cleanup follows immediately, targeting the "janky integration" perception with low-risk additions (availability, origin, entity_category, binary sensors). Controllable entities (number, select, button platforms) come third because they require the new MQTT subscribe infrastructure that the discovery overhaul prepares. HA Ingress support is the most isolated change and slots in as Phase 4, dependent only on Phase 1's routing cleanup.
 
-The recommended build order follows strict dependency chains: export foundation (config + advisor class) first, then coordinator integration, weather client in parallel, multi-day scheduling on top of the weather client, and API/frontend last. The advisory pattern keeps new decision logic cleanly separated from the coordinator's control loop, preserving the dual-battery independence guarantee that was the core design goal of the v1.0 rewrite.
+The two non-obvious risks that must be managed carefully are: (1) `unique_id` preservation — changing even one `unique_id` value silently destroys every user dashboard, automation, and history reference pointing at that entity; and (2) the paho-mqtt background thread crash on reconnect when `subscribe()` is called from `_on_connect` — a known upstream bug that requires defensive wrapping and a periodic health check. Both risks have clear prevention strategies. The build order respects all inter-phase dependencies identified across the four research files.
 
 ## Key Findings
 
 ### Recommended Stack
 
-No new dependencies are needed for core functionality. The existing `CompositeTariffEngine`, `EvccClient`, `ConsumptionForecaster`, and `Scheduler` already provide all data sources. Changes are configuration additions and new Python dataclasses, not library changes.
+No version bumps and no new dependencies. The current stack already provides everything needed: paho-mqtt 2.1 handles both publish and subscribe (the `evcc_mqtt_driver.py` in the codebase is the exact reference implementation to copy), FastAPI handles the Ingress path prefix via the ASGI `root_path` mechanism, uvicorn serves behind the Supervisor proxy with `--proxy-headers`, and a single Vite `base: './'` config change fixes all static asset paths.
 
-**Core technologies (existing, unchanged):**
-- `CompositeTariffEngine`: export vs. import price comparison — already computes per-slot rates; adding `feed_in_rate_eur_kwh` is a single config field
-- `EvccClient + SolarForecast`: multi-day solar data — already parses `tomorrow_energy_wh` and `day_after_energy_wh`
-- `ConsumptionForecaster`: demand prediction for export-then-buyback avoidance — GBR models already produce hourly forecasts, but the hourly resolution is not yet exposed via a public method
-- `Scheduler.compute_schedule()`: extend to accept charge adjustment multiplier from the new `WeatherScheduler` wrapper
-
-**Optional addition:**
-- `open-meteo-solar-forecast>=0.1.29`: fallback solar forecast when EVCC is offline — async-native, no API key, Python 3.12 compatible. Install as an optional dependency only.
-
-**Explicitly rejected:** PuLP, scipy.optimize, OR-Tools (the optimization problem is a threshold comparison, not a linear program), Solcast (commercial, cloud dependency), pandas (numpy already available).
+**Core technologies and their required changes:**
+- **paho-mqtt 2.1**: Add `on_message` callback and `subscribe()` in `_on_connect` — code change only, no version bump
+- **FastAPI**: Add thin ASGI `IngressMiddleware` (~40 lines) reading `X-Ingress-Path` and setting `scope["root_path"]` — no new library
+- **uvicorn[standard]**: Already supports `--proxy-headers` — no change needed
+- **Vite 8.0.1**: Set `base: './'` in `vite.config.ts` for relative asset paths — single config change
 
 ### Expected Features
 
-Full tables in `FEATURES.md`. Summary:
+**Must have (table stakes) — fixes "janky integration" perception:**
+- Origin metadata on all MQTT discovery payloads — HA logs "unknown origin" without it; required since HA 2023.x
+- Availability topics with LWT — entities show stale values forever instead of "unavailable" without it
+- `expire_after: 120` on sensor entities — safety net if EMS crashes silently
+- `has_entity_name: True` with short names — entity IDs are ugly and device grouping breaks without it
+- `entity_category` tagging (diagnostic/config/none) — flat entity list is unusable without separation
+- `device_class` and `state_class` audit — required for HA long-term statistics and energy dashboard
+- Binary sensors for `huawei_online`, `victron_online`, `grid_charge_active`, `export_active` — boolean values are wrong on sensor platform
+- `configuration_url` in device info — points users to the EMS dashboard from the HA device page
+- Add-on `translations/en.yaml` — config options show raw key names (`huawei_deadband_w`) without it
+- Wizard removal — Add-on options page becomes sole config surface
 
-**Must have (table stakes):**
-- Feed-in rate configuration — single float in `SystemConfig`, prerequisite for everything else
-- PV-full forced export — when both batteries are full and PV is producing, export rather than curtail
-- Export-vs-store decision logic — compare `feed_in_rate` against weighted future import rate, not current rate
-- Multi-day solar awareness in charge scheduler — use `day_after_energy_wh` and adjust nightly charge target
-- Avoid export-then-buyback — forward-looking consumption reserve floor before every export decision
-- Export decision transparency — extend existing decision ring buffer with export reasoning
+**Should have (differentiators) — elevate from "works" to "excellent HA citizen":**
+- Number entities for tunable parameters (`min_soc`, `deadband`, `ramp_rate`) — HA automations can adjust seasonally
+- Select entity for control mode (AUTO/HOLD/GRID_CHARGE/DISCHARGE_LOCKED) — users pick mode from HA UI
+- Button entities for force actions (`force_grid_charge`, `reset_to_auto`) — one-tap control without opening the dashboard
+- HA Ingress support — dashboard accessible from HA sidebar without separate port/URL
+- Two HA devices (EMS Huawei + EMS Victron + EMS System) instead of one — matches physical reality
 
-**Should have (differentiators):**
-- Dual-battery export coordination — decide which battery exports based on SoC and inverter limits
-- Battery cycle cost accounting — factor degradation cost (~0.01-0.04 EUR/kWh) into export profitability
-- Cloudy-stretch pre-charging — charge more before multi-day cloud stretches identified in Day 2/3 forecast
-- Rolling forecast confidence weighting — discount Day 2 forecast at 85%, Day 3 at 70%
-- Export scheduling for high-rate windows — prefer battery discharge during peak import windows
-
-**Defer to later milestone:**
-- Battery cycle cost accounting (can default to 0 initially)
-- Cloudy-stretch pre-charging (depends on solid multi-day scheduling first)
-- Dual-battery export coordination (existing SoC-based assignment is adequate initially)
-- Rolling forecast confidence weighting (simple add-on once multi-day scheduling is working)
-
-**Anti-features (explicitly out of scope):**
-- Dynamic feed-in rate tracking (contract rate is fixed)
-- Grid arbitrage via forced battery discharge (margins don't cover round-trip losses at fixed feed-in rates)
-- Second weather API source alongside EVCC (creates data conflict, duplicates existing pipeline)
-- Automated export limit compliance (hardware-level concern, not EMS concern)
+**Defer to v2+:**
+- Custom HA integration (Python component) — MQTT discovery provides 90% of the value at 5% of the complexity
+- MQTT device triggers — wrong semantic model for a continuous-state EMS
+- Climate entity — wrong platform for battery management
+- Diagnostic uptime/cycle-duration sensors — polish, not blocking
+- 50+ granular entities (one per register) — entity sprawl harms usability
 
 ### Architecture Approach
 
-The new components follow two patterns already established in the codebase: the advisory pattern (new decision logic lives in a dedicated class; the coordinator queries it) and the wrapper pattern (new functionality wraps existing components without modifying them). The `ExportAdvisor` inserts a check between the existing grid-charge check and P_target computation in the coordinator's 5-second loop. The `WeatherScheduler` wraps the existing `Scheduler`, adjusts the charge target multiplier based on multi-day outlook, and returns a `MultiDayPlan` where only `tonight_schedule` is binding. All new components are optional injections — the system degrades to v1.0 behavior if they are absent.
+All changes are modifications to existing components plus one new 40-line file (`backend/ingress.py`) and three file deletions (`setup_config.py`, `setup_api.py`, `SetupWizard.tsx`). The MQTT publish path is unchanged; a new subscribe path is added alongside it. The `evcc_mqtt_driver.py` paho threading pattern (subscribe in `_on_connect`, cross thread boundary via `call_soon_threadsafe`) is the exact reference to replicate in `ha_mqtt_client.py`. The entity registry refactors from a flat `_ENTITIES` tuple to a typed `EntityDefinition` dataclass list that dispatches discovery by platform.
 
-**Major components:**
-1. `ExportAdvisor` (NEW) — real-time export vs. store arbitrage; queries tariff engine, consumption forecast, and scheduled charge windows; outputs `STORE`/`EXPORT` with power budget and reasoning
-2. `WeatherClient` (NEW) — fetches multi-day solar irradiance from Open-Meteo; caches results; provides fallback when EVCC solar horizon is insufficient
-3. `WeatherScheduler` (NEW) — wraps existing `Scheduler`; applies charge adjustment multiplier [0.3, 1.5] based on 2-3 day solar vs. consumption balance; produces `MultiDayPlan` with advisory Day 2/3 forecasts
-4. `Coordinator` (MODIFIED) — new `EXPORTING` battery role; export check block inserted before P_target; P_target offset to prevent oscillation when export is active
-5. `schedule_models.py` (MODIFIED) — new `DayPlan` container with `day_index` field; `ExportDecision`, `DaySolarForecast`, `MultiDaySolarForecast`, `DayAdvisory`, `MultiDayPlan` dataclasses
-6. `config.py` (MODIFIED) — `feed_in_rate_eur_kwh`, `export_min_soc_pct` on `SystemConfig`; new `WeatherConfig` dataclass
+**Major components and change type:**
+1. `ha_mqtt_client.py` — MODIFY (major): add subscribe path, availability publishing, entity registry refactor to `EntityDefinition` dataclass
+2. `coordinator.py` — MODIFY (minor): add `_handle_ha_command()` callback wired via `set_ha_mqtt_client()`
+3. `backend/ingress.py` — NEW: ASGI middleware reading `X-Ingress-Path` and setting `scope["root_path"]`
+4. `backend/main.py` — MODIFY: remove wizard wiring, add ingress middleware to app
+5. `frontend/src/App.tsx` — MODIFY: remove setup route, fix WebSocket URL construction
+6. `frontend/vite.config.ts` — MODIFY: set `base: './'`
+7. `backend/setup_api.py`, `setup_config.py`, `frontend/src/pages/SetupWizard.tsx` — DELETE
 
 ### Critical Pitfalls
 
-Full list in `PITFALLS.md`. Top five requiring design-time solutions:
+1. **`unique_id` change destroys user dashboards** — Never rename existing `unique_id` values (`ems_huawei_soc` etc.). New entities follow the same `ems_{entity_id}` pattern. Use `default_entity_id` (not deprecated `object_id`, removed in HA 2026.4) for entity ID control. Define migration plan before writing any discovery code.
 
-1. **Export-then-buyback loop** — compute a minimum retained energy floor (consumption forecast until next cheap charge window) before every export decision. Export only PV surplus above this floor. Never export battery-stored energy below reserve. This is the primary failure mode and must be solved in the first export phase.
+2. **Platform migration leaves ghost entities** — Moving `huawei_online` from `sensor` to `binary_sensor` requires publishing an empty retained payload to the old `homeassistant/sensor/ems/huawei_online/config` topic before publishing the new `homeassistant/binary_sensor/...` discovery. Implement a one-time migration function that runs on first v1.2 startup.
 
-2. **Wrong import rate for comparison** — the export decision must compare feed-in rate against the *weighted average future import rate over the consumption forecast horizon*, not the current import rate. Exporting at 14:00 off-peak while evening peak load is predicted loses ~0.20 EUR/kWh. Log `value_of_stored_energy` on every decision.
+3. **Ingress breaks SPA routing, WebSocket, and API calls** — The frontend uses absolute paths today. Fix: Vite `base: './'`, WebSocket URL constructed from `window.location` using `new URL('./api/ws/state', window.location.href)`, API calls use relative paths. Must be tested with both direct port access and Ingress URL simultaneously.
 
-3. **Dual-battery oscillation during export** — export must be a coordinator-level role (`EXPORTING`), not a per-controller decision. Only one battery exports at a time. P_target calculation must offset by intentional export power to prevent the other battery from reacting to the negative grid reading. Apply existing hysteresis (300W/150W deadband).
+4. **paho subscribe threading — silent background thread crash** — Known upstream bug (`paho#894`): calling `subscribe()` in `_on_connect` during reconnect can crash paho's background thread while `_connected` stays `True`. Prevention: wrap subscribe in try/except for `BrokenPipeError`/`OSError`, add periodic health check (no successful publish in N cycles → force reconnect). Consider split publish/subscribe paho clients as the safest pattern.
 
-4. **Cascading multi-day forecast errors** — Day 2/3 plans must be advisory only (`DayAdvisory`), never binding `ChargeSlot` entries. Re-compute the plan at least twice daily (06:00 and 23:00). Apply confidence discounts: Day 1=1.0, Day 2=0.85, Day 3=0.70. Keep single-day fallback as safety net.
-
-5. **Flat slot model incompatible with multi-day** — introduce `DayPlan` container with `day_index: int` before implementing any multi-day logic. The coordinator's `_check_grid_charge()` filters to `day_index == 0` only. Without this, Day 2 slots at 02:00 are indistinguishable from Day 1 slots at 02:00.
+5. **Config migration data loss** — Existing users configured via the wizard have settings in `ems_config.json` that are absent from `options.json`. On v1.2 upgrade these silently revert to defaults and the add-on enters degraded mode. Prevention: idempotent one-time migration script that reads `ems_config.json` and writes values to Supervisor options via `POST /addons/self/options` (read-merge-write, not replace). Must execute before main application startup.
 
 ## Implications for Roadmap
 
-Based on research, suggested phase structure:
+Based on combined research, the suggested phase structure follows the dependency graph from ARCHITECTURE.md exactly.
 
-### Phase 1: Export Foundation
+### Phase 1: Wizard Removal and Config Migration
 
-**Rationale:** Feed-in rate config and the `ExportAdvisor` class are prerequisites for everything export-related. They have zero dependencies on weather or multi-day scheduling and can be built and unit-tested in complete isolation. Getting the economic logic right here is the most critical work in the entire feature set.
-**Delivers:** `feed_in_rate_eur_kwh` and `export_min_soc_pct` config fields; `ExportAdvisor` class with full decision logic including consumption reserve floor and weighted future import rate comparison; `ExportDecision` dataclass; comprehensive unit tests covering the export-then-buyback prevention logic.
-**Addresses:** Feed-in rate configuration (table stakes), export-vs-store decision logic (table stakes), export decision transparency foundation.
-**Avoids:** Export-then-buyback loop (Pitfall 1), wrong import rate comparison (Pitfall 5).
+**Rationale:** Config migration (Pitfall 6) has the highest recovery cost of any pitfall (rated HIGH — user must manually re-enter all settings). It must run before any other change to avoid data loss on upgrade. Removing the wizard also simplifies `main.py` lifespan from three config layers to two, making subsequent phases cleaner. No other phase depends on the wizard being present; Phases 3 and 4 (Ingress) depend on it being gone.
+**Delivers:** Simplified startup, `ems_config.json` eliminated, `setup_api.py` / `setup_config.py` / `SetupWizard.tsx` deleted, one-time idempotent migration script, frontend routing cleaned up.
+**Addresses:** Wizard anti-feature (FEATURES.md), config migration pitfall (PITFALLS.md P6).
+**Avoids:** Users losing all configured settings on upgrade; setup wizard rendering under Ingress.
 
-### Phase 2: Coordinator Export Integration
+### Phase 2: MQTT Discovery Overhaul
 
-**Rationale:** Coordinator changes are the riskiest modification in the entire feature set — touching the 5-second control loop. Running after the `ExportAdvisor` is thoroughly tested means integration risk is isolated to wiring, not logic. This phase also adds the `EXPORTING` battery role and P_target offset.
-**Delivers:** `BatteryRole.EXPORTING` enum value; export check block in `_run_cycle()`; `_compute_export_commands()` method; export decisions in the ring buffer; InfluxDB export metrics (aggregated per 15-minute window, not per-cycle).
-**Addresses:** PV-full forced export (table stakes), export decision transparency (table stakes), dual-battery export coordination.
-**Avoids:** Dual-battery oscillation (Pitfall 3), inverter feed-in limits bypass (Pitfall 10), EVCC hold signal conflict (Pitfall 13).
+**Rationale:** All table-stakes items (origin, availability, expire_after, has_entity_name, entity_category, binary sensors, translations) require no MQTT subscribe infrastructure and have no inter-dependencies. Grouping them delivers the "it no longer feels janky" result in a single shippable phase. The `EntityDefinition` registry refactor is the foundation Phase 3 depends on — the `command_topic` field lives there.
+**Delivers:** ~30 discovery entities across sensor/binary_sensor platforms, availability topic with LWT, origin metadata, `expire_after: 120`, proper entity naming with `has_entity_name`, `entity_category` tagging, `translations/en.yaml`, platform migration cleanup (empty retained payloads to old sensor topics before new binary_sensor publication).
+**Addresses:** All 10 table-stakes features in FEATURES.md. Pitfalls P1 (unique_id preservation), P2 (ghost entities from platform migration).
+**Uses:** paho-mqtt publish path only — no subscribe infrastructure yet. Entity registry pattern (ARCHITECTURE.md Pattern 3).
 
-### Phase 3: Weather Client
+### Phase 3: Controllable Entities (Number, Select, Button)
 
-**Rationale:** Fully independent of export changes. Can be built in parallel with Phase 2. Establishes the data layer that Phase 4 depends on. Low risk — the integration pattern is identical to the existing EVCC client.
-**Delivers:** `WeatherConfig` dataclass; `WeatherClient` with Open-Meteo integration and EVCC fallback; `DaySolarForecast` and `MultiDaySolarForecast` data models; caching (results survive nightly scheduler runs); graceful degradation to EVCC-only or seasonal averages when weather API is unreachable.
-**Addresses:** Multi-day solar awareness prerequisite.
-**Avoids:** Solar forecast API rate limits and staleness (Pitfall 6).
+**Rationale:** Depends on Phase 2's `EntityDefinition` registry (command_topic field). Adds the MQTT subscribe infrastructure — the most architecturally significant addition in this milestone. Number/select/button entities all share the same subscribe path, so implementing them together is efficient. The paho threading pitfall (P4) must be solved here.
+**Delivers:** MQTT subscribe loop in `ha_mqtt_client.py`, `_handle_ha_command()` in coordinator, number entities for min_soc/deadband/ramp_rate (with hardware limit validation), select entity for control mode, button entities for force actions, state echo after command processing.
+**Addresses:** All three differentiator controllable entity features (FEATURES.md). Pitfalls P4 (paho threading), P5 (Number min/max vs hardware limits), P7 (silent service call failure).
+**Uses:** paho subscribe pattern from existing `evcc_mqtt_driver.py` (ARCHITECTURE.md Pattern 1). QoS 1 for command subscriptions.
 
-### Phase 4: Multi-Day Scheduling
+### Phase 4: HA Ingress Support
 
-**Rationale:** Requires Phase 3 (WeatherClient) and a stable existing Scheduler. The schedule model changes (`DayPlan` container) must be the first task in this phase — all subsequent scheduling logic depends on this foundation.
-**Delivers:** `DayPlan` container with `day_index` in `schedule_models.py`; `WeatherScheduler` wrapper with charge adjustment multiplier [0.3, 1.5]; `DayAdvisory` and `MultiDayPlan` dataclasses; twice-daily re-planning trigger (06:00 and 23:00); extended `ConsumptionForecaster.predict_hourly(horizon_hours=72)` method.
-**Addresses:** Multi-day solar awareness (table stakes), cloudy-stretch pre-charging (differentiator), rolling forecast confidence weighting (differentiator).
-**Avoids:** Cascading forecast errors (Pitfall 2), flat slot model incompatibility (Pitfall 4), consumption forecaster scalar limitation (Pitfall 8), DST slot boundary errors (Pitfall 9), BMS SoC overshoot (Pitfall 7).
-
-### Phase 5: API and Frontend
-
-**Rationale:** Backend must be stable before UI work begins. Frontend changes are lower risk and are additive — the existing dashboard remains fully functional while new data surfaces progressively.
-**Delivers:** `GET /api/export/status` endpoint; `GET /api/optimization/multi-day` endpoint; updated `/api/optimization/schedule` with multi-day context and `charge_adjustment`; frontend export indicator on energy flow diagram; expandable 3-day tariff timeline (collapsed by default); Day 2/3 summary cards.
-**Addresses:** Export decision transparency (table stakes), multi-day visibility for users.
-**Avoids:** Dashboard overload (Pitfall 12).
+**Rationale:** Independent of MQTT work (no shared code paths with Phases 2-3). Depends on Phase 1 (wizard routes removed, frontend routing simplified). Can be developed in parallel with Phase 3 if capacity allows. Isolated failure domain — if Ingress breaks, direct port 8000 access is unaffected; no user data is at risk.
+**Delivers:** `ingress: true` / `ingress_port` / `panel_icon` / `panel_title` in `config.yaml`, `backend/ingress.py` (IngressMiddleware, ~40 lines), Vite `base: './'`, dynamic WebSocket URL construction from `window.location`, auth bypass for Ingress requests (detect `X-Ingress-Path` header or Supervisor IP `172.30.32.2`).
+**Addresses:** Ingress differentiator (FEATURES.md). Pitfall P3 (broken SPA routing, WebSocket, and API calls under Ingress).
+**Uses:** ASGI middleware pattern (ARCHITECTURE.md Pattern 2). FastAPI `root_path` mechanism.
 
 ### Phase Ordering Rationale
 
-- The export advisor must precede coordinator integration so the economic logic is independently testable before the 5-second control loop is touched.
-- Weather client is independent of export logic and can proceed in parallel with Phase 2, unblocking Phase 4 sooner.
-- Multi-day scheduling requires both the weather client (data) and a clean schedule model (foundation). The `DayPlan` container must be the first task in Phase 4.
-- API/frontend is last because the backend state shape (especially `MultiDayPlan`) must be final before the frontend consumes it.
-- All phases follow the existing optional-injection pattern: each new component can be absent without breaking the system, preserving the graceful degradation guarantee.
+- **Phase 1 must be first** because config migration data loss (P6) has the highest recovery cost and affects every user upgrading from v1.1. Wizard deletion also unblocks Ingress routing.
+- **Phase 2 before Phase 3** because Phase 3 needs the `EntityDefinition` registry with `command_topic` field that Phase 2 introduces. Subscribe topics are cleaner to add when all entity definitions are already typed.
+- **Phase 4 after Phase 1, independent of Phases 2-3** — can be parallelized or deferred. No MQTT code paths are shared with the Ingress changes.
+- **Each phase is independently shippable** — the add-on remains fully functional and safe at every phase boundary.
 
 ### Research Flags
 
-Phases likely needing deeper research during planning:
-- **Phase 4 (Multi-Day Scheduling):** The twice-daily re-planning trigger and intra-day forecast update mechanism need careful design. The interaction between `WeatherScheduler`, the nightly async loop in `main.py`, and the coordinator's read of `scheduler.active_schedule` is non-trivial. Review the existing loop scheduling in `main.py` before writing the phase spec.
-- **Phase 4 (Consumption Forecaster extension):** Adding `predict_hourly(horizon_hours=72)` requires understanding how the existing GBR model generates per-hour predictions and whether it handles multi-day weekday variation. Review `consumption_forecaster.py` in detail before speccing this task.
+Phases with well-documented patterns (skip research-phase):
+- **Phase 1 (Wizard Removal):** Straightforward deletion plus migration. Supervisor API options write pattern is simple read-merge-write. No architectural unknowns.
+- **Phase 2 (MQTT Discovery Overhaul):** All entity platforms and discovery fields are comprehensively documented in official HA MQTT docs. Zigbee2MQTT and EMS-ESP32 serve as real-world reference implementations.
+- **Phase 3 (Controllable Entities):** paho subscribe pattern is already implemented in `evcc_mqtt_driver.py`. The threading pitfall (P4) has a documented prevention strategy. Copy-and-adapt work.
 
-Phases with standard patterns (skip research-phase):
-- **Phase 1 (Export Foundation):** Config additions and a pure-logic advisory class. Well-defined inputs and outputs. No external dependencies. Standard EMS patterns throughout.
-- **Phase 2 (Coordinator Integration):** The coordinator's structure is fully documented and the export check follows the exact same pattern as the existing grid-charge check. Read `coordinator.py` directly.
-- **Phase 3 (Weather Client):** Open-Meteo API is free, no auth, well-documented. HTTP client pattern is identical to the existing EVCC client. Standard integration work.
-- **Phase 5 (API + Frontend):** Adding endpoints and frontend cards follows established patterns in `api.py` and the React dashboard.
+Phases likely needing deeper research or exploratory testing during planning:
+- **Phase 4 (HA Ingress):** Ingress documentation is fragmented across community posts and Supervisor source code. The `X-Ingress-Path` behavior, WebSocket proxying specifics, and the auth header trust model are MEDIUM-confidence findings. Plan for exploratory testing with a real HA install before committing to the full implementation. If WS proxying does not work as expected, the fallback is the existing HTTP polling path already in the frontend.
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | Primary source is the existing codebase. No external library research required for core work. Optional `open-meteo-solar-forecast` verified against PyPI and GitHub. |
-| Features | MEDIUM-HIGH | Algorithm patterns (Predbat, Aurora Solar, gridX) well-established. Specific integration points verified against codebase. German feed-in rate range is approximate — user must verify their contract rate. |
-| Architecture | HIGH | Built directly from codebase analysis. Component boundaries and integration points are explicit. Advisory and wrapper patterns are already established in the codebase. |
-| Pitfalls | HIGH | Domain knowledge combined with direct codebase analysis. Oscillation risk and export-then-buyback are well-documented failure modes in battery EMS literature. DST and BMS accuracy pitfalls are code-verified. |
+| Stack | HIGH | Zero new dependencies. All changes use existing libraries at existing versions. HA MQTT docs are authoritative. |
+| Features | HIGH | Table-stakes features verified against official HA MQTT platform docs for each entity type. Differentiator features follow patterns from Zigbee2MQTT and EMS-ESP32. |
+| Architecture | MEDIUM-HIGH | MQTT changes and wizard removal are HIGH confidence (based on codebase analysis + official docs). Ingress proxy internals are MEDIUM — community sources and Supervisor source, not official add-on developer docs. |
+| Pitfalls | HIGH | Critical pitfalls sourced from official HA docs, a known upstream paho bug (GitHub #894), and direct codebase analysis. Recovery costs reflect real user impact. |
 
 **Overall confidence:** HIGH
 
 ### Gaps to Address
 
-- **Actual feed-in tariff rate:** Research uses 0.082 EUR/kWh as an example. The user must supply their actual contracted feed-in rate via `FEED_IN_RATE_EUR_KWH`. The feature works with any fixed rate.
-- **EVCC solar forecast horizon:** The `SolarForecast.timeseries_w` field length is not verified against a live EVCC instance. If the timeseries covers less than 48 hours, Day 3 advisories will always use degraded estimates. Verify at first integration test.
-- **Huawei hardware feed-in limit register:** The inverter may have a hardware feed-in limit register that overrides software commands. A read-and-expose step in `HuaweiDriver` is needed before Phase 2. Verify against `huawei-solar` library documentation.
-- **ConsumptionForecaster multi-day accuracy:** The existing GBR model's accuracy for Day 2/3 predictions is unknown. May need larger confidence discounts than initially assumed. Measure during Phase 4 implementation.
+- **Ingress WebSocket proxying under wss://**: The exact behavior of the Supervisor proxy when upgrading a WebSocket connection is documented in community posts but not in official developer docs. Validate with a real WS connection through Ingress before implementing the URL fix. The HTTP polling fallback in `useEmsState.ts` is the safety net if WS proxying proves unreliable.
+- **Supervisor API options write format**: `POST /addons/self/options` replaces ALL options (not a partial patch). The migration script must read current options, merge wizard values, then write the full merged object back. Verify the exact JSON schema expected by the Supervisor API before implementing.
+- **Two HA devices vs one**: FEATURES.md lists restructuring into Huawei/Victron/System devices as a differentiator. This changes `device` identifiers in discovery payloads and could interact with Pitfall 1 (unique_id). Explicitly scope this as in-Phase-2 or deferred before writing any discovery code — do not discover mid-implementation that it conflicts with entity ID preservation.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- Existing codebase: `backend/coordinator.py`, `backend/scheduler.py`, `backend/tariff.py`, `backend/evcc_client.py`, `backend/consumption_forecaster.py`, `backend/schedule_models.py`, `backend/config.py`, `backend/controller_model.py` — direct analysis, all findings are code-verified
-- `.planning/PROJECT.md` — v1.0 design decisions, dual-battery independence principle, architecture context
+- [HA MQTT Integration docs](https://www.home-assistant.io/integrations/mqtt/) — discovery payload structure, availability, origin, entity_category, migrate_discovery
+- [HA MQTT Sensor / Binary Sensor / Number / Select / Switch / Button platform docs](https://www.home-assistant.io/integrations/) — all entity platform fields verified
+- [HA Add-on Configuration docs](https://developers.home-assistant.io/docs/apps/configuration/) — ingress_port, ingress_entry, translations format
+- [HA Add-on Presentation / Ingress docs](https://developers.home-assistant.io/docs/apps/presentation/) — ingress config, X-Ingress-Path, port and IP restriction
+- [FastAPI Behind a Proxy docs](https://fastapi.tiangolo.com/advanced/behind-a-proxy/) — root_path mechanism
+- [paho-mqtt PyPI / migrations docs](https://eclipse.dev/paho/files/paho.mqtt.python/html/migrations.html) — CallbackAPIVersion.VERSION2, on_message signature
+- Existing `evcc_mqtt_driver.py` in codebase — paho subscribe/threading reference implementation (HIGH — code-verified)
+- [object_id deprecation HA Core #153612](https://github.com/home-assistant/core/issues/153612) — deprecated 2025.10, removed 2026.4
 
 ### Secondary (MEDIUM confidence)
-- [Predbat documentation — export threshold logic](https://springfall2008.github.io/batpred/what-does-predbat-do/) — export-vs-store decision patterns, battery cycle cost parameter
-- [EVCC tariffs and forecasts documentation](https://docs.evcc.io/en/docs/tariffs) — solar forecast fields available via `/api/state`
-- [Open-Meteo API documentation](https://open-meteo.com/en/docs) — free weather API, no key, hourly GHI and DNI available
-- [open-meteo-solar-forecast PyPI](https://pypi.org/project/open-meteo-solar-forecast/) — v0.1.29 verified, async-native, Python 3.11+
-- [Aurora Solar — storage modeling for energy arbitrage](https://help.aurorasolar.com/hc/en-us/articles/28998198908563-Understanding-Storage-Modeling-for-Energy-Arbitrage) — battery cycle economic analysis
-- [gridX — self-sufficiency optimization](https://www.gridx.ai/knowledge/self-sufficiency-optimization) — self-consumption vs. export decision frameworks
+- [HA Supervisor Proxy and Ingress (DeepWiki)](https://deepwiki.com/home-assistant/supervisor/6.3-proxy-and-ingress) — Ingress proxy internals
+- [HA Community: X-Ingress-Path header usage](https://community.home-assistant.io/t/how-to-use-x-ingress-path-in-an-add-on/276905) — header format and add-on behavior
+- [HA Community: Ingress static asset issues](https://community.home-assistant.io/t/trouble-with-static-assets-in-custom-addon-with-ingress/712298) — base path, relative URLs
+- [HA Community: expire_after vs availability_topic](https://community.home-assistant.io/t/mqtt-discovery-msg-availability-vs-expire-after/788468) — combined usage guidance
+- [EMS-ESP32 HA Integration docs](https://docs.emsesp.org/Home-Assistant/) — real-world reference implementation for MQTT discovery best practices
+- [Zigbee2MQTT HA Integration](https://www.zigbee2mqtt.io/guide/usage/integrations/home_assistant.html) — naming convention reference
 
-### Tertiary (LOW confidence)
-- German EEG feed-in tariff rates (0.082-0.12 EUR/kWh range for new PV installations > 10 kWp) — verify against actual contract; rates vary by installation date and capacity
-- Huawei SUN2000 hardware export limit register — mentioned in PITFALLS.md; requires verification against `huawei-solar` library documentation during Phase 2
+### Tertiary (MEDIUM-LOW confidence)
+- [paho-mqtt thread crash on reconnect GitHub #894](https://github.com/eclipse-paho/paho.mqtt.python/issues/894) — BrokenPipeError in on_connect subscribe; needs validation against current paho 2.1 behavior specifically
+- [HA Community: Ingress with WebSocket support](https://community.home-assistant.io/t/ingress-with-support-for-websocket/588542) — WS proxying under Ingress; verify in real HA environment before relying on it
 
 ---
 *Research completed: 2026-03-23*

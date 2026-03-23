@@ -1,255 +1,292 @@
-# Domain Pitfalls
+# Pitfalls Research
 
-**Domain:** Grid export optimization + multi-day weather-aware scheduling for dual-battery EMS
+**Domain:** HA best practice alignment for existing dual-battery EMS add-on (MQTT discovery overhaul, Ingress, services, controllable entities)
 **Researched:** 2026-03-23
+**Confidence:** HIGH (based on official HA docs, community issue trackers, and direct codebase analysis)
 
 ## Critical Pitfalls
 
-Mistakes that cause rewrites, safety issues, or significant economic losses.
+### Pitfall 1: MQTT Entity unique_id Change Destroys User Dashboards and Automations
 
-### Pitfall 1: Export-Then-Buyback Loop
+**What goes wrong:**
+The current `unique_id` format is `ems_{entity_id}` (e.g., `ems_huawei_soc`). When overhauling MQTT discovery to add `entity_category`, `availability`, `origin`, and binary sensors, the temptation is to restructure the `unique_id` scheme (e.g., to include the platform prefix, or to rename entities for better HA naming compliance). Any `unique_id` change causes HA to treat the entity as a completely new entity. The old entity becomes "unavailable" forever (retained discovery config still on the broker), and the new entity gets a fresh entity ID. Every HA dashboard card, automation, script, and history reference pointing at the old entity ID breaks silently.
 
-**What goes wrong:** The system exports stored energy at the fixed feed-in rate (e.g. 0.082 EUR/kWh), then hours later buys the same energy back at a much higher import rate (e.g. 0.25+ EUR/kWh) because it underestimated upcoming consumption. The net economic loss is (import_rate - feed_in_rate) * kWh for every kWh that round-trips through the grid.
+**Why it happens:**
+HA's entity registry keys entities by `(platform, unique_id)`. Changing either deletes the entity and creates a new one. Developers rename entities "for clarity" during a refactor, not realizing `unique_id` is the primary key that users' entire HA configuration depends on.
 
-**Why it happens:** Export decisions are made in the current 5-second control cycle based on instantaneous surplus, without considering the next 4-12 hours of consumption. The existing coordinator has no forward-looking consumption model in its real-time dispatch loop. The scheduler runs nightly and produces a static charge plan, but nothing prevents the real-time loop from exporting energy that the nightly plan assumed would be available for evening discharge.
+**How to avoid:**
+- Never change existing `unique_id` values. The current `ems_huawei_soc`, `ems_victron_soc`, etc. must remain exactly as they are.
+- New entities (binary sensors, number entities, select entities) get new `unique_id` values following the existing pattern: `ems_{entity_id}`.
+- Use `default_entity_id` (not `object_id`, which is deprecated as of HA 2025.10 and removed in 2026.4) to control the entity ID shown in HA, without touching `unique_id`.
+- To move an existing entity from `sensor` to `binary_sensor` platform (e.g., `huawei_online`), use the `migrate_discovery` process: publish `{"migrate_discovery": true}` to the old topic, then publish the new discovery config to the new platform topic.
 
-**Consequences:** With 94 kWh of battery pool and a typical 40 kWh daily consumption, a single bad export decision could waste 5-15 EUR per occurrence. Over a month of daily mistakes, this erases the entire economic benefit of the optimization.
+**Warning signs:**
+- After add-on update, entities show as "unavailable" in HA while new entities with `_2` suffix appear.
+- User automations stop firing because `sensor.ems_huawei_soc` no longer exists.
+- HA logs show "entity not found" warnings referencing old entity IDs.
 
-**Prevention:**
-- Never export battery-stored energy unless both batteries are above a "reserve threshold" that guarantees coverage of predicted consumption until the next cheap charging window
-- Compute a "minimum retained energy" floor based on the consumption forecast for the remaining hours until the next grid charge opportunity
-- Export priority: PV surplus (zero opportunity cost) >> battery energy above reserve >> never export below reserve
-- The reserve calculation must be per-battery, respecting independent SoC floors already in SystemConfig
-
-**Detection:** Log every export decision with the computed reserve margin. Alert when post-export combined SoC drops below the consumption-coverage threshold. Track actual vs. predicted consumption after export decisions to measure forecast accuracy.
-
-**Which phase should address it:** Must be solved in the grid export optimization phase, not deferred. This is the primary failure mode of export arbitrage.
-
----
-
-### Pitfall 2: Forecast Coupling Creates Cascading Errors Across Days
-
-**What goes wrong:** The multi-day scheduler chains decisions across 2-3 days: "sunny tomorrow, so charge less tonight; cloudy day-after, so charge more tomorrow night." If the Day 1 solar forecast is wrong (cloud cover 4 hours earlier than predicted), the system enters Day 2 under-charged, and the Day 2 plan was already computed assuming Day 1 went well. The error compounds.
-
-**Why it happens:** The existing scheduler runs once at 23:00 and produces a single static schedule. Extending to multi-day means the Day 2/3 plans are computed with Day 1 still in the future. There is no intra-day re-planning when forecasts deviate from reality.
-
-**Consequences:** Two consecutive wrong forecasts can leave 94 kWh of batteries at 15-20% SoC entering a cloudy day with no cheap tariff window. The system then buys expensive peak electricity to cover basic consumption. Worse, if the system also exported on Day 1 based on the incorrect sunny forecast, the loss doubles.
-
-**Prevention:**
-- Re-compute the multi-day schedule at least twice daily (e.g., 06:00 and 23:00) to incorporate updated weather forecasts
-- Each day's plan must be independently valid: even if Day 2 is wrong, Day 1 decisions must not leave the system in a dangerous state
-- Apply a "forecast confidence discount" that increases with horizon: Day 1 solar at 80% of forecast, Day 2 at 60%, Day 3 at 40% (these are initial values; tune from real data)
-- Keep the existing single-day fallback as the safety net: if multi-day planning is uncertain, fall back to conservative single-day behavior
-
-**Detection:** Compare planned vs. actual SoC at each schedule boundary (midnight, 06:00). Log the forecast error for each day. Alert when combined SoC deviates more than 15% from the plan.
-
-**Which phase should address it:** Multi-day scheduling phase. The re-planning mechanism and confidence discounts must be designed upfront, not bolted on.
+**Phase to address:**
+Must be the very first step of the MQTT discovery overhaul phase. Define a migration plan before writing any discovery code.
 
 ---
 
-### Pitfall 3: Dual-Battery Export Coordination Breaks Independence
+### Pitfall 2: Migrating sensor Entities to binary_sensor Breaks the Discovery Topic Path
 
-**What goes wrong:** The grid export optimization adds a new coordination concern between the two battery systems: "which battery should export?" If the coordinator starts routing export decisions through a centralized export planner, it violates the fundamental architecture principle of independent controllers. Worse, if one battery is exporting while the other is charging from PV, the system can create a local energy loop (battery A discharges to grid, battery B charges from grid) that wastes energy through round-trip losses.
+**What goes wrong:**
+The current code publishes ALL entities (including `huawei_online`, `victron_online`, `pool_status`) as `sensor` platform via discovery topic `homeassistant/sensor/ems/{entity_id}/config`. These should be `binary_sensor` per HA best practices (they represent on/off states). But changing the discovery topic from `homeassistant/sensor/...` to `homeassistant/binary_sensor/...` without cleaning up the old topic leaves a ghost `sensor` entity alongside the new `binary_sensor` entity. The user sees duplicates: `sensor.ems_huawei_online` (stale, unavailable) and `binary_sensor.ems_huawei_online` (new, working).
 
-**Why it happens:** The existing coordinator assigns roles (PRIMARY_DISCHARGE, CHARGING, GRID_CHARGE) independently per battery. Adding an EXPORTING role creates a new interaction: export from battery A affects the grid meter reading that battery B uses for its P_target calculation. The P_target computation in `_compute_p_target()` reads Victron's grid_power_w, which includes any export currently happening.
+**Why it happens:**
+MQTT discovery topics are retained on the broker. Publishing to a new topic path does not delete the old one. HA discovers both and creates both entities. The old entity never goes away until someone publishes an empty payload to the old topic.
 
-**Consequences:** Oscillation between batteries: Huawei exports -> grid goes negative -> Victron sees surplus -> Victron charges -> grid goes positive -> Huawei stops exporting -> Victron stops charging -> cycle repeats every 5 seconds. This is exactly the oscillation pattern the v1.0 rewrite was designed to eliminate.
+**How to avoid:**
+- For each entity changing platform, publish an empty retained payload to the OLD discovery topic to delete it: `self._client.publish("homeassistant/sensor/ems/huawei_online/config", "", retain=True)`.
+- Then publish the new discovery config to the NEW topic: `homeassistant/binary_sensor/ems/huawei_online/config`.
+- Use `migrate_discovery` for entities that need to preserve their entity registry settings.
+- Implement a one-time migration function that runs on first startup after the version upgrade, cleaning up old topics before publishing new ones.
+- Include version tracking in the MQTT client: store the last-published discovery schema version (e.g., in a file on the HA config volume) so migration only runs once.
 
-**Prevention:**
-- Export must be a coordinator-level decision, not a per-controller decision. The coordinator already owns role assignment; export is just another role (or a modifier on HOLDING/CHARGING)
-- Only one battery system should export at a time, and only when the other is either HOLDING or CHARGING from PV (not from grid)
-- Use the existing hysteresis and debounce machinery: apply the same dead-band (300W/150W) and 2-cycle debounce to export transitions
-- The P_target calculation must account for intentional export: if the coordinator commanded export of X watts, subtract X from the grid reading before computing P_target for the next cycle
+**Warning signs:**
+- Duplicate entities in HA entity registry (one sensor, one binary_sensor with same name).
+- Old sensor entities stuck in "unavailable" state indefinitely.
+- Entity count in HA device info doubles instead of staying the same.
 
-**Detection:** Monitor for rapid role transitions involving export (more than 2 in 30 seconds). Log when both batteries have non-zero grid-facing power in opposite directions simultaneously.
-
-**Which phase should address it:** Grid export optimization phase. Must be solved before any export logic touches the coordinator.
-
----
-
-### Pitfall 4: Schedule Model Incompatibility with Multi-Day Horizon
-
-**What goes wrong:** The existing `ChargeSchedule` and `ChargeSlot` models are designed for single-night operation: two slots (huawei + victron) with one shared tariff window. Extending to multi-day creates a model explosion: 2 batteries x 3 days x multiple slot types (charge, hold, export) = potentially 18+ slots with complex temporal relationships. Bolting multi-day onto the existing flat list of `ChargeSlot` objects produces an unmaintainable mess.
-
-**Why it happens:** The `ChargeSlot` dataclass has `battery`, `target_soc_pct`, `start_utc`, `end_utc`, `grid_charge_power_w`. It has no concept of "which day" or "which planning horizon" a slot belongs to. The `OptimizationReasoning` has a single `charge_energy_kwh` and `cost_estimate_eur` with no per-day breakdown. The coordinator's `_check_grid_charge()` method iterates `scheduler.active_schedule.slots` and checks if `now` falls within any slot's `[start_utc, end_utc)`. This works for one night but becomes ambiguous with overlapping days.
-
-**Consequences:** Without a clean model evolution, the scheduler produces schedules that the coordinator misinterprets. For example, a Day 2 charge slot at 02:00 looks identical to a Day 1 charge slot at 02:00 if the coordinator only checks time-of-day. Or the API returns a flat list of 18 slots that the dashboard cannot meaningfully display.
-
-**Prevention:**
-- Introduce a `DayPlan` container that groups slots by calendar date, with per-day reasoning and cost estimates
-- The `ChargeSchedule` evolves to contain `List[DayPlan]` instead of `List[ChargeSlot]`
-- Add a `day_index: int` (0=tonight, 1=tomorrow night, 2=day-after-tomorrow night) to each slot for unambiguous identification
-- Keep backward compatibility: the coordinator's `_check_grid_charge()` should still work with a flat view of all slots, filtered to `day_index == 0`
-- The API endpoint `/api/optimization/schedule` should return the multi-day structure, but the existing frontend can initially render only `day_index == 0`
-
-**Detection:** Unit test that creates a 3-day schedule and verifies `_check_grid_charge()` only activates Day 0 slots at the correct times. Integration test that verifies Day 1 slots do not accidentally trigger on Day 0.
-
-**Which phase should address it:** Must be addressed at the start of multi-day scheduling work. The model change is foundational.
+**Phase to address:**
+MQTT discovery overhaul phase. Must implement topic cleanup before new discovery publication.
 
 ---
 
-### Pitfall 5: Feed-In Tariff Comparison Using Wrong Import Rate
+### Pitfall 3: Ingress Path Rewriting Breaks SPA Routing, WebSocket, and API Calls
 
-**What goes wrong:** The export arbitrage decision compares `feed_in_rate` vs. `current_import_rate` to decide whether to export or store. But the relevant comparison is not the *current* import rate — it is the import rate at the time the stored energy would actually be consumed. If the system exports at 14:00 (feed-in = 0.082, current import = 0.08 off-peak), but the stored energy would have been consumed at 18:00 (import = 0.28 peak), the export decision lost 0.198 EUR/kWh.
+**What goes wrong:**
+HA Ingress proxies add-on traffic through `/api/hassio_ingress/{token}/`. The current SPA uses absolute paths (`/api/state`, `/api/ws/state`, static assets at `/assets/`). When accessed via Ingress, these paths resolve to the HA root, not the add-on. Every API call 404s. Every static asset returns the HA frontend HTML. The WebSocket connection at `/api/ws/state` hits HA's own WebSocket API instead of the EMS one.
 
-**Why it happens:** The tariff engine provides `get_effective_price(dt)` for any instant, but the export decision logic naively compares `feed_in_rate` vs. `get_effective_price(now)` instead of looking ahead to when the energy would actually be needed.
+**Why it happens:**
+The Vite config has no `base` setting (defaults to `/`). The frontend fetches from hardcoded paths like `/api/state`. HA Ingress adds the `X-Ingress-Path` header with the correct prefix, but neither the FastAPI backend nor the React frontend reads or uses it. The SPA's `index.html` references assets at `/assets/index-xxx.js` which bypass the Ingress prefix entirely.
 
-**Consequences:** Systematically wrong export decisions during off-peak hours. The system exports cheap-seeming energy that would have been worth peak-rate later. With 94 kWh pool capacity, this can mean 10-20 EUR/day of value destruction.
+**How to avoid:**
+- **Frontend build:** Set Vite's `base` to `./` (relative paths) so all asset references in `index.html` become `./assets/index-xxx.js` instead of `/assets/index-xxx.js`. This makes assets load correctly regardless of the URL prefix.
+- **API calls:** The frontend must detect the Ingress base path at runtime. Approach: inject a `<script>` tag in `index.html` that reads the document's `baseURI` or uses a well-known endpoint. Alternatively, use relative URLs (`./api/state` instead of `/api/state`) which work under any prefix.
+- **WebSocket:** The WebSocket URL must be constructed from the current page location, not hardcoded. Use `new URL('./api/ws/state', window.location.href)` to derive the full WebSocket URL dynamically. Ensure the protocol is `wss://` when the page is loaded over HTTPS (which Ingress always is).
+- **FastAPI:** Add `ingress: true` to `config.yaml`. Read the `X-Ingress-Path` header in a middleware and make it available to responses if needed for URL generation. The FastAPI app must NOT assume it runs at `/` -- use `root_path` from the ASGI scope.
+- **Static file mount:** The current `StaticFiles(directory="frontend/dist", html=True)` catch-all must work correctly with Ingress. Since Ingress strips the prefix before forwarding, the backend sees requests at `/` not `/api/hassio_ingress/{token}/`. This means the backend routing should work as-is, but the frontend asset URLs must be relative.
 
-**Prevention:**
-- The export decision must compare feed-in rate against the *weighted average import rate over the consumption forecast horizon*
-- Specifically: `value_of_stored_energy = sum(forecasted_consumption_per_slot * import_rate_per_slot) / total_forecasted_consumption`
-- Only export when `feed_in_rate >= value_of_stored_energy * safety_margin` (safety_margin ~ 0.9 to account for forecast uncertainty)
-- For a fixed feed-in tariff (the case here), this simplifies to: "never export if there is ANY upcoming import slot with rate > feed_in_rate AND predicted consumption exceeds current battery reserves minus planned solar input"
+**Warning signs:**
+- Dashboard loads as a blank page when accessed through HA sidebar.
+- Browser console shows 404 errors for `/assets/index-xxx.js`.
+- WebSocket connects to HA's API instead of EMS, producing "invalid message" errors.
+- API calls return HA's "unauthorized" response instead of EMS data.
 
-**Detection:** Log the computed `value_of_stored_energy` alongside every export decision. Post-hoc analysis: compare export revenue against the actual import cost of replacement energy.
-
-**Which phase should address it:** Grid export optimization phase. This is the core economic logic of the feature.
-
-## Moderate Pitfalls
-
-### Pitfall 6: Solar Forecast API Rate Limits and Staleness
-
-**What goes wrong:** The existing system gets solar forecasts from EVCC's `/api/state` endpoint, which includes `SolarForecast.tomorrow_energy_wh` and `day_after_energy_wh`. For multi-day scheduling, this needs 3-day granular forecasts (hourly or 15-min resolution). The EVCC forecast is updated periodically by its own forecast provider (forecast.solar, Solcast, etc.). Hitting the underlying API too frequently triggers rate limits; not hitting it often enough means stale data.
-
-**Why it happens:** The EMS does not control the solar forecast refresh cycle — EVCC does. The `EvccState.solar` data has `timeseries_w` and `slot_timestamps_utc` but the existing scheduler only uses the scalar `tomorrow_energy_wh`. The multi-day scheduler needs the timeseries at hourly resolution for 72 hours, which may exceed what EVCC provides.
-
-**Prevention:**
-- Verify what EVCC actually provides in its solar forecast timeseries (how many hours ahead, what resolution). The `SolarForecast` model already has `timeseries_w` and `slot_timestamps_utc` — check the actual horizon length at runtime
-- If EVCC provides < 48 hours, the Day 3 forecast must use a degraded estimate (e.g., historical average for that month, or repeat Day 2 with a confidence discount)
-- Cache the last-received forecast and track its age. If the forecast is > 6 hours old, increase the confidence discount
-- Never fail the entire schedule computation because the solar forecast is stale — fall back to the existing single-day conservative approach
-
-**Detection:** Log forecast age on every scheduler run. Warn when forecast is > 6 hours old. Track forecast accuracy (predicted vs. actual daily solar yield) to calibrate confidence discounts.
-
-**Which phase should address it:** Multi-day scheduling phase.
+**Phase to address:**
+Ingress support phase. Must be tested with both direct access (`http://host:8000`) and Ingress access (`https://ha.local/api/hassio_ingress/...`) simultaneously.
 
 ---
 
-### Pitfall 7: Grid Charge Target Overshoot with Two Independent Chargers
+### Pitfall 4: Adding MQTT Subscribe to a Publish-Only Client Introduces Threading Hazards
 
-**What goes wrong:** When the multi-day scheduler computes "charge 40 kWh tonight split as 13 kWh Huawei + 27 kWh Victron," the two controllers charge independently. Neither knows the other's progress. If Huawei finishes early (30 kWh pack charges faster at 5 kW), it idles while Victron is still charging at 3 kW. Fine so far. But if the tariff window ends before Victron finishes, the system has under-charged. Conversely, if the scheduler over-estimates how much energy is needed, both batteries reach target early, and the remaining cheap-rate window is wasted.
+**What goes wrong:**
+The current `HomeAssistantMqttClient` is publish-only: it calls `self._client.publish()` from the asyncio thread and handles `_on_connect`/`_on_disconnect` callbacks from paho's thread. Adding subscribe capability (for command_topic on Number/Select entities and service call topics) introduces `_on_message` callbacks that need to safely mutate state and trigger actions in the asyncio thread. A known paho-mqtt bug (reported June 2025) causes `BrokenPipeError` when calling `client.subscribe()` in the `_on_connect` callback during reconnection, which crashes paho's background thread silently. After the crash, `publish()` calls succeed without error but messages are never delivered.
 
-**Why it happens:** The existing scheduler sets `target_soc_pct` per battery, not `target_energy_kwh`. SoC is measured by the BMS, which has its own calibration drift. A Victron BMS reporting 60% might actually be at 55% or 65%. Over a 64 kWh battery, a 5% SoC error is 3.2 kWh — significant when the total charge target is 27 kWh.
+**Why it happens:**
+paho-mqtt's threading model has a single network thread that handles both reads and writes. When `subscribe()` is called from `_on_connect()` during a reconnect (not initial connect), the socket may be in a transitional state. The background thread crashes, but there is no callback or exception visible to the asyncio side. The `_connected` flag stays `True` because `_on_disconnect` was never called (the thread died, it did not disconnect).
 
-**Prevention:**
-- Use energy-based targets (`charge_energy_kwh`) alongside SoC targets, and stop when either is reached
-- Monitor actual energy delivered (integrate power over time) during the charge window, not just BMS-reported SoC
-- Add a "charge progress" check at the midpoint of the tariff window: if the current charging rate will not reach the target by window end, increase the charge power (if hardware allows) or extend to the next cheapest slot
-- Accept that BMS SoC accuracy is +/- 5% and build that into the safety margin
+**How to avoid:**
+- Add a `_on_subscribe` callback to detect successful subscription acknowledgment from the broker.
+- Wrap `subscribe()` calls in `_on_connect` with a try/except that catches `BrokenPipeError` and `OSError`, logs the error, and sets a flag to retry subscription on the next control cycle.
+- Add a periodic health check: if `_connected` is `True` but no state update has been published successfully in the last N cycles, force a reconnect by calling `_client.reconnect()`.
+- Use QoS 1 for command_topic subscriptions to ensure delivery guarantees on commands that affect real hardware.
+- Consider splitting into two paho clients: one for publish (existing pattern, low risk) and one for subscribe (new pattern, isolated failure domain). This matches the existing codebase pattern where `EvccMqttDriver` is a separate client from `HomeAssistantMqttClient`.
 
-**Detection:** Log energy delivered vs. energy planned for each charge session. Alert when the delta exceeds 10%.
+**Warning signs:**
+- Number entity changes in HA UI do not reach the EMS backend (no log messages for received commands).
+- MQTT entities in HA show "unavailable" after a broker restart, even though the EMS log says "HA MQTT connected".
+- Paho thread silently stops: `threading.enumerate()` shows the paho thread is gone while `_connected` is still `True`.
 
-**Which phase should address it:** Multi-day scheduling phase, but only after the model changes from Pitfall 4.
-
----
-
-### Pitfall 8: Consumption Forecaster Not Adapted for Multi-Day
-
-**What goes wrong:** The existing `ConsumptionForecaster` predicts next-24h consumption as a single scalar (`today_expected_kwh`). The multi-day scheduler needs per-hour consumption profiles for 72 hours. Using the scalar 3 times (one per day) ignores weekday variation (e.g., Monday vs. Sunday), weather-dependent heating loads, and time-of-use patterns within each day.
-
-**Why it happens:** The forecaster trains GBR models on `[outdoor_temp, ewm_temp, day_of_week, hour_of_day, month]` features and predicts hourly loads — but `query_consumption_history()` sums these into a single scalar. The hourly resolution is already in the model; it is just not exposed.
-
-**Prevention:**
-- Add a `predict_hourly(horizon_hours: int = 72) -> list[tuple[datetime, float]]` method that returns per-hour consumption predictions for the requested horizon
-- The multi-day scheduler uses this hourly profile, not the scalar
-- The scalar `query_consumption_history()` interface remains for backward compatibility with the existing single-day scheduler
-- Use the outdoor temperature forecast (if available from HA or weather integration) instead of the placeholder 10 C. This becomes critical for multi-day: a 15 C day vs. a 5 C day can differ by 10+ kWh in heat pump load
-
-**Detection:** Compare hourly predictions against actual consumption (from InfluxDB or HA statistics) to validate per-hour accuracy, not just daily total.
-
-**Which phase should address it:** Must be extended before or during multi-day scheduling implementation.
+**Phase to address:**
+Controllable entities phase (Number/Select entities). Must be tested with broker restart scenarios.
 
 ---
 
-### Pitfall 9: DST Transitions Break Multi-Day Slot Boundaries
+### Pitfall 5: Number Entity min/max Values Conflict with Hardware Limits
 
-**What goes wrong:** The existing tariff engine carefully handles DST transitions for single-day schedules (documented in `tariff.py`). Multi-day schedules that span a DST transition (e.g., schedule computed Saturday for Saturday-Monday, with DST change on Sunday) can produce slots with incorrect UTC boundaries. A charge window "02:00-05:00 Berlin time" on the DST spring-forward night only lasts 2 hours instead of 3, under-delivering charge energy.
+**What goes wrong:**
+MQTT Number entities require `min` and `max` in the discovery payload. If the published min/max does not match the actual hardware limits, two bad things happen: (1) HA allows the user to set a value outside hardware-safe range (e.g., Huawei min SoC set to 0% when the BMS minimum is 5%), and (2) HA rejects valid values that are outside the published range (e.g., user tries to set Victron deadband to 50W but the Number entity has `min: 100`). The HA UI shows a slider that silently clips values, and the user does not realize their change was not applied.
 
-**Why it happens:** The `ChargeSlot` stores `start_utc` and `end_utc`. If the scheduler computes "3 hours of charging" by naively adding `timedelta(hours=3)` to a wall-clock time that crosses DST, the UTC slot is 2 or 4 hours instead of 3.
+**Why it happens:**
+The discovery payload's `min`/`max` are static values published at connect time. Hardware limits may vary per installation (different BMS firmware, different inverter models). The current `SystemConfig` has hardcoded defaults (`min_soc_pct_huawei: 10`, `min_soc_pct_victron: 15`) that are reasonable starting values but not universal. If the Number entity discovery publishes `min: 0, max: 100` for SoC and the hardware actually requires `min: 5, max: 95`, the user can set dangerous values.
 
-**Prevention:**
-- Always compute slot boundaries in wall-clock time first, then convert to UTC. Never add `timedelta` to UTC and convert back
-- The existing `get_price_schedule` already handles this correctly for one day. The multi-day extension must use the same pattern (convert per-day, concatenate)
-- Add explicit DST-transition-spanning test cases: schedules that cross the last Sunday of March and October
+**How to avoid:**
+- Read actual hardware limits from the drivers at startup. The Huawei driver can read min/max SoC from Modbus registers. The Victron driver can read ESS limits from Venus OS registers. Use these as the source of truth for Number entity min/max.
+- If hardware limits cannot be read (driver offline at startup), use conservative defaults and update the Number entity discovery payload when the driver connects. Re-publishing discovery with updated min/max is safe -- HA will update the entity.
+- Validate every command received on the command_topic against current hardware limits before applying. If the value is out of range, publish the current valid value back to the state_topic (so HA UI reverts to the correct value) and log a warning.
+- Document which Number entities are "soft limits" (tuning parameters like deadband, ramp rate) vs. "hard limits" (SoC floors that affect hardware safety).
 
-**Detection:** Unit test: create a 3-day schedule spanning the March DST transition, verify all slot durations in UTC match expected wall-clock durations.
+**Warning signs:**
+- HA UI slider range does not match hardware reality.
+- User sets min SoC to 5% but BMS refuses to discharge below 10%, causing the controller to appear stuck.
+- Number entity state and command value are perpetually out of sync (HA shows 5, backend shows 10).
 
-**Which phase should address it:** Multi-day scheduling phase.
-
----
-
-### Pitfall 10: Export Power Allocation Ignores Inverter Limitations
-
-**What goes wrong:** The Huawei SUN2000 inverter has specific feed-in power limits set in its configuration (often 0 W for zero-export installations). The Victron MultiPlus-II has its own AC output limits per phase. The export optimization logic computes "export 3 kW" without checking whether the hardware is actually configured to allow grid export.
-
-**Why it happens:** The existing `SystemConfig` has `huawei_feed_in_allowed: bool` and `victron_feed_in_allowed: bool`, both defaulting to `False`. The coordinator respects these flags for PV surplus handling but the new export optimization might bypass these checks if it operates at a different layer.
-
-**Prevention:**
-- The export optimization must check `feed_in_allowed` before commanding any export
-- For Huawei: the inverter itself may have a hardware feed-in limit register that overrides software commands. The driver should read and expose this limit
-- For Victron: ESS mode settings on Venus OS control whether grid feed-in is permitted. The driver's `ess_mode` register value must be checked
-- If neither system allows feed-in, the export optimization feature should log "export optimization disabled: no systems allow feed-in" and skip entirely
-
-**Detection:** Startup check: if export optimization is enabled but both `feed_in_allowed` flags are False, log a clear warning. Never silently skip.
-
-**Which phase should address it:** Grid export optimization phase, as a prerequisite check before any export logic.
-
-## Minor Pitfalls
-
-### Pitfall 11: InfluxDB Write Volume Explosion
-
-**What goes wrong:** The existing system writes one `ems_decision` point per role change and one `ems_huawei` + `ems_victron` point per control cycle (every 5 seconds). Adding export decisions, multi-day schedule metrics, and forecast accuracy tracking can easily triple the write volume. On a Raspberry Pi running HA, this can exhaust the SD card's write endurance or fill the InfluxDB bucket.
-
-**Prevention:**
-- Aggregate export metrics per 15-minute window, not per control cycle
-- Write multi-day schedule data once per computation (twice daily), not per cycle
-- Respect the existing InfluxDB-optional pattern: all new metrics must gracefully degrade when InfluxDB is unavailable
-
-**Which phase should address it:** Both phases, as each adds new metrics.
+**Phase to address:**
+Controllable entities phase. Must coordinate with driver initialization.
 
 ---
 
-### Pitfall 12: Dashboard Overload with Multi-Day Data
+### Pitfall 6: Config Migration from Wizard JSON to Add-on Options Loses User Settings
 
-**What goes wrong:** The existing dashboard shows a tariff timeline for 24 hours and per-battery charge slots for one night. Extending to 72 hours makes the timeline unreadable on mobile. Adding export indicators and forecast confidence bands further clutters the UI.
+**What goes wrong:**
+The current system has two config sources: the setup wizard's `ems_config.json` (on the HA config volume) and the add-on `options.json` (managed by HA Supervisor). The v1.2 plan removes the wizard and makes `options.json` the sole config surface. Existing users who configured EMS through the wizard have settings in `ems_config.json` that are NOT in `options.json` (because they never used the add-on config page). After upgrading to v1.2, the wizard config is ignored, and all user-specific settings (hardware hosts, EVCC endpoints, tariff rates, SoC limits) revert to defaults.
 
-**Prevention:**
-- Default view: today + tonight (same as current). Expandable to 3-day view on tap
-- Use a summary card for Day 2/3: "Tomorrow: mostly sunny, light grid charge planned" rather than showing full timelines
-- Export activity: show as a simple indicator on the energy flow diagram, not a separate timeline
+**Why it happens:**
+The current `lifespan()` in `main.py` calls `load_setup_config()` and injects values into `os.environ` via `setdefault()`. The add-on's `run.sh` exports `options.json` values BEFORE the Python process starts. If `options.json` has empty defaults, they get exported as empty strings, and `setdefault()` in the lifespan does not override them (because the env var exists, even if empty). The `_require_env()` function treats empty as "not set" and enters degraded mode. So the user upgrades, the wizard config exists on disk but is never read because `run.sh` already exported empty env vars.
 
-**Which phase should address it:** After core logic works. UI changes should follow the backend implementation.
+**How to avoid:**
+- Implement a one-time migration script that runs BEFORE the main application. On first v1.2 startup, check if `ems_config.json` exists and `options.json` still has default values. If so, write the wizard values into the Supervisor options via the Supervisor API (`POST /addons/self/options`).
+- The migration must be idempotent: if it runs twice, it should detect that migration already happened (e.g., check a `_migrated` flag in `ems_config.json`) and skip.
+- After migration, rename `ems_config.json` to `ems_config.json.bak` so it is clear the file is no longer authoritative.
+- Add a startup log message: "Migrated N settings from wizard config to add-on options" or "No wizard config found, using add-on options directly."
+- Keep the `load_setup_config()` fallback for one more version as a safety net: if migration fails, the system still works.
+
+**Warning signs:**
+- After v1.2 upgrade, the add-on enters "setup-only mode" even though it was fully configured before.
+- User sees the HA add-on config page with all fields at defaults, not their actual values.
+- Coordinator fails to start because `HUAWEI_HOST` is empty.
+
+**Phase to address:**
+First phase of v1.2 (config migration). Must happen before any other changes.
 
 ---
 
-### Pitfall 13: EVCC Interaction with Export Decisions
+### Pitfall 7: Service Calls Fail Silently When Hardware Is Offline
 
-**What goes wrong:** EVCC manages EV charging and can send `batteryMode=hold` to prevent battery discharge during EV charging. If the EMS is exporting from battery while EVCC sends a hold signal, the export must stop immediately. But if the export is already committed (e.g., the grid meter is reading negative because of ongoing export), the transition to hold can cause a brief grid import spike.
+**What goes wrong:**
+HA Services (e.g., `ems.set_discharge_setpoint`, `ems.force_grid_charge`) are expected to succeed or raise an explicit error. If the user calls a service from an automation while one or both battery systems are offline, the service must either: (a) apply the command to the available system only, or (b) return an error that HA can display. The current codebase has no service call infrastructure. Adding services without proper error handling means HA automations silently do nothing when hardware is down, and the user never knows.
 
-**Prevention:**
-- The existing EVCC hold signal already takes priority over all other decisions in the coordinator (lines 330-363 of coordinator.py). Export must follow the same pattern: EVCC hold = immediate stop of export
-- Export decisions should check EVCC state before committing, not just react to hold signals
+**Why it happens:**
+MQTT-based service calls arrive as messages on a command_topic. Unlike HTTP APIs (which return status codes), MQTT commands are fire-and-forget. If the backend receives a command but cannot execute it (driver offline, value out of range, conflicting state), there is no built-in way to signal failure back to HA.
 
-**Which phase should address it:** Grid export optimization phase.
+**How to avoid:**
+- Publish the service execution result to a status/response topic that HA can monitor.
+- More practically: update the entity state immediately after processing a command. If the command failed, the state does not change, and the HA entity shows the old value (which signals failure to attentive users).
+- Log every service call with its result (applied, rejected, partially applied) at INFO level.
+- For critical services like `force_grid_charge`: validate prerequisites (tariff window, SoC limits, hardware availability) before accepting the command. If prerequisites fail, publish a notification via Telegram (already wired) explaining why the command was rejected.
+- Add integration health information to the device's `availability` topic. If the coordinator is in HOLD/degraded mode, set the device availability to "offline" so HA marks all entities as unavailable and prevents new service calls from being attempted.
 
-## Phase-Specific Warnings
+**Warning signs:**
+- HA automation log shows "service call completed" but nothing happened on the hardware.
+- Number entity UI shows a value the user set, but the actual hardware is doing something different.
+- No error feedback in HA UI when a command cannot be executed.
 
-| Phase Topic | Likely Pitfall | Mitigation |
-|-------------|---------------|------------|
-| Grid export: core arbitrage logic | Export-then-buyback (Pitfall 1) | Forward-looking consumption reserve before every export decision |
-| Grid export: coordinator integration | Oscillation between export and charge (Pitfall 3) | Export as coordinator role, one battery at a time, P_target offset |
-| Grid export: tariff comparison | Wrong import rate comparison (Pitfall 5) | Compare against weighted future import rate, not current rate |
-| Grid export: hardware limits | Inverter feed-in limits (Pitfall 10) | Check `feed_in_allowed` + hardware register limits before any export |
-| Multi-day: schedule model | Flat slot list incompatibility (Pitfall 4) | Introduce `DayPlan` container before implementing multi-day logic |
-| Multi-day: forecast chaining | Cascading forecast errors (Pitfall 2) | Independent daily plans, confidence discounts, intra-day replanning |
-| Multi-day: consumption model | Scalar forecast insufficient (Pitfall 8) | Expose hourly predictions from existing GBR models |
-| Multi-day: time handling | DST slot boundary errors (Pitfall 9) | Wall-clock-first computation, DST-spanning test cases |
-| Multi-day: solar forecast | Limited horizon from EVCC (Pitfall 6) | Verify EVCC timeseries length, degrade gracefully for Day 3 |
-| Both phases: metrics | InfluxDB write volume (Pitfall 11) | Aggregate per-window, not per-cycle; respect optional pattern |
+**Phase to address:**
+HA Services phase. Must define error handling strategy before implementing any service.
+
+## Technical Debt Patterns
+
+| Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
+|----------|-------------------|----------------|-----------------|
+| Hardcoding entity list in `_ENTITIES` tuple | Simple, flat, easy to test | Adding new entity types (binary_sensor, number, select) makes the tuple format inadequate; need a proper entity registry class | Never for v1.2; refactor to a typed entity definition system first |
+| Publishing all entities on one shared state_topic | One publish call per cycle, simple | Command responses, binary sensors, and number states need their own topics; shared topic grows into a god-object JSON blob | Acceptable for sensor entities; command entities must have separate topics |
+| Using `retain=True` for state payloads | Entity value survives broker restart | `expire_after` does not work correctly with retained state payloads (HA replays the retained value on restart, making expired sensors appear available with stale data) | Never for sensors with `expire_after`; use `retain=True` only for discovery config |
+| Single paho client for both pub and sub | Fewer connections to broker | Threading issues on reconnect (Pitfall 4); failure in subscribe path kills publish path | Accept only if broker restarts are rare; split clients is safer |
+
+## Integration Gotchas
+
+| Integration | Common Mistake | Correct Approach |
+|-------------|----------------|------------------|
+| MQTT Discovery | Using `object_id` in discovery payload | Use `default_entity_id` instead; `object_id` deprecated in HA 2025.10, removed in 2026.4 |
+| MQTT Discovery | Publishing discovery config without `retain=True` | Discovery config MUST be retained; otherwise entities disappear after broker restart |
+| MQTT Discovery | Not publishing `availability_topic` with `expire_after` | Use `expire_after` for sensor entities (marks unavailable if no update within N seconds) AND publish a birth/will availability topic for the device |
+| MQTT Discovery | Missing `origin` field in discovery payload | Add `origin: {name: "EMS", sw_version: "1.2.0", support_url: "..."}` -- HA uses this for device info and issue reporting |
+| HA Ingress | Hardcoded absolute paths in SPA | Use relative paths (`./api/state`) or dynamic base path detection from `window.location` |
+| HA Ingress | Assuming WebSocket URL is `ws://host:port/path` | Under Ingress, WebSocket must use `wss://` and the full Ingress path; construct from `window.location` |
+| HA Ingress | Not setting `ingress: true` in config.yaml | Without this flag, HA Supervisor does not create the Ingress proxy endpoint |
+| HA Ingress | Setting `ingress_port` to the wrong value | Must match the port the FastAPI server listens on inside the container (8000) |
+| MQTT Number | Publishing `min: 1, max: 100` (defaults) | Always set meaningful min/max that match hardware limits; validate commands server-side |
+| MQTT Number | Using `optimistic: true` without state_topic | HA assumes command succeeded immediately; backend must publish actual state to state_topic for closed-loop feedback |
+| Supervisor API | Calling `/addons/self/options` with partial data | The Supervisor API replaces ALL options, not just the ones you send; always read current options, merge changes, then write back |
+| translations/en.yaml | Mismatched keys between config.yaml options and translations | Every option in `config.yaml` must have a corresponding entry in translations; missing keys show raw option names in UI |
+
+## Performance Traps
+
+| Trap | Symptoms | Prevention | When It Breaks |
+|------|----------|------------|----------------|
+| Publishing full state JSON on every 5-second control cycle via MQTT | Broker message queue grows; HA entity history inflated | Throttle MQTT publish to every 15-30 seconds unless values changed significantly | Not a breaking issue at current scale but wasteful; becomes problematic with 30+ entities |
+| Re-publishing discovery config on every reconnect without deduplication | Broker processes identical retained messages; HA re-registers entities | Track `_discovery_version` and only re-publish if the schema changed | Not performance-critical but adds unnecessary broker load on flaky connections |
+| Ingress + WebSocket with high-frequency state updates | Each WebSocket message goes through HA's nginx proxy, adding latency | Reduce WebSocket update frequency to 5-10s when accessed via Ingress; keep 1-2s for direct access | Noticeable at >20 concurrent Ingress WebSocket connections (unlikely for single-user EMS) |
+
+## Security Mistakes
+
+| Mistake | Risk | Prevention |
+|---------|------|------------|
+| Accepting MQTT commands without validation | Malicious MQTT message could set SoC limit to 0% or discharge setpoint to max, potentially damaging hardware | Validate every command against hardware limits before applying; reject and log invalid commands |
+| Exposing service topics without authentication | Anyone with MQTT broker access can send commands | HA's MQTT broker (Mosquitto add-on) handles auth; ensure command topics require authenticated clients; document that shared brokers need ACLs |
+| Ingress token in browser history | Ingress URLs contain a session token that could be shared inadvertently | This is HA's concern, not the add-on's; but do not log or expose the Ingress token in the EMS UI |
+
+## UX Pitfalls
+
+| Pitfall | User Impact | Better Approach |
+|---------|-------------|-----------------|
+| Entity names like "EMS Huawei Battery SOC" (current) | Verbose, does not follow HA naming convention (device name should not repeat in entity name) | Name should be just "Battery SOC" since the device is already "EMS Huawei"; HA concatenates device + entity name |
+| Changing entity names in discovery without renaming in entity registry | User sees new name in entity list but old name in dashboards (HA caches entity names) | Use `has_entity_name: true` in discovery so HA correctly composes the display name from device + entity name |
+| Number entity slider with 0-100 range for a 50-500W deadband | User cannot set precise values; slider resolution too coarse | Set `mode: "box"` for parameters that need exact values; use `mode: "slider"` only for percentage-based values |
+| No entity_category on diagnostic entities | Battery role, pool status, and control state entities clutter the main entity list alongside actionable entities | Set `entity_category: "diagnostic"` for read-only status entities; `entity_category: "config"` for tuning parameters |
+
+## "Looks Done But Isn't" Checklist
+
+- [ ] **MQTT Discovery:** All entities have `availability_topic` or `expire_after` -- verify entities go unavailable when EMS stops
+- [ ] **MQTT Discovery:** `origin` field included with `name`, `sw_version`, and `support_url` -- verify in HA device info page
+- [ ] **MQTT Discovery:** Old sensor topics cleaned up after platform migration (sensor -> binary_sensor) -- verify no duplicate entities
+- [ ] **MQTT Discovery:** `object_id` not used anywhere -- verify no deprecation warnings in HA 2025.10+ logs
+- [ ] **Ingress:** Dashboard loads correctly via both direct URL and HA sidebar -- verify with browser DevTools network tab
+- [ ] **Ingress:** WebSocket connects via Ingress (wss:// protocol) -- verify real-time updates work in HA sidebar
+- [ ] **Ingress:** Static assets load with relative paths -- verify no 404s in browser console
+- [ ] **Number Entities:** Command received on command_topic is validated before applying -- verify out-of-range values are rejected
+- [ ] **Number Entities:** State published back to state_topic after command processing -- verify HA UI reflects actual state, not commanded state
+- [ ] **Config Migration:** Wizard config values migrated to Supervisor options on first v1.2 startup -- verify with a fresh v1.1 -> v1.2 upgrade
+- [ ] **Config Migration:** `ems_config.json` backed up and no longer read by application -- verify removal does not break startup
+- [ ] **Translations:** Every option in `config.yaml` has an `en.yaml` entry -- verify no raw key names shown in HA add-on config page
+- [ ] **Binary Sensors:** Online/offline entities use `binary_sensor` platform, not `sensor` -- verify device_class is `connectivity` or `running`
+- [ ] **Services:** Service calls fail gracefully when hardware is offline -- verify from HA Developer Tools > Services
+
+## Recovery Strategies
+
+| Pitfall | Recovery Cost | Recovery Steps |
+|---------|---------------|----------------|
+| unique_id changed (Pitfall 1) | HIGH | Revert unique_id to old values. Users must manually re-add entities to dashboards if entity registry entries were auto-deleted. No automated recovery. |
+| Duplicate entities from platform migration (Pitfall 2) | MEDIUM | Publish empty retained payloads to old discovery topics. Users may need to manually delete stale entities from HA entity registry. |
+| Ingress broken (Pitfall 3) | LOW | Direct access still works. Fix base path configuration and rebuild frontend. No data loss. |
+| paho thread crash (Pitfall 4) | MEDIUM | Restart the add-on. Implement health check + auto-reconnect. No data loss but commands lost during outage. |
+| Wrong Number entity limits (Pitfall 5) | LOW-MEDIUM | Re-publish discovery with corrected min/max. Backend validation prevents hardware damage even if HA sends bad values. |
+| Config migration failure (Pitfall 6) | HIGH | User must manually re-enter all settings in HA add-on config page. Provide a migration fallback that reads wizard config as backup. |
+| Silent service call failure (Pitfall 7) | LOW | Add logging and error feedback. No data loss, just missed commands. |
+
+## Pitfall-to-Phase Mapping
+
+| Pitfall | Prevention Phase | Verification |
+|---------|------------------|--------------|
+| unique_id preservation (P1) | MQTT Discovery Overhaul | Diff old vs. new discovery payloads; verify unique_id unchanged for all 17 existing entities |
+| Platform migration cleanup (P2) | MQTT Discovery Overhaul | After upgrade, verify HA device shows correct entity count (no duplicates) |
+| Ingress path rewriting (P3) | Ingress Support | Test dashboard loads via both `http://host:8000` and HA sidebar Ingress URL |
+| paho subscribe threading (P4) | Controllable Entities (Number/Select) | Broker restart test: kill Mosquitto, wait 30s, restart; verify entities recover within 60s |
+| Number min/max validation (P5) | Controllable Entities (Number/Select) | Send out-of-range command on MQTT; verify backend rejects and publishes correct state |
+| Config migration (P6) | Remove Setup Wizard (first phase) | Fresh v1.1 install with wizard config -> upgrade to v1.2 -> verify all settings preserved |
+| Service error handling (P7) | HA Services | Call service with Huawei driver offline; verify HA shows error or entity shows unchanged state |
+| Entity naming (UX) | MQTT Discovery Overhaul | Verify HA entity list shows clean names like "EMS Huawei Battery SOC" not "EMS Energy Management System Huawei Battery SOC" |
+| `object_id` deprecation | MQTT Discovery Overhaul | Run HA 2025.10+ and check logs for zero deprecation warnings from EMS entities |
+| `expire_after` + retained state conflict | MQTT Discovery Overhaul | Stop EMS, wait for `expire_after` timeout, verify entities show "unavailable" not stale value |
 
 ## Sources
 
-- Direct codebase analysis: `backend/scheduler.py`, `backend/coordinator.py`, `backend/tariff.py`, `backend/live_tariff.py`, `backend/consumption_forecaster.py`, `backend/schedule_models.py`, `backend/controller_model.py`, `backend/config.py`
-- Architecture context: `.planning/PROJECT.md` (v1.0 design decisions, dual-battery independence principle)
-- Domain knowledge: HIGH confidence -- battery energy management and tariff arbitrage are well-understood engineering domains with documented failure modes
+- [HA MQTT Integration docs](https://www.home-assistant.io/integrations/mqtt/) -- discovery, availability, origin, entity_category, migrate_discovery
+- [HA MQTT Number docs](https://www.home-assistant.io/integrations/number.mqtt/) -- command_topic, state_topic, min/max, mode
+- [object_id deprecation (HA Core #153612)](https://github.com/home-assistant/core/issues/153612) -- deprecated 2025.10, removed 2026.4
+- [object_id vs default_entity_id discussion](https://community.home-assistant.io/t/mqtt-object-id-vs-default-entity-id-warning/937665)
+- [Ingress WebSocket support discussion](https://community.home-assistant.io/t/ingress-with-support-for-websocket/588542) -- WebSocket upgrade headers, proxy configuration
+- [Ingress static asset issues](https://community.home-assistant.io/t/trouble-with-static-assets-in-custom-addon-with-ingress/712298) -- base path, relative URLs
+- [X-Ingress-Path header usage](https://community.home-assistant.io/t/how-to-use-x-ingress-path-in-an-add-on/276905)
+- [paho-mqtt thread crash on reconnect (GitHub #894)](https://github.com/eclipse-paho/paho.mqtt.python/issues/894) -- BrokenPipeError in on_connect subscribe
+- [HA Supervisor Proxy and Ingress (DeepWiki)](https://deepwiki.com/home-assistant/supervisor/6.3-proxy-and-ingress)
+- [expire_after vs availability_topic discussion](https://community.home-assistant.io/t/mqtt-discovery-msg-availability-vs-expire-after/788468)
+- Direct codebase analysis: `backend/ha_mqtt_client.py`, `backend/evcc_mqtt_driver.py`, `backend/main.py`, `backend/config.py`, `backend/setup_config.py`, `ha-addon/config.yaml`, `ha-addon/run.sh`, `ha-addon/translations/en.yaml`, `frontend/vite.config.ts`
+
+---
+*Pitfalls research for: HA best practice alignment (v1.2 milestone)*
+*Researched: 2026-03-23*
