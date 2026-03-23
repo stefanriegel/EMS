@@ -45,6 +45,10 @@ Both battery systems operate independently with zero oscillation — coordinated
 - ✓ Decision log view with expandable reasoning and REST polling — Phase 5
 - ✓ Per-battery tariff timeline with charge slot visualization — Phase 5
 - ✓ Collapsible DeviceDetail with role prominence — Phase 5
+- ✓ Consolidated multi-stage Dockerfile (Node.js frontend build + HA base Python runtime) — Phase 6
+- ✓ HA Add-on config schema with Victron unit IDs, coordinator tuning, and Modul3 tariff fields — Phase 6
+- ✓ Setup wizard backend migrated from Victron MQTT to Modbus TCP with pymodbus probe — Phase 6
+- ✓ Setup wizard frontend with Advanced unit ID toggle and Modul3 tariff fields — Phase 6
 
 ### Active
 
@@ -52,7 +56,7 @@ Both battery systems operate independently with zero oscillation — coordinated
 - [ ] ~~Per-system metrics and reporting in InfluxDB~~ → Validated in Phase 4
 - [ ] ~~Production-ready alerting and monitoring~~ → Validated in Phase 4
 - [ ] ~~Reworked React dashboard with per-system visibility and decision transparency~~ → Validated in Phase 5
-- [ ] HA Add-on as primary deployment target
+- [ ] ~~HA Add-on as primary deployment target~~ → Validated in Phase 6
 - [ ] ~~Tariff optimization with per-battery dispatch strategy~~ → Validated in Phase 3
 
 ### Out of Scope
@@ -115,4 +119,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-22 after Phase 5 completion*
+*Last updated: 2026-03-23 after Phase 6 completion*
