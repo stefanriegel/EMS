@@ -130,6 +130,42 @@ export interface OptimizationPayload {
   computed_at: string;
   stale: boolean;
   forecast_comparison?: { predicted_kwh: number; actual_kwh: number; error_pct: number } | null;
+  day_plans?: DayPlanPayload[] | null;
+}
+
+// ---------------------------------------------------------------------------
+// Multi-day forecast (GET /api/optimization/forecast)
+// ---------------------------------------------------------------------------
+
+export interface ForecastDayPayload {
+  date: string;
+  day_index: number;
+  solar_kwh: number;
+  consumption_kwh: number;
+  net_kwh: number;
+  confidence: number;
+  charge_target_kwh: number;
+  advisory: boolean;
+}
+
+export interface ForecastPayload {
+  days: ForecastDayPayload[];
+}
+
+// ---------------------------------------------------------------------------
+// Day plan in schedule response (extension of OptimizationPayload)
+// ---------------------------------------------------------------------------
+
+export interface DayPlanPayload {
+  date: string;
+  day_index: number;
+  solar_kwh: number;
+  consumption_kwh: number;
+  net_kwh: number;
+  confidence: number;
+  charge_target_kwh: number;
+  advisory: boolean;
+  slots: ChargeSlotPayload[];
 }
 
 // ---------------------------------------------------------------------------

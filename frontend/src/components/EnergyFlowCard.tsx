@@ -325,6 +325,19 @@ export function EnergyFlowCard({ pool, devices }: Props) {
         <text x={GRID.cx} y={GRID.cy + NODE_R + 16} className="node-label">
           Grid
         </text>
+        {homeToGridActive && (
+          <text
+            x={GRID.cx}
+            y={GRID.cy + NODE_R + 32}
+            textAnchor="middle"
+            fontSize={11}
+            fontWeight={600}
+            fill="var(--accent-green)"
+            data-testid="ef-export-label"
+          >
+            EXPORT
+          </text>
+        )}
         <text x={GRID.cx} y={GRID.cy - NODE_R - 8} className="node-value">
           {gridValue}
         </text>
