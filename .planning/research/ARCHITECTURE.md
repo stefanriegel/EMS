@@ -1,552 +1,502 @@
-# Architecture Patterns
+# Architecture Patterns: Grid Export Optimization & Multi-Day Scheduling
 
-**Domain:** Dual-battery energy management system with independent dispatch
-**Researched:** 2026-03-22
+**Domain:** Energy management — grid export arbitrage and multi-day weather-aware scheduling
+**Researched:** 2026-03-23
+**Scope:** New components and integration points for v1.1 features on top of existing dual-battery EMS
+
+## Existing Architecture Summary
+
+The current system has clear boundaries:
+
+```
+EvccClient ──> Scheduler ──> ChargeSchedule ──> Coordinator ──> Controllers
+     |              |                                  |
+SolarForecast   TariffEngine                     Grid meter (P_target)
+ConsumptionForecast                              Role assignment
+                                                 Hysteresis/ramp
+```
+
+**Coordinator** runs a 5s control loop: poll controllers, check EVCC hold, check grid charge slot, compute P_target from grid meter, assign roles (PRIMARY_DISCHARGE / SECONDARY_DISCHARGE / CHARGING / HOLDING / GRID_CHARGE), allocate watts with hysteresis and ramp limiting.
+
+**Scheduler** runs nightly: fetches EVCC state (EVopt, solar forecast, grid prices), queries consumption history, derives per-battery SoC targets, selects cheapest tariff window, produces `ChargeSchedule` with `ChargeSlot` list.
+
+**Key observation:** The coordinator currently has NO export-awareness. It zeroes grid import (P_target > 0 => discharge, P_target < 0 => charge from PV surplus). It never intentionally exports stored energy. The `feed_in_allowed` flags in `SystemConfig` exist but are not used in the coordinator's discharge logic.
 
 ## Recommended Architecture
 
-### Overview: Coordinator + Per-Battery Controllers
+### Component Map: New vs Modified
 
-Replace the current monolithic `Orchestrator` (which computes weighted-average SoC and dispatches proportional setpoints to both systems) with a three-tier architecture:
+| Component | Status | Changes |
+|-----------|--------|---------|
+| `ExportAdvisor` | **NEW** | Real-time export vs. store decision engine |
+| `WeatherScheduler` | **NEW** | Multi-day horizon scheduling wrapper |
+| `WeatherClient` | **NEW** | Weather API client (solar irradiance forecast) |
+| `Coordinator._run_cycle()` | MODIFY | Add export path between grid-charge check and P_target computation |
+| `Scheduler.compute_schedule()` | MODIFY | Accept multi-day horizon, return `MultiDaySchedule` |
+| `CompositeTariffEngine` | MODIFY | Add `feed_in_rate_eur_kwh` to pricing model |
+| `SystemConfig` | MODIFY | Add `feed_in_rate_eur_kwh: float` field |
+| `schedule_models.py` | MODIFY | Add `ExportSlot`, `MultiDaySchedule` types |
+| `api.py` | MODIFY | Expose export decisions and multi-day schedule via REST |
+| Frontend | MODIFY | Display export status, multi-day forecast in tariff timeline |
+
+### Data Flow with Export Optimization
 
 ```
-                         ┌──────────────────────┐
-                         │    FastAPI Lifespan   │
-                         │   (wiring + startup)  │
-                         └──────────┬─────────────┘
-                                    │ owns
-                         ┌──────────▼─────────────┐
-                         │     Coordinator         │
-                         │  (dispatch + stability) │
-                         └──┬───────────────────┬──┘
-                  instructs │                   │ instructs
-              ┌─────────────▼──────┐   ┌────────▼──────────────┐
-              │  HuaweiController  │   │  VictronController    │
-              │  (state machine,   │   │  (state machine,      │
-              │   anti-oscillation,│   │   anti-oscillation,   │
-              │   setpoint logic)  │   │   setpoint logic)     │
-              └────────┬───────────┘   └────────┬──────────────┘
-                       │ reads/writes            │ reads/writes
-              ┌────────▼───────────┐   ┌────────▼──────────────┐
-              │  HuaweiDriver      │   │  VictronDriver        │
-              │  (Modbus TCP)      │   │  (Modbus TCP — new)   │
-              └────────────────────┘   └───────────────────────┘
+                                    Coordinator._run_cycle()
+                                    ========================
+                                    1. Poll controllers
+                                    2. Check EVCC hold         (unchanged)
+                                    3. Check grid charge slot   (unchanged)
+                    NEW ──────────> 4. Check export advisory    <── ExportAdvisor
+                                    5. Compute P_target         (unchanged)
+                                    6. Route: charge / discharge (unchanged)
+
+ExportAdvisor inputs:
+  - Current import rate (from TariffEngine)
+  - Fixed feed-in rate (from SystemConfig)
+  - Pool SoC (from controller snapshots)
+  - Upcoming consumption forecast (from ConsumptionForecaster)
+  - Solar forecast (from EVCC or WeatherClient)
+  - Next charge schedule (from Scheduler)
+
+ExportAdvisor output:
+  - STORE: do nothing special, let normal P_target logic run
+  - EXPORT: override P_target to intentionally push stored energy to grid
+  - export_power_w: recommended export power budget
+  - reasoning: structured explanation for decision log
 ```
 
-**Why this pattern over alternatives:**
+### Data Flow with Multi-Day Scheduling
 
-- **Coordinator + controllers** beats **agent-based dispatch** (where each battery independently decides based on shared signals) because agent-based systems require consensus protocols and are prone to split-brain when both agents react to the same grid-power signal simultaneously. With a coordinator, there is a single decision point that allocates responsibility before controllers execute.
-- **Per-battery state machines** beat the current **single state machine** because each system has fundamentally different characteristics (30 kWh / 5 kW vs 64 kWh / 10 kW), different communication protocols, different failure modes, and different control semantics (Huawei: discharge power limit register vs Victron: AC power setpoint per phase).
-- **Coordinator allocates, controllers execute** ensures that total system behavior is stable (no fighting) while each controller handles its own anti-oscillation, ramp rates, and failure isolation independently.
+```
+                    Nightly Scheduler Loop
+                    ======================
+                    1. Fetch EVCC state (solar, prices)      (unchanged)
+          NEW ───>  2. Fetch weather forecast (2-3 days)     <── WeatherClient
+                    3. Query consumption history              (unchanged)
+          NEW ───>  4. Compute multi-day energy balance       <── WeatherScheduler
+                    5. Derive per-battery SoC targets          (modified)
+                    6. Select cheapest tariff windows          (unchanged)
+                    7. Build MultiDayPlan                      (new output)
+
+WeatherScheduler wraps existing Scheduler:
+  - Day 1: Existing Scheduler logic (enhanced with day-2/3 lookahead)
+  - Day 2-3: Advisory forecasts only (no binding charge slots)
+  - Decision: "charge more tonight" or "defer — sunny tomorrow"
+```
 
 ### Component Boundaries
 
-| Component | Responsibility | Communicates With | Owns |
-|-----------|---------------|-------------------|------|
-| **Coordinator** | Reads global signals (grid power, PV, tariff, EVCC), computes power budget, allocates discharge/charge targets per battery, monitors combined stability | Both controllers (instructs), Scheduler (receives schedules), TariffEngine (reads rates), EvccMonitor (reads battery mode) | Power budget allocation, combined system state snapshot, dispatch strategy |
-| **HuaweiController** | Receives target from Coordinator, runs its own state machine, applies hysteresis/ramp/deadband, writes setpoints to HuaweiDriver, reports actual state back | Coordinator (receives targets, reports state), HuaweiDriver (reads/writes) | Per-battery state machine, setpoint history, anti-oscillation state, failure counter |
-| **VictronController** | Same as HuaweiController but for Victron; handles 3-phase per-phase setpoint logic internally | Coordinator (receives targets, reports state), VictronDriver (reads/writes) | Per-battery state machine, per-phase setpoint history, anti-oscillation state |
-| **HuaweiDriver** | Modbus TCP read/write for SUN2000 + LUNA2000 registers | HuaweiController only | Connection state, register cache |
-| **VictronDriver** | Modbus TCP read/write for Venus OS GX device (replacing current MQTT driver) | VictronController only | Connection state, register cache |
-| **Scheduler** | Computes nightly charge schedules with per-battery targets | Coordinator (provides schedule), TariffEngine, ConsumptionForecaster | Active schedule, charge slots |
-| **MetricsWriter** | Writes per-battery and combined metrics to InfluxDB | Coordinator (receives snapshots) | InfluxDB connection |
-| **API Layer** | Exposes per-battery and combined state via REST + WebSocket | Coordinator (reads state) | WebSocket connections |
+| Component | Responsibility | Communicates With |
+|-----------|---------------|-------------------|
+| `ExportAdvisor` | Real-time export vs. store arbitrage using feed-in rate vs. import rate, consumption lookahead | Coordinator (called per-cycle), TariffEngine (rate lookup), Scheduler (upcoming slots), ConsumptionForecaster (demand forecast) |
+| `WeatherClient` | Fetch multi-day solar irradiance forecast from weather API | Scheduler (provides forecast data), EvccClient (fallback/supplement solar data) |
+| `WeatherScheduler` | Extend scheduling horizon to 2-3 days, compute cross-day energy balance | Scheduler (wraps or extends), WeatherClient (forecast input), ConsumptionForecaster (multi-day demand) |
+| `Coordinator` (modified) | Insert export advisory check into control loop | ExportAdvisor (query), Controllers (execute export commands) |
 
-### Data Flow
+## New Component Designs
 
-**Signal acquisition (every cycle, 5 s):**
+### ExportAdvisor
 
-```
-1. Coordinator calls huawei_ctrl.poll() and victron_ctrl.poll() concurrently
-2. Each controller calls its driver to read current state
-3. Each controller returns a BatteryReport:
-   - soc_pct, power_w, available, max_charge_w, max_discharge_w
-   - controller_state (its local state machine)
-   - error (if any)
-4. Coordinator also reads:
-   - Grid power from Victron controller (Venus OS grid meter)
-   - PV power from Huawei controller (SUN2000 master)
-   - Current tariff rate from TariffEngine
-   - EVCC battery mode from EvccMonitor
-   - Active charge schedule from Scheduler
-```
+**Purpose:** Decide each control cycle whether to export stored energy to the grid for profit, or retain it for upcoming consumption.
 
-**Dispatch decision (Coordinator, every cycle):**
-
-```
-1. Compute P_target = grid_power_w (positive = importing, need to discharge)
-2. Check overrides:
-   a. EVCC hold → both targets = 0, state = DISCHARGE_LOCKED
-   b. Active charge slot → route charge power to designated battery
-   c. Both controllers unavailable → both targets = 0, state = HOLD
-3. Compute available headroom per battery:
-   - huawei_headroom = max(0, huawei_soc - huawei_min_soc) * huawei_capacity
-   - victron_headroom = max(0, victron_soc - victron_min_soc) * victron_capacity
-4. Apply dispatch strategy (see "Dispatch Strategies" below)
-5. Send target_w to each controller
-6. Each controller independently:
-   a. Applies anti-oscillation filters (hysteresis, ramp limiter, deadband)
-   b. Runs its state machine transition (with debounce)
-   c. Writes filtered setpoint to driver
-   d. Reports back actual applied setpoint
-7. Coordinator builds CombinedSystemState from both reports
-8. Coordinator publishes to MetricsWriter and WebSocket
-```
-
-**Per-battery controller internal flow:**
-
-```
-receive_target(target_w: float) →
-  ├─ ramp_limiter(target_w) → ramped_w
-  │    (limits Δw per cycle to max_ramp_rate)
-  ├─ deadband_filter(ramped_w) → filtered_w
-  │    (suppresses write if |ramped_w - last_written| < deadband_w)
-  ├─ state_machine_transition(filtered_w)
-  │    (debounced: N consecutive cycles in same proposed state)
-  ├─ write_to_driver(filtered_w)
-  │    (only if not suppressed by deadband)
-  └─ return ControllerReport(actual_w, state, available)
-```
-
-## Anti-Oscillation Algorithm Specifics
-
-The current system has oscillation problems because both batteries react to the same grid power signal proportionally. When Huawei discharges, it changes the grid power reading, which the next cycle uses to compute a different Victron target, causing both systems to chase each other.
-
-### Root Cause Analysis
-
-1. **Shared feedback loop:** Both batteries see the combined effect of each other's actions via the grid meter
-2. **No temporal separation:** Both setpoints are computed and applied simultaneously
-3. **Proportional splitting amplifies noise:** Small SoC differences cause disproportionate target swings
-
-### Anti-Oscillation Strategy: Layered Filtering
-
-Each layer addresses a different oscillation frequency:
-
-#### Layer 1: Coordinator-Level Role Assignment (prevents inter-battery oscillation)
-
-Instead of proportional splitting, assign **roles** each cycle:
-
-| Role | Description | Assigned When |
-|------|-------------|---------------|
-| **PRIMARY** | Covers base load up to its max, first to discharge | Higher SoC headroom OR designated base-load system |
-| **SECONDARY** | Covers overflow above primary's max | Primary insufficient for P_target |
-| **IDLE** | Not discharging (but available as backup) | P_target fully covered by primary |
-| **CHARGING** | Accepting surplus PV or grid charge | PV surplus or scheduled charge slot |
-
-**Role assignment heuristic:**
+**Why a separate class:** The coordinator should not contain tariff arbitrage logic directly. Export decisions require forward-looking analysis (consumption forecast, upcoming rate changes, scheduled charge windows) that does not belong in the 5s reactive control loop. The advisor pre-computes and the coordinator just asks "should I export now?"
 
 ```python
-# Simplified — actual implementation adds configurable thresholds
-if victron_headroom_kwh > huawei_headroom_kwh * 1.5:
-    primary, secondary = VICTRON, HUAWEI
-elif huawei_headroom_kwh > victron_headroom_kwh * 1.5:
-    primary, secondary = HUAWEI, VICTRON
-else:
-    # Similar headroom — use Victron as primary (larger capacity, 3-phase)
-    primary, secondary = VICTRON, HUAWEI
+@dataclass
+class ExportDecision:
+    """Output of ExportAdvisor for a single control cycle."""
+    action: Literal["STORE", "EXPORT"]
+    export_power_w: float  # 0 when STORE
+    reasoning: str
+    margin_eur_kwh: float  # feed_in - import_rate (positive = export profitable)
+    soc_after_export_pct: float  # projected pool SoC if export runs for 1 hour
 
-primary_target = min(P_target, primary.max_discharge_w)
-secondary_target = max(0, P_target - primary_target)
+class ExportAdvisor:
+    """Real-time grid export arbitrage engine.
+
+    Core rule: Export when feed_in_rate > current_import_rate AND
+    pool SoC is high enough that upcoming consumption + next charge
+    window can cover the deficit. Never export below reserve threshold.
+    """
+
+    def __init__(
+        self,
+        tariff_engine: CompositeTariffEngine,
+        sys_config: SystemConfig,
+        orch_config: OrchestratorConfig,
+    ) -> None: ...
+
+    def advise(
+        self,
+        h_snap: ControllerSnapshot,
+        v_snap: ControllerSnapshot,
+        scheduler: Scheduler | None,
+        consumption_forecast_kwh: float,
+        solar_forecast_kwh: float,
+        now: datetime,
+    ) -> ExportDecision: ...
 ```
 
-**Why roles prevent oscillation:** Only the primary battery reacts to grid meter changes. The secondary has a fixed target (overflow) or is idle. No feedback loop between the two.
+**Decision logic:**
 
-**Role stickiness:** Once assigned, a role persists for `role_hold_cycles` (default: 6 cycles = 30 s) before re-evaluation. This prevents rapid role-swapping during load transients.
+1. **Rate check:** `feed_in_rate > import_rate * safety_factor` (safety_factor ~0.95 to avoid marginal exports). With a fixed feed-in tariff (e.g., 0.082 EUR/kWh), this means export is profitable only during off-peak import windows where import rate < feed-in rate. With Octopus Go off-peak at ~0.07 EUR/kWh + Modul3 NT, there may be windows where this holds.
 
-#### Layer 2: Per-Controller Ramp Limiter (prevents intra-battery oscillation)
+2. **SoC floor check:** Combined pool SoC must remain above a configurable `export_min_soc_pct` (suggest 30%) after projected export. This ensures enough stored energy for the household between now and the next cheap charge window.
 
-Each controller limits how fast its setpoint can change:
+3. **Consumption lookahead:** Project energy demand until the next charge slot. If `stored_energy - export_energy > projected_demand`, export is safe.
+
+4. **Solar surplus handling:** When PV production exceeds load AND batteries are full (SoC >= 95%), always export -- there is no alternative. This is currently "lost" energy because the coordinator just holds when batteries are full.
+
+5. **Export power budget:** Allocate watts to export based on the surplus and battery discharge limits. Cap at grid connection limits.
+
+**Critical subtlety:** The fixed feed-in tariff (Einspeisevergutung) in Germany is typically 0.082 EUR/kWh for systems > 10 kWp. This is LOWER than most import rates (Octopus peak ~0.28 EUR/kWh). So the primary export scenario is: batteries full + PV producing. The secondary scenario (discharge batteries to grid for profit) only makes economic sense when import rate is very low (off-peak + NT window) AND you would charge again anyway. This is a narrow arbitrage.
+
+**Recommended approach:** Start simple -- export only when batteries are full and PV is producing. Defer the "discharge stored energy for arbitrage" case to a later iteration since the margins are thin with a fixed feed-in rate.
+
+### WeatherClient
+
+**Purpose:** Fetch multi-day solar irradiance forecast from a free weather API.
 
 ```python
-max_ramp_w_per_cycle = 500  # Huawei: 500 W/cycle (100 W/s at 5s intervals)
-                             # Victron: 800 W/cycle (160 W/s at 5s intervals)
+@dataclass
+class DaySolarForecast:
+    """Solar energy forecast for a single day."""
+    date: date
+    expected_kwh: float
+    hourly_w: list[float]  # 24 values, average expected PV power per hour
+    cloud_cover_pct: float  # average cloud cover (0=clear, 100=overcast)
+    confidence: float  # 0.0-1.0, decreases with forecast horizon
 
-delta = target_w - last_target_w
-if abs(delta) > max_ramp_w_per_cycle:
-    ramped_w = last_target_w + sign(delta) * max_ramp_w_per_cycle
-else:
-    ramped_w = target_w
+@dataclass
+class MultiDaySolarForecast:
+    """2-3 day solar forecast horizon."""
+    days: list[DaySolarForecast]
+    source: str  # "evcc", "open-meteo", "fallback"
+    fetched_at: datetime
+
+class WeatherClient:
+    """Fetch multi-day solar irradiance from Open-Meteo API.
+
+    Open-Meteo is free, no API key required, provides hourly GHI
+    (Global Horizontal Irradiance) for up to 16 days.
+    """
+
+    def __init__(self, latitude: float, longitude: float, peak_kwp: float) -> None: ...
+
+    async def get_forecast(self, days: int = 3) -> MultiDaySolarForecast: ...
 ```
 
-**Rationale for asymmetric ramp rates:** Victron (10 kW max, 3-phase) can ramp faster than Huawei (5 kW max, single-phase on battery side). Ramp rate = ~10% of max power per cycle is a standard industrial value.
+**API choice: Open-Meteo** because it is free, requires no API key, provides hourly global horizontal irradiance (GHI) and direct normal irradiance (DNI), and works entirely locally (no cloud account). The EMS already uses EVCC's solar forecast for day-1; the WeatherClient extends this to days 2-3.
 
-#### Layer 3: Per-Controller Dead-Band (prevents micro-oscillation at steady state)
+**PV conversion:** GHI (W/m2) to expected PV output (W) requires `peak_kwp` and a simple linear model: `pv_w = ghi_w_m2 * peak_kwp / 1000 * efficiency_factor`. An efficiency factor of 0.75-0.85 accounts for temperature, inverter, and shading losses. This is configurable.
 
-Suppress writes when the setpoint change is below a threshold:
+**Fallback:** When Open-Meteo is unreachable, fall back to EVCC's `SolarForecast.day_after_energy_wh` for day-2, and use day-2 as a proxy for day-3. When EVCC is also unavailable, use seasonal averages (pre-computed from HA statistics or hardcoded by month).
 
-| System | Dead-band | Rationale |
-|--------|-----------|-----------|
-| Huawei | 200 W combined | Existing value, works well — Modbus write overhead is significant |
-| Victron | 30 W per-phase | Slightly wider than current 20 W to reduce write frequency; Modbus TCP writes are cheaper than MQTT but still should be minimized |
+### WeatherScheduler
 
-Dead-band applies **after** ramping, so a large target change still ramps through smoothly.
+**Purpose:** Extend the nightly scheduling decision from 1-day to 2-3 day horizon.
 
-#### Layer 4: Per-Controller State Machine Debounce (prevents mode-flapping)
+This is NOT a separate scheduler -- it wraps the existing `Scheduler` and provides additional context.
 
-Each controller runs its own debounce independently:
+```python
+@dataclass
+class MultiDayPlan:
+    """Multi-day energy balance and scheduling advisory."""
+    tonight_schedule: ChargeSchedule  # binding -- from existing Scheduler
+    day2_advisory: DayAdvisory  # informational
+    day3_advisory: DayAdvisory  # informational
+    charge_adjustment: float  # multiplier on tonight's charge target (0.5-1.5)
+    reasoning: str
 
+@dataclass
+class DayAdvisory:
+    """Non-binding forecast for a future day."""
+    date: date
+    expected_solar_kwh: float
+    expected_consumption_kwh: float
+    energy_balance_kwh: float  # positive = surplus, negative = deficit
+    recommendation: Literal["sunny_defer", "cloudy_charge_more", "neutral"]
+
+class WeatherScheduler:
+    """Wraps Scheduler with multi-day lookahead.
+
+    Adjusts tonight's charge target based on weather outlook:
+    - Sunny day-2 and day-3: reduce tonight's charge (solar will cover)
+    - Cloudy day-2: charge more tonight (won't get solar tomorrow)
+    - Mixed: use existing Scheduler logic unchanged
+    """
+
+    def __init__(
+        self,
+        scheduler: Scheduler,
+        weather_client: WeatherClient,
+        consumption_reader,
+    ) -> None: ...
+
+    async def compute_multi_day_plan(self, writer=None) -> MultiDayPlan: ...
 ```
-States: IDLE, DISCHARGE, CHARGE, HOLD, GRID_CHARGE
-Debounce: 2 consecutive cycles proposing the same new state (10 s at 5 s intervals)
-```
 
-This is unchanged from v1 but now runs per-controller instead of globally.
+**Integration with existing Scheduler:** The WeatherScheduler does NOT replace the Scheduler. It:
+1. Calls `weather_client.get_forecast(days=3)` to get the multi-day outlook
+2. Calls `scheduler.compute_schedule(writer)` to get the baseline 1-day schedule
+3. Adjusts `charge_adjustment` multiplier based on day-2/day-3 forecast
+4. Returns a `MultiDayPlan` where `tonight_schedule` is the adjusted binding schedule
 
-### Anti-Oscillation Parameter Summary
-
-| Parameter | Huawei | Victron | Scope |
-|-----------|--------|---------|-------|
-| `deadband_w` | 200 | 30 (per-phase) | Controller |
-| `max_ramp_w_per_cycle` | 500 | 800 | Controller |
-| `debounce_cycles` | 2 | 2 | Controller |
-| `role_hold_cycles` | 6 | 6 | Coordinator |
-| `role_hysteresis_factor` | 1.5x | 1.5x | Coordinator |
-| `min_discharge_w` | 100 | 150 | Controller (below this, snap to 0) |
-
-### Soft-Start / Soft-Stop
-
-When transitioning from IDLE to DISCHARGE (or CHARGE):
-
-```
-Soft-start: ramp from 0 to target over 3 cycles (15 s)
-  Cycle 1: 33% of target
-  Cycle 2: 66% of target
-  Cycle 3: 100% of target
-
-Soft-stop: ramp from current to 0 over 2 cycles (10 s)
-  Cycle 1: 50% of current
-  Cycle 2: 0
-```
-
-**Why:** Sudden load changes cause grid meter spikes that feed back into P_target, creating an overshoot-undershoot cycle. Soft transitions let the grid meter stabilize between steps.
+**Adjustment rules:**
+- Day-2 solar > 1.5x day-2 consumption: `charge_adjustment *= 0.7` (reduce charge, solar will cover)
+- Day-2 solar < 0.5x day-2 consumption: `charge_adjustment *= 1.3` (charge more, cloudy ahead)
+- Day-3 solar < 0.3x day-3 consumption: additional `*= 1.1` (extended cloudy stretch)
+- Clamp `charge_adjustment` to [0.3, 1.5] to prevent extreme swings
 
 ## Patterns to Follow
 
-### Pattern 1: Controller Protocol (Abstract Base)
+### Pattern 1: Advisory Pattern (ExportAdvisor)
 
-Each battery controller implements a common interface so the Coordinator does not care about hardware specifics:
+**What:** Components that make recommendations but do not execute actions. The coordinator retains full control over when and how to act.
 
-```python
-from dataclasses import dataclass
-from enum import Enum
-from typing import Protocol
+**When:** Any new decision-making logic that feeds into the control loop.
 
-class ControllerState(str, Enum):
-    IDLE = "IDLE"
-    DISCHARGE = "DISCHARGE"
-    CHARGE = "CHARGE"
-    HOLD = "HOLD"
-    GRID_CHARGE = "GRID_CHARGE"
-
-@dataclass
-class BatteryReport:
-    """Snapshot returned by a controller after each poll cycle."""
-    soc_pct: float
-    power_w: float              # actual measured power (positive = charge)
-    available: bool
-    max_charge_w: float
-    max_discharge_w: float
-    state: ControllerState
-    applied_setpoint_w: float   # what was actually written after filtering
-    error: str | None
-
-class BatteryController(Protocol):
-    """Interface that each per-battery controller implements."""
-
-    async def poll(self) -> BatteryReport:
-        """Read driver state, return report."""
-        ...
-
-    async def set_target(self, target_w: float, mode: ControllerState) -> None:
-        """Receive dispatch target from Coordinator. Controller applies
-        ramp/deadband/debounce internally before writing to driver."""
-        ...
-
-    async def safe_shutdown(self) -> None:
-        """Write zero setpoints and enter HOLD."""
-        ...
-
-    @property
-    def name(self) -> str: ...
-
-    @property
-    def capacity_kwh(self) -> float: ...
-```
-
-### Pattern 2: Coordinator Owns the Loop, Controllers Own the Writes
-
-The Coordinator runs the async control loop (currently in `Orchestrator._run`). Controllers do not have their own loops — they are called synchronously within the Coordinator's cycle:
+**Why:** The coordinator is the single point of control. Adding export logic directly into `_run_cycle()` would make it a god method. The advisor pattern keeps the coordinator's structure (poll -> check conditions -> route) clean.
 
 ```python
-class Coordinator:
-    async def _run_cycle(self):
-        # 1. Poll both controllers concurrently
-        huawei_report, victron_report = await asyncio.gather(
-            self._huawei_ctrl.poll(),
-            self._victron_ctrl.poll(),
+# In coordinator._run_cycle(), after grid charge check:
+if self._export_advisor is not None:
+    export = self._export_advisor.advise(
+        h_snap, v_snap, self._scheduler,
+        consumption_kwh, solar_kwh, now,
+    )
+    if export.action == "EXPORT":
+        h_cmd, v_cmd = self._compute_export_commands(
+            export.export_power_w, h_snap, v_snap
         )
-
-        # 2. Compute dispatch (Coordinator logic)
-        targets = self._compute_dispatch(huawei_report, victron_report)
-
-        # 3. Instruct controllers (they apply their own filtering)
-        await asyncio.gather(
-            self._huawei_ctrl.set_target(targets.huawei_w, targets.huawei_mode),
-            self._victron_ctrl.set_target(targets.victron_w, targets.victron_mode),
-        )
-
-        # 4. Build combined state and publish
-        state = self._build_combined_state(huawei_report, victron_report)
-        await self._publish(state)
+        await self._huawei_ctrl.execute(h_cmd)
+        await self._victron_ctrl.execute(v_cmd)
+        self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
+        decision = self._check_and_log_decision(h_cmd, v_cmd, 0.0)
+        await self._write_integrations(...)
+        return
 ```
 
-**Why controllers don't have their own loops:** Independent loops introduce timing drift and race conditions on shared resources (grid meter). A single loop with concurrent I/O ensures deterministic ordering.
+### Pattern 2: Wrapper/Enhancer (WeatherScheduler wraps Scheduler)
 
-### Pattern 3: Immutable Dispatch Instructions
+**What:** New component wraps an existing one to extend behavior without modifying the original.
 
-The Coordinator sends immutable instruction dataclasses, not mutable shared state:
+**When:** Adding a new dimension (multi-day horizon) to an existing computation (nightly schedule).
+
+**Why:** The existing Scheduler has 300+ lines of tested logic. Modifying it to handle multi-day horizons would touch every branch. Instead, WeatherScheduler calls it and adjusts the output.
 
 ```python
-@dataclass(frozen=True)
-class DispatchTarget:
-    """Immutable instruction from Coordinator to Controller."""
-    target_w: float
-    mode: ControllerState
-    reason: str
-    timestamp: float
+# In main.py lifespan:
+scheduler = Scheduler(evcc_client, consumption_reader, tariff_engine, sys_config, orch_config)
+weather_client = WeatherClient(lat, lon, peak_kwp)
+weather_scheduler = WeatherScheduler(scheduler, weather_client, consumption_reader)
+
+# In nightly loop:
+plan = await weather_scheduler.compute_multi_day_plan(writer=writer)
+scheduler.active_schedule = plan.tonight_schedule  # Coordinator reads this
 ```
 
-This prevents any possibility of the Coordinator mutating a target after the Controller has started processing it.
+### Pattern 3: Optional Dependency Injection (existing EMS pattern)
 
-### Pattern 4: Per-Battery Metrics Tags
+**What:** All new components follow the existing `set_X()` injection pattern on the Coordinator.
 
-All InfluxDB writes include a `battery` tag (`huawei` or `victron`) so dashboards and queries can filter by system:
+**When:** Any new integration that the system can function without.
 
 ```python
-# Combined measurement
-write_point("ems_state", tags={"scope": "combined"}, fields={...})
+# ExportAdvisor is optional -- system works without it (no export, same as v1.0)
+coordinator.set_export_advisor(export_advisor)  # or None if feed_in_rate not configured
 
-# Per-battery measurements
-write_point("ems_battery", tags={"battery": "huawei"}, fields={
-    "soc_pct": report.soc_pct,
-    "power_w": report.power_w,
-    "setpoint_w": report.applied_setpoint_w,
-    "state": report.state.value,
-})
+# WeatherClient is optional -- scheduler falls back to EVCC solar only
+weather_scheduler = WeatherScheduler(scheduler, weather_client=None, ...)
 ```
 
 ## Anti-Patterns to Avoid
 
-### Anti-Pattern 1: Weighted-Average SoC for Dispatch
+### Anti-Pattern 1: Export in the Discharge Path
 
-**What:** The current v1 approach: `(huawei_soc * 30 + victron_soc * 64) / 94` used to determine combined pool state.
+**What:** Adding export logic inside the existing discharge allocation (`_allocate()` or `_assign_discharge_roles()`).
 
-**Why bad:** Masks individual battery states. When Huawei is at 10% and Victron at 80%, the combined SoC is 57% — suggesting healthy state while Huawei is near empty. Dispatch decisions based on this average will try to discharge Huawei further.
+**Why bad:** Discharge roles are about covering household load from batteries. Export is about pushing energy TO the grid -- it is a fundamentally different intent. Mixing them would corrupt the role semantics (what does PRIMARY_DISCHARGE mean when you are exporting?).
 
-**Instead:** Each controller reports its own SoC. The Coordinator makes decisions based on per-battery headroom, never on an averaged value. A combined SoC may still be displayed in the UI for convenience but must never be used for dispatch logic.
+**Instead:** Add a new `EXPORTING` role to `BatteryRole` enum. Insert the export check as a separate code path in `_run_cycle()`, between grid-charge and P_target computation, just like how grid-charge is a separate path today.
 
-### Anti-Pattern 2: Shared Mutable State Between Controllers
+### Anti-Pattern 2: Multi-Day Schedule as Binding Slots
 
-**What:** Both controllers reading/writing the same state object (like the current `UnifiedPoolState`).
+**What:** Creating `ChargeSlot` entries for day-2 and day-3 that the coordinator tries to execute.
 
-**Why bad:** Race conditions even in async code (if one controller's await yields, the other can see partial state). More importantly, it couples the controllers — a bug in one corrupts the other's view.
+**Why bad:** Day-2/3 forecasts are unreliable. The scheduler runs nightly, so tomorrow night it will recompute with fresh data. Binding multi-day slots would create stale, conflicting schedules.
 
-**Instead:** Each controller owns its state. The Coordinator receives immutable reports and builds a combined view.
+**Instead:** Day-2/3 are advisory only (`DayAdvisory`). They influence tonight's charge target but are never directly executed. Each night's run recomputes fresh.
 
-### Anti-Pattern 3: Proportional Splitting Without Role Assignment
+### Anti-Pattern 3: External Weather API in the Control Loop
 
-**What:** Splitting P_target proportionally by SoC headroom and sending both setpoints simultaneously.
+**What:** Calling Open-Meteo from the 5s coordinator cycle.
 
-**Why bad:** Both batteries react to the same signal, creating a feedback loop through the grid meter. When Huawei discharges 2 kW, grid power drops 2 kW, and the next cycle gives Victron a lower target, which then causes grid power to rise, giving Huawei a higher target, etc.
+**Why bad:** Network latency (100-500ms) in a 5s loop. API rate limits. Unnecessary -- weather changes on hourly scale, not 5-second scale.
 
-**Instead:** Role-based dispatch where only the PRIMARY battery actively tracks grid power. The SECONDARY receives a stable, bounded target.
+**Instead:** WeatherClient fetches once per scheduler run (nightly or every 6 hours). Results are cached on the WeatherScheduler. The ExportAdvisor uses the cached forecast.
 
-### Anti-Pattern 4: Agent-Based Autonomous Dispatch
+## Integration Points with Existing Code
 
-**What:** Each battery runs its own control loop, reads grid power independently, and decides its own setpoint.
+### 1. Coordinator Control Loop (`coordinator.py`)
 
-**Why bad:** Classic split-brain problem. Both agents see the same grid import and both try to discharge to cover it. Result: 2x the needed discharge, causing grid export, which both agents then try to reduce by cutting discharge, causing grid import again. Oscillation is guaranteed.
+**Where:** Between step 3 (grid charge check) and step 4 (P_target computation) in `_run_cycle()`.
 
-**Instead:** Single Coordinator makes dispatch decisions. Controllers only execute filtered setpoints.
+**What changes:**
+- New `self._export_advisor: ExportAdvisor | None = None` field
+- New `set_export_advisor()` method
+- New export check block (similar structure to grid charge block)
+- New `BatteryRole.EXPORTING` value
+- New `_compute_export_commands()` method
 
-## Dispatch Strategies
+**Minimal diff area:** ~30-40 lines added to `_run_cycle()`, one new method.
 
-The Coordinator supports pluggable dispatch strategies. Start with one, add more later:
+### 2. Tariff Engine (`tariff.py` / `tariff_models.py`)
 
-### Strategy 1: Priority Cascade (recommended for MVP)
+**What changes:**
+- Add `feed_in_rate_eur_kwh: float` to `SystemConfig` (or a new `ExportConfig`)
+- ExportAdvisor reads this to compare against current import rate
 
-```
-1. If P_target > 0 (import from grid, need to discharge):
-   a. Assign larger-headroom battery as PRIMARY
-   b. PRIMARY covers up to min(P_target, primary_max_discharge)
-   c. SECONDARY covers overflow: max(0, P_target - primary_actual)
-   d. If P_target < min_discharge_w: both IDLE (snap-to-zero)
+**Minimal change:** Single field addition. The feed-in rate is FIXED (not time-varying), so it does not need integration into `CompositeTariffEngine`'s slot schedule. Just a config value.
 
-2. If P_target < 0 (exporting to grid, PV surplus):
-   a. Assign lower-SoC battery as PRIMARY for charging
-   b. PRIMARY absorbs up to min(|P_target|, primary_max_charge)
-   c. SECONDARY absorbs overflow
+### 3. Scheduler (`scheduler.py`)
 
-3. Role re-evaluation every role_hold_cycles with hysteresis
-```
+**What changes:**
+- `compute_schedule()` now receives an optional `charge_adjustment: float` parameter from WeatherScheduler
+- The SoC target calculation in step 4 applies the multiplier
+- Alternatively: WeatherScheduler calls `compute_schedule()` unchanged, then scales `target_soc_pct` on the returned `ChargeSlot` objects
 
-### Strategy 2: Time-of-Use Optimization (future)
+**Preferred approach:** WeatherScheduler post-processes the output (Pattern 2). Zero changes to `scheduler.py`.
 
-```
-During cheap tariff: charge both batteries at max rate
-During expensive tariff: discharge both batteries, Victron first (larger)
-During shoulder tariff: discharge only Victron, hold Huawei as reserve
-```
+### 4. Schedule Models (`schedule_models.py`)
 
-### Strategy 3: Forecast-Driven (future)
+**New types:**
+- `ExportDecision` dataclass
+- `DaySolarForecast` dataclass
+- `MultiDaySolarForecast` dataclass
+- `DayAdvisory` dataclass
+- `MultiDayPlan` dataclass
 
-```
-Use consumption forecast + PV forecast to pre-position batteries:
-- Evening peak expected: ensure both batteries > 80% before peak
-- Overnight: charge cheapest battery first during lowest tariff
-- Morning: hold — PV will cover load soon
-```
+**Modified:** None. Existing types remain unchanged.
 
-## Integration with FastAPI Lifespan
+### 5. Config (`config.py`)
 
-The Coordinator replaces the current Orchestrator in the lifespan wiring:
+**New fields on SystemConfig:**
+- `feed_in_rate_eur_kwh: float = 0.0` (0 = export optimization disabled)
+- `export_min_soc_pct: float = 30.0` (minimum pool SoC before allowing export)
 
+**New dataclass:**
+- `WeatherConfig` with `latitude`, `longitude`, `peak_kwp`, `efficiency_factor`
+
+**Environment variables:**
+- `FEED_IN_RATE_EUR_KWH` -- fixed feed-in tariff rate
+- `EXPORT_MIN_SOC_PCT` -- minimum SoC for export (default 30)
+- `WEATHER_LATITUDE`, `WEATHER_LONGITUDE` -- location for weather API
+- `PV_PEAK_KWP` -- installed PV peak power in kWp
+- `PV_EFFICIENCY` -- system efficiency factor (default 0.80)
+
+### 6. API (`api.py`)
+
+**New endpoints:**
+- `GET /api/export/status` -- current ExportDecision (STORE/EXPORT, margin, reasoning)
+- `GET /api/optimization/multi-day` -- MultiDayPlan with advisory forecasts
+
+**Modified:**
+- `GET /api/optimization/schedule` -- include `charge_adjustment` and multi-day context in response
+
+### 7. Lifespan Wiring (`main.py`)
+
+**New wiring in startup:**
 ```python
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # 1. Create drivers (unchanged)
-    huawei_driver = HuaweiDriver(huawei_config)
-    victron_driver = VictronDriver(victron_config)  # NEW: Modbus TCP
+# Export advisor (optional -- only when feed_in_rate > 0)
+if sys_config.feed_in_rate_eur_kwh > 0:
+    export_advisor = ExportAdvisor(tariff_engine, sys_config, orch_config)
+    coordinator.set_export_advisor(export_advisor)
 
-    # 2. Connect drivers
-    await huawei_driver.connect()
-    await victron_driver.connect()
-
-    # 3. Create controllers (NEW)
-    huawei_ctrl = HuaweiController(
-        driver=huawei_driver,
-        config=HuaweiControllerConfig.from_env(),
+# Weather client (optional -- only when lat/lon configured)
+weather_config = WeatherConfig.from_env()
+if weather_config.latitude != 0.0:
+    weather_client = WeatherClient(
+        weather_config.latitude, weather_config.longitude, weather_config.peak_kwp
     )
-    victron_ctrl = VictronController(
-        driver=victron_driver,
-        config=VictronControllerConfig.from_env(),
-    )
-
-    # 4. Create Coordinator (replaces Orchestrator)
-    coordinator = Coordinator(
-        huawei=huawei_ctrl,
-        victron=victron_ctrl,
-        sys_config=sys_config,
-        dispatch_config=DispatchConfig.from_env(),
-    )
-
-    # 5. Wire optional dependencies (same pattern as today)
-    coordinator.set_scheduler(scheduler)
-    coordinator.set_tariff_engine(tariff_engine)
-    coordinator.set_evcc_monitor(evcc_mqtt)
-    coordinator.set_notifier(notifier)
-    coordinator.set_metrics_writer(writer)
-
-    # 6. Start
-    await coordinator.start()
-    app.state.coordinator = coordinator
-
-    yield
-
-    # 7. Shutdown
-    await coordinator.stop()          # writes safe setpoints via controllers
-    await huawei_driver.close()
-    await victron_driver.close()
+    weather_scheduler = WeatherScheduler(scheduler, weather_client, consumption_reader)
+    app.state.weather_scheduler = weather_scheduler
 ```
 
-**Key difference from v1:** The Coordinator does not directly hold driver references. It only talks to controllers. This enforces the boundary — the Coordinator cannot accidentally bypass a controller's anti-oscillation filters.
-
-## Suggested Build Order
-
-Based on component dependencies:
-
-```
-Phase 1: Foundation (no oscillation risk — building blocks)
-├── 1a. BatteryController protocol + BatteryReport dataclass
-├── 1b. VictronDriver (Modbus TCP — replacing MQTT driver)
-├── 1c. HuaweiController wrapping existing HuaweiDriver
-└── 1d. VictronController wrapping new VictronDriver
-
-Phase 2: Coordinator Core (replaces Orchestrator)
-├── 2a. Coordinator with single-loop dispatch
-├── 2b. Priority Cascade dispatch strategy
-├── 2c. Role assignment with stickiness + hysteresis
-└── 2d. Anti-oscillation: ramp limiter + deadband per controller
-
-Phase 3: Integration (wiring into existing system)
-├── 3a. FastAPI lifespan rewiring (Coordinator replaces Orchestrator)
-├── 3b. API endpoints for per-battery state
-├── 3c. Per-battery InfluxDB metrics
-├── 3d. WebSocket broadcast of per-battery state
-└── 3e. Scheduler integration (per-battery charge targets)
-
-Phase 4: Frontend + Polish
-├── 4a. Per-battery dashboard cards
-├── 4b. Decision transparency (show role assignments, dispatch reasoning)
-├── 4c. Soft-start/soft-stop refinement
-└── 4d. Advanced dispatch strategies (ToU, forecast-driven)
-```
-
-**Dependency rationale:**
-- Phase 1 has no dependencies on the existing Orchestrator — can be built in parallel
-- Phase 2 depends on the controller protocol from Phase 1
-- Phase 3 depends on Phase 2 (Coordinator must exist before it can be wired in)
-- Phase 4 depends on Phase 3 (API endpoints must exist before frontend consumes them)
-
-**Critical path:** The VictronDriver rewrite (1b) is the highest-risk item because it involves a protocol change (MQTT to Modbus TCP) with hardware testing required. Start it first.
-
-## Scalability Considerations
-
-| Concern | Current (2 batteries) | Future (3-4 batteries) | Notes |
-|---------|----------------------|----------------------|-------|
-| Coordinator dispatch | O(n) per cycle, trivial | O(n) still trivial | Role assignment generalizes to N batteries |
-| Control loop timing | 5 s cycle handles 2 polls + 2 writes easily | May need staggered polls at 4+ batteries | 5 s is generous for Modbus TCP (~50 ms round-trip) |
-| Anti-oscillation | Role-based prevents 2-battery oscillation | Priority cascade generalizes to N tiers | Only 1 PRIMARY at a time, rest are SECONDARY/IDLE |
-| Metrics | 2 batteries = ~10 points/cycle | Linear scaling | InfluxDB handles this trivially |
-
-## File Structure (Proposed)
+## New File Structure
 
 ```
 backend/
-├── coordinator.py              # Coordinator class (replaces orchestrator.py)
-├── controllers/
-│   ├── __init__.py
-│   ├── protocol.py             # BatteryController protocol, BatteryReport, ControllerState
-│   ├── base.py                 # BaseController (shared anti-oscillation logic)
-│   ├── huawei_controller.py    # HuaweiController(BaseController)
-│   └── victron_controller.py   # VictronController(BaseController)
-├── dispatch/
-│   ├── __init__.py
-│   ├── strategy.py             # DispatchStrategy protocol
-│   ├── priority_cascade.py     # PriorityCascadeStrategy
-│   └── models.py               # DispatchTarget, RoleAssignment
-├── drivers/
-│   ├── huawei_driver.py        # (unchanged)
-│   ├── huawei_models.py        # (unchanged)
-│   ├── victron_driver.py       # REWRITTEN: Modbus TCP instead of MQTT
-│   └── victron_models.py       # (updated for Modbus TCP register map)
-├── anti_oscillation/
-│   ├── __init__.py
-│   ├── ramp_limiter.py         # RampLimiter class
-│   ├── deadband.py             # DeadbandFilter class
-│   └── soft_transition.py      # SoftStart / SoftStop logic
-└── ...                         # existing files (api.py, config.py, etc.)
+  export_advisor.py        # NEW -- ExportAdvisor + ExportDecision
+  weather_client.py        # NEW -- Open-Meteo API client
+  weather_scheduler.py     # NEW -- Multi-day scheduling wrapper
+  export_models.py         # NEW -- ExportDecision, DayAdvisory, MultiDayPlan
+  coordinator.py           # MODIFIED -- export check in control loop
+  config.py                # MODIFIED -- feed_in_rate, WeatherConfig
+  schedule_models.py       # MODIFIED -- MultiDaySolarForecast, DaySolarForecast
+  api.py                   # MODIFIED -- new endpoints
+  main.py                  # MODIFIED -- lifespan wiring
+  tariff.py                # UNCHANGED
 ```
+
+## Suggested Build Order
+
+Based on dependency analysis:
+
+### Phase 1: Export Foundation (config + advisor, no coordinator changes)
+
+1. **Config changes** -- add `feed_in_rate_eur_kwh`, `export_min_soc_pct` to SystemConfig
+2. **ExportAdvisor** -- implement decision logic, fully unit-testable without coordinator
+3. **Export models** -- `ExportDecision` dataclass
+
+Dependencies: None. Can be built and tested in isolation.
+
+### Phase 2: Coordinator Integration (wire export into control loop)
+
+4. **BatteryRole.EXPORTING** -- add to enum
+5. **Coordinator export path** -- add check in `_run_cycle()`, `_compute_export_commands()`
+6. **Decision logging** -- export decisions in ring buffer
+7. **InfluxDB metrics** -- export power/revenue tracking
+
+Dependencies: Phase 1 complete. Requires working coordinator for integration tests.
+
+### Phase 3: Weather Client (independent of Phase 2)
+
+8. **WeatherConfig** -- latitude, longitude, peak_kwp in config.py
+9. **WeatherClient** -- Open-Meteo HTTP client with caching
+10. **DaySolarForecast / MultiDaySolarForecast** -- data models
+
+Dependencies: None. Can be built in parallel with Phase 2.
+
+### Phase 4: Multi-Day Scheduling (requires Phase 3)
+
+11. **WeatherScheduler** -- wraps Scheduler, applies charge_adjustment
+12. **DayAdvisory / MultiDayPlan** -- advisory models
+13. **Nightly loop integration** -- use WeatherScheduler instead of bare Scheduler
+
+Dependencies: Phase 3 (WeatherClient) + existing Scheduler.
+
+### Phase 5: API + Frontend
+
+14. **API endpoints** -- `/api/export/status`, `/api/optimization/multi-day`
+15. **Frontend** -- export badge on dashboard, multi-day forecast visualization
+
+Dependencies: Phases 2 + 4.
+
+**Phase ordering rationale:**
+- Export advisor is independent of weather -- it works with real-time tariff data only
+- Weather client is independent of export -- it provides data for scheduling
+- Coordinator integration is the riskiest change (touching the control loop) so it comes after the advisor is well-tested
+- Multi-day scheduling needs weather data, so it follows the weather client
+- API/frontend comes last because the backend must be stable first
+
+## Scalability Considerations
+
+Not applicable -- this is a single-home EMS. The only scaling concern is API rate limits on Open-Meteo (free tier: 10,000 requests/day). With one request per scheduler run (nightly), this is a non-issue.
 
 ## Sources
 
-- Analysis of current codebase: `backend/orchestrator.py`, `backend/unified_model.py`, `backend/config.py`, `backend/main.py`
-- Control theory: standard industrial PID / cascade controller patterns applied to ESS dispatch
-- Anti-oscillation: hysteresis and dead-band are standard power electronics control techniques; ramp limiters are standard in VFD and inverter control
-- Coordinator pattern: standard in distributed systems (Raft leader analogy — single decision maker, multiple executors)
-
-**Confidence:** MEDIUM — architecture patterns are well-established in control systems engineering and distributed systems. The specific parameter values (ramp rates, dead-bands, role hold times) are reasonable starting points but will need tuning with the actual hardware. No web sources could be consulted to verify against similar residential dual-battery EMS implementations.
-
----
-
-*Architecture research: 2026-03-22*
+- Existing codebase analysis: `backend/coordinator.py`, `backend/scheduler.py`, `backend/tariff.py`, `backend/config.py`, `backend/schedule_models.py`, `backend/controller_model.py`, `backend/evcc_client.py`, `backend/consumption_forecaster.py`
+- Open-Meteo API documentation: https://open-meteo.com/en/docs (free weather API, no key required)
+- German feed-in tariff (Einspeisevergutung) rates: fixed rate for systems > 10 kWp (LOW confidence -- verify with actual contract rate)

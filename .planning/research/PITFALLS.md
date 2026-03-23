@@ -1,277 +1,255 @@
 # Domain Pitfalls
 
-**Domain:** Dual-battery EMS with independent Modbus TCP dispatch (Huawei LUNA2000 + Victron MultiPlus-II)
-**Researched:** 2026-03-22
+**Domain:** Grid export optimization + multi-day weather-aware scheduling for dual-battery EMS
+**Researched:** 2026-03-23
 
 ## Critical Pitfalls
 
-Mistakes that cause hardware damage, energy loss, or require architectural rewrites.
+Mistakes that cause rewrites, safety issues, or significant economic losses.
 
-### Pitfall 1: Victron ESS Mode State Machine Conflicts
+### Pitfall 1: Export-Then-Buyback Loop
 
-**What goes wrong:** The Victron MultiPlus-II ESS controller has its own internal control logic that fights external setpoints. When Hub4Mode is set to 3 (external control), the Venus OS still enforces BatteryLife limits, minimum SoC cutoffs, and absorption/float voltage thresholds. External AcPowerSetpoint writes are silently clamped or ignored when the internal state machine disagrees --- the inverter simply does not follow the setpoint, with no error returned via MQTT or Modbus.
+**What goes wrong:** The system exports stored energy at the fixed feed-in rate (e.g. 0.082 EUR/kWh), then hours later buys the same energy back at a much higher import rate (e.g. 0.25+ EUR/kWh) because it underestimated upcoming consumption. The net economic loss is (import_rate - feed_in_rate) * kWh for every kWh that round-trips through the grid.
 
-**Why it happens:** Venus OS treats Hub4Mode=3 as "external control suggestions" not "absolute commands." The VE.Bus firmware has hard safety limits that cannot be overridden via software. The current v1 codebase already guards against ESS mode not being 2 or 3 (orchestrator.py:756), but does not detect when a valid ESS mode still clamps the setpoint due to BatteryLife or absorption state.
+**Why it happens:** Export decisions are made in the current 5-second control cycle based on instantaneous surplus, without considering the next 4-12 hours of consumption. The existing coordinator has no forward-looking consumption model in its real-time dispatch loop. The scheduler runs nightly and produces a static charge plan, but nothing prevents the real-time loop from exporting energy that the nightly plan assumed would be available for evening discharge.
 
-**Consequences:** The EMS writes a discharge setpoint of 3000W, but the Victron only delivers 500W because BatteryLife has engaged its minimum SoC protection. The EMS thinks it dispatched 3000W total, leading to grid import the system intended to cover. The Huawei system is under-dispatched because the coordinator assumed Victron would cover its share. Over time, SoC imbalance grows.
+**Consequences:** With 94 kWh of battery pool and a typical 40 kWh daily consumption, a single bad export decision could waste 5-15 EUR per occurrence. Over a month of daily mistakes, this erases the entire economic benefit of the optimization.
 
 **Prevention:**
-1. Always read back the actual battery power after writing a setpoint (compare `battery_power_w` to the written setpoint on the next cycle). If delta exceeds 500W for 3+ cycles, flag the Victron as "clamped" and reassign its share to Huawei.
-2. Read `MinimumSocLimit` from Venus OS settings and enforce it in the EMS coordinator, never relying on the inverter to silently enforce it.
-3. Monitor VE.Bus state transitions (State register): values 3=Bulk, 4=Absorption, 5=Float indicate the charger is active and will override discharge setpoints.
-4. After switching from GRID_CHARGE back to normal dispatch, wait at least 2 control cycles before trusting Victron setpoint adherence --- the VE.Bus state machine takes 5-10 seconds to transition.
+- Never export battery-stored energy unless both batteries are above a "reserve threshold" that guarantees coverage of predicted consumption until the next cheap charging window
+- Compute a "minimum retained energy" floor based on the consumption forecast for the remaining hours until the next grid charge opportunity
+- Export priority: PV surplus (zero opportunity cost) >> battery energy above reserve >> never export below reserve
+- The reserve calculation must be per-battery, respecting independent SoC floors already in SystemConfig
 
-**Detection:** Log `abs(written_setpoint - actual_power) / written_setpoint` as a metric. Alert when this ratio exceeds 50% for 30+ seconds.
+**Detection:** Log every export decision with the computed reserve margin. Alert when post-export combined SoC drops below the consumption-coverage threshold. Track actual vs. predicted consumption after export decisions to measure forecast accuracy.
 
-**Phase:** Must be addressed in the Victron Modbus TCP driver phase. The driver must expose setpoint adherence as a first-class concept.
+**Which phase should address it:** Must be solved in the grid export optimization phase, not deferred. This is the primary failure mode of export arbitrage.
 
 ---
 
-### Pitfall 2: Cross-System Oscillation from Shared Grid Meter
+### Pitfall 2: Forecast Coupling Creates Cascading Errors Across Days
 
-**What goes wrong:** Both battery systems observe the same grid meter reading. If both react simultaneously to a grid import of 2000W, each tries to discharge 2000W, producing 4000W total --- overshooting into grid export. Next cycle, both see grid export and reduce output, causing grid import again. The system oscillates at the control loop frequency (every 5 seconds) with increasing amplitude.
+**What goes wrong:** The multi-day scheduler chains decisions across 2-3 days: "sunny tomorrow, so charge less tonight; cloudy day-after, so charge more tomorrow night." If the Day 1 solar forecast is wrong (cloud cover 4 hours earlier than predicted), the system enters Day 2 under-charged, and the Day 2 plan was already computed assuming Day 1 went well. The error compounds.
 
-**Why it happens:** The v1 codebase uses a single `P_target` derived from `victron.grid_power_w` (orchestrator.py:608) and splits it proportionally. This works because one orchestrator computes one total. In v2 with independent controllers, if both controllers read the same grid meter and independently compute their response, they will double-count the demand.
+**Why it happens:** The existing scheduler runs once at 23:00 and produces a single static schedule. Extending to multi-day means the Day 2/3 plans are computed with Day 1 still in the future. There is no intra-day re-planning when forecasts deviate from reality.
 
-**Consequences:** Continuous power oscillation (potentially hundreds of watts swinging every 5 seconds), accelerated battery cycling, grid instability notifications from the utility, and inverter thermal stress from rapid power reversals.
+**Consequences:** Two consecutive wrong forecasts can leave 94 kWh of batteries at 15-20% SoC entering a cloudy day with no cheap tariff window. The system then buys expensive peak electricity to cover basic consumption. Worse, if the system also exported on Day 1 based on the incorrect sunny forecast, the loss doubles.
 
 **Prevention:**
-1. The coordinator must be the single entity that reads the grid meter and assigns per-system budgets. Individual controllers must NEVER independently react to grid meter readings.
-2. Implement a "budget allocation" pattern: coordinator reads grid power, subtracts each system's current actual output, computes the residual, and allocates incremental adjustments (not absolute targets).
-3. Use staggered setpoint writes: write Huawei first, wait 1-2 seconds for the grid meter to reflect the change, then compute and write Victron. This breaks the simultaneous-reaction loop.
-4. Apply exponential moving average (EMA) smoothing on grid meter readings before computing setpoints. A 3-cycle EMA (alpha=0.4) dampens transient spikes without introducing excessive lag.
+- Re-compute the multi-day schedule at least twice daily (e.g., 06:00 and 23:00) to incorporate updated weather forecasts
+- Each day's plan must be independently valid: even if Day 2 is wrong, Day 1 decisions must not leave the system in a dangerous state
+- Apply a "forecast confidence discount" that increases with horizon: Day 1 solar at 80% of forecast, Day 2 at 60%, Day 3 at 40% (these are initial values; tune from real data)
+- Keep the existing single-day fallback as the safety net: if multi-day planning is uncertain, fall back to conservative single-day behavior
 
-**Detection:** Monitor grid power standard deviation over 60-second windows. Healthy operation: stdev < 200W. Oscillation: stdev > 500W with regular periodicity.
+**Detection:** Compare planned vs. actual SoC at each schedule boundary (midnight, 06:00). Log the forecast error for each day. Alert when combined SoC deviates more than 15% from the plan.
 
-**Phase:** Core coordinator design phase. This is the most architecturally critical decision --- get it wrong and the entire independent-control model fails.
+**Which phase should address it:** Multi-day scheduling phase. The re-planning mechanism and confidence discounts must be designed upfront, not bolted on.
 
 ---
 
-### Pitfall 3: Huawei Modbus TCP Single-Connection Locking
+### Pitfall 3: Dual-Battery Export Coordination Breaks Independence
 
-**What goes wrong:** The Huawei SUN2000 inverter accepts only one Modbus TCP connection at a time on port 502. If the EMS holds the connection and another client (Home Assistant integration, SolarEdge monitor, or a second EMS instance) attempts to connect, one of two things happens: (a) the existing connection is dropped, causing the EMS to lose control, or (b) the new connection is rejected, breaking the other tool.
+**What goes wrong:** The grid export optimization adds a new coordination concern between the two battery systems: "which battery should export?" If the coordinator starts routing export decisions through a centralized export planner, it violates the fundamental architecture principle of independent controllers. Worse, if one battery is exporting while the other is charging from PV, the system can create a local energy loop (battery A discharges to grid, battery B charges from grid) that wastes energy through round-trip losses.
 
-**Why it happens:** Huawei's Modbus TCP implementation is a simple serial-to-TCP bridge with a single-client lock. The `huawei-solar` library uses `AsyncHuaweiSolar` which holds a persistent connection. The v1 reconnect logic (`_with_reconnect` in huawei_driver.py:169) retries once on `ConnectionException`, but if another client has seized the port, reconnection will also fail.
+**Why it happens:** The existing coordinator assigns roles (PRIMARY_DISCHARGE, CHARGING, GRID_CHARGE) independently per battery. Adding an EXPORTING role creates a new interaction: export from battery A affects the grid meter reading that battery B uses for its P_target calculation. The P_target computation in `_compute_p_target()` reads Victron's grid_power_w, which includes any export currently happening.
 
-**Consequences:** Intermittent connection drops every few minutes, failed setpoint writes leaving the battery in its last commanded state (which may be wrong for current conditions), and complete loss of Huawei control if another integration takes priority.
+**Consequences:** Oscillation between batteries: Huawei exports -> grid goes negative -> Victron sees surplus -> Victron charges -> grid goes positive -> Huawei stops exporting -> Victron stops charging -> cycle repeats every 5 seconds. This is exactly the oscillation pattern the v1.0 rewrite was designed to eliminate.
 
 **Prevention:**
-1. Ensure the HA Huawei Solar integration is DISABLED or configured as read-only (polling only, no write) when the EMS is running. Document this as a hard requirement.
-2. Add exponential backoff to reconnection (not just one retry): 1s, 2s, 4s, 8s, max 30s. The current single-retry in `_with_reconnect` is insufficient for contested connections.
-3. Implement a connection health heartbeat: if 3 consecutive read attempts fail, log ERROR and enter safe mode for the Huawei system (set discharge limit to 0 before dropping the connection).
-4. Consider using the Modbus TCP proxy pattern: run a local Modbus proxy (e.g., `mbpoll` or custom asyncio proxy) that multiplexes the single upstream connection to multiple downstream clients.
+- Export must be a coordinator-level decision, not a per-controller decision. The coordinator already owns role assignment; export is just another role (or a modifier on HOLDING/CHARGING)
+- Only one battery system should export at a time, and only when the other is either HOLDING or CHARGING from PV (not from grid)
+- Use the existing hysteresis and debounce machinery: apply the same dead-band (300W/150W) and 2-cycle debounce to export transitions
+- The P_target calculation must account for intentional export: if the coordinator commanded export of X watts, subtract X from the grid reading before computing P_target for the next cycle
 
-**Detection:** Track connection drop frequency. More than 2 drops per hour indicates connection contention.
+**Detection:** Monitor for rapid role transitions involving export (more than 2 in 30 seconds). Log when both batteries have non-zero grid-facing power in opposite directions simultaneously.
 
-**Phase:** Huawei driver rewrite phase. Connection management must be robust before building independent control on top.
+**Which phase should address it:** Grid export optimization phase. Must be solved before any export logic touches the coordinator.
 
 ---
 
-### Pitfall 4: Stale Setpoints on Communication Loss (Fail-Unsafe)
+### Pitfall 4: Schedule Model Incompatibility with Multi-Day Horizon
 
-**What goes wrong:** When the EMS loses communication with an inverter, the last-written setpoint remains active on the inverter. If the last setpoint was "discharge 5000W" and communication is lost, the inverter continues discharging at 5000W indefinitely until its own BMS low-voltage cutoff triggers. This can deep-discharge the battery below safe levels.
+**What goes wrong:** The existing `ChargeSchedule` and `ChargeSlot` models are designed for single-night operation: two slots (huawei + victron) with one shared tariff window. Extending to multi-day creates a model explosion: 2 batteries x 3 days x multiple slot types (charge, hold, export) = potentially 18+ slots with complex temporal relationships. Bolting multi-day onto the existing flat list of `ChargeSlot` objects produces an unmaintainable mess.
 
-**Why it happens:** Neither Huawei nor Victron Modbus TCP have a "watchdog timeout" that automatically reverts setpoints when the controlling client disconnects. Huawei's `StorageWorkingModesC` setting persists across connections. Victron's Hub4 AcPowerSetpoint persists until explicitly overwritten or the system reboots.
+**Why it happens:** The `ChargeSlot` dataclass has `battery`, `target_soc_pct`, `start_utc`, `end_utc`, `grid_charge_power_w`. It has no concept of "which day" or "which planning horizon" a slot belongs to. The `OptimizationReasoning` has a single `charge_energy_kwh` and `cost_estimate_eur` with no per-day breakdown. The coordinator's `_check_grid_charge()` method iterates `scheduler.active_schedule.slots` and checks if `now` falls within any slot's `[start_utc, end_utc)`. This works for one night but becomes ambiguous with overlapping days.
 
-**Consequences:** Deep discharge below BMS protection thresholds (Huawei cells can be damaged below 2.5V/cell), unexpected grid export during high-tariff periods, and no visibility into the problem until the battery hits hard cutoff.
+**Consequences:** Without a clean model evolution, the scheduler produces schedules that the coordinator misinterprets. For example, a Day 2 charge slot at 02:00 looks identical to a Day 1 charge slot at 02:00 if the coordinator only checks time-of-day. Or the API returns a flat list of 18 slots that the dashboard cannot meaningfully display.
 
 **Prevention:**
-1. Implement a "dead man's switch" pattern: before starting the control loop, record the current time. If the control loop misses 3 consecutive cycles (15 seconds at 5s interval), a separate watchdog task writes safe setpoints (0W discharge) to both systems.
-2. On the Victron side, use the `DisableCharge` and `DisableFeedIn` registers as safety latches. Set `DisableFeedIn=1` whenever the EMS is in HOLD state, and only clear it when actively dispatching.
-3. On graceful shutdown (`Orchestrator.stop()`), the current code already writes safe setpoints (orchestrator.py:220). Extend this to also reset Huawei's working mode to the BMS-default value, not just zero the discharge limit.
-4. Add a Telegram/HA notification when communication loss exceeds 60 seconds. The current `max_offline_s` timeout (config.py:173) triggers HOLD state but does not actively write zero setpoints to the hardware --- it just stops computing new ones.
+- Introduce a `DayPlan` container that groups slots by calendar date, with per-day reasoning and cost estimates
+- The `ChargeSchedule` evolves to contain `List[DayPlan]` instead of `List[ChargeSlot]`
+- Add a `day_index: int` (0=tonight, 1=tomorrow night, 2=day-after-tomorrow night) to each slot for unambiguous identification
+- Keep backward compatibility: the coordinator's `_check_grid_charge()` should still work with a flat view of all slots, filtered to `day_index == 0`
+- The API endpoint `/api/optimization/schedule` should return the multi-day structure, but the existing frontend can initially render only `day_index == 0`
 
-**Detection:** The `_huawei_last_seen` and `_victron_last_seen` timestamps already exist. Add a metric: `time_since_last_successful_write` per system.
+**Detection:** Unit test that creates a 3-day schedule and verifies `_check_grid_charge()` only activates Day 0 slots at the correct times. Integration test that verifies Day 1 slots do not accidentally trigger on Day 0.
 
-**Phase:** Safety layer phase --- must be implemented before any independent control goes live. This is a safety-critical feature, not a nice-to-have.
+**Which phase should address it:** Must be addressed at the start of multi-day scheduling work. The model change is foundational.
 
 ---
 
-### Pitfall 5: Victron MQTT-to-Modbus Migration --- Protocol Semantic Differences
+### Pitfall 5: Feed-In Tariff Comparison Using Wrong Import Rate
 
-**What goes wrong:** The v2 design switches Victron control from MQTT to Modbus TCP. The MQTT interface (`W/{portalId}/vebus/{instanceId}/Hub4/L{N}/AcPowerSetpoint`) and the Modbus TCP register interface (register 37 on the com.victronenergy.vebus service) have different semantics: MQTT values are JSON-wrapped floats with no type validation, while Modbus registers are 16-bit signed integers with implicit scaling factors. A setpoint of 3456.7W via MQTT works fine; the same value via Modbus TCP must be written as a scaled int16 (scale factor 1, so 3457) and negative values use two's complement.
+**What goes wrong:** The export arbitrage decision compares `feed_in_rate` vs. `current_import_rate` to decide whether to export or store. But the relevant comparison is not the *current* import rate — it is the import rate at the time the stored energy would actually be consumed. If the system exports at 14:00 (feed-in = 0.082, current import = 0.08 off-peak), but the stored energy would have been consumed at 18:00 (import = 0.28 peak), the export decision lost 0.198 EUR/kWh.
 
-**Why it happens:** The Victron Modbus TCP register list (published by Victron) uses different unit IDs, register addresses, and scaling factors than the MQTT topic paths. The mapping is not 1:1. Specifically, `AcPowerSetpoint` via Modbus TCP is register 37 on unit ID 246 (VE.Bus system), while via MQTT it is a per-phase topic. Modbus TCP offers a single combined setpoint register, not per-phase control (unless using individual VE.Bus unit registers which are undocumented for external control).
+**Why it happens:** The tariff engine provides `get_effective_price(dt)` for any instant, but the export decision logic naively compares `feed_in_rate` vs. `get_effective_price(now)` instead of looking ahead to when the energy would actually be needed.
 
-**Consequences:** Loss of per-phase balancing capability (the v1 MQTT approach writes per-phase setpoints that zero out per-phase grid import). If Modbus TCP only exposes a single combined setpoint, phase imbalance on a 3-phase system leads to neutral current and potentially breaker trips on heavily loaded phases.
+**Consequences:** Systematically wrong export decisions during off-peak hours. The system exports cheap-seeming energy that would have been worth peak-rate later. With 94 kWh pool capacity, this can mean 10-20 EUR/day of value destruction.
 
 **Prevention:**
-1. Before committing to the Modbus TCP migration, verify on the actual Venus OS installation whether per-phase AcPowerSetpoint registers exist in the Modbus TCP mapping. Check `/opt/victronenergy/dbus-modbus-client/` on the Venus OS device for the register map.
-2. If per-phase Modbus TCP control is not available, keep MQTT for Victron setpoint writes and use Modbus TCP only for reads. This hybrid approach preserves the per-phase balancing that v1 already implements successfully.
-3. If going full Modbus TCP, implement a phase-balancing algorithm at the inverter's AC output that distributes the single combined setpoint based on measured per-phase grid power. This is less precise than direct per-phase control.
-4. Test with Venus OS >= 3.21 which added negative AcPowerSetpoint support. Older firmware silently clamps negative values to zero.
+- The export decision must compare feed-in rate against the *weighted average import rate over the consumption forecast horizon*
+- Specifically: `value_of_stored_energy = sum(forecasted_consumption_per_slot * import_rate_per_slot) / total_forecasted_consumption`
+- Only export when `feed_in_rate >= value_of_stored_energy * safety_margin` (safety_margin ~ 0.9 to account for forecast uncertainty)
+- For a fixed feed-in tariff (the case here), this simplifies to: "never export if there is ANY upcoming import slot with rate > feed_in_rate AND predicted consumption exceeds current battery reserves minus planned solar input"
 
-**Detection:** After writing a combined setpoint via Modbus TCP, read back per-phase power. If phase imbalance exceeds 1000W, the single-setpoint approach is insufficient.
+**Detection:** Log the computed `value_of_stored_energy` alongside every export decision. Post-hoc analysis: compare export revenue against the actual import cost of replacement energy.
 
-**Phase:** Victron driver phase --- this is a go/no-go decision that must be resolved BEFORE writing the new driver. Wrong choice here means rewriting the driver again.
+**Which phase should address it:** Grid export optimization phase. This is the core economic logic of the feature.
 
 ## Moderate Pitfalls
 
-### Pitfall 6: Hysteresis Dead-Band Mismatch Between Systems
+### Pitfall 6: Solar Forecast API Rate Limits and Staleness
 
-**What goes wrong:** A single 200W hysteresis threshold (config.py:158) is applied uniformly. Huawei Modbus TCP has ~500ms round-trip latency; Victron MQTT has <100ms. A 200W dead-band prevents Huawei oscillation but allows Victron micro-oscillation. Conversely, a dead-band sized for Victron (e.g., 50W) causes Huawei to thrash.
+**What goes wrong:** The existing system gets solar forecasts from EVCC's `/api/state` endpoint, which includes `SolarForecast.tomorrow_energy_wh` and `day_after_energy_wh`. For multi-day scheduling, this needs 3-day granular forecasts (hourly or 15-min resolution). The EVCC forecast is updated periodically by its own forecast provider (forecast.solar, Solcast, etc.). Hitting the underlying API too frequently triggers rate limits; not hitting it often enough means stale data.
 
-**Why it happens:** The v1 codebase already identified this in CONCERNS.md as a known issue ("Hysteresis Dead-Band Not Configurable Per System"). The per-phase 20W dead-band for Victron (orchestrator.py:766) partially addresses this, but the combined hysteresis check (orchestrator.py:791) still gates both systems together.
+**Why it happens:** The EMS does not control the solar forecast refresh cycle — EVCC does. The `EvccState.solar` data has `timeseries_w` and `slot_timestamps_utc` but the existing scheduler only uses the scalar `tomorrow_energy_wh`. The multi-day scheduler needs the timeseries at hourly resolution for 72 hours, which may exceed what EVCC provides.
 
 **Prevention:**
-1. In v2, each independent controller must have its own hysteresis configuration: `huawei_hysteresis_w` (200-300W) and `victron_hysteresis_w` (50-100W).
-2. Add ramp-rate limiting per system: Huawei changes should be limited to 500W/cycle max, Victron to 1000W/cycle. This prevents large step changes that overshoot.
-3. Use derivative dampening: if the setpoint change direction reversed in the last 2 cycles, double the dead-band temporarily (anti-hunting logic).
+- Verify what EVCC actually provides in its solar forecast timeseries (how many hours ahead, what resolution). The `SolarForecast` model already has `timeseries_w` and `slot_timestamps_utc` — check the actual horizon length at runtime
+- If EVCC provides < 48 hours, the Day 3 forecast must use a degraded estimate (e.g., historical average for that month, or repeat Day 2 with a confidence discount)
+- Cache the last-received forecast and track its age. If the forecast is > 6 hours old, increase the confidence discount
+- Never fail the entire schedule computation because the solar forecast is stale — fall back to the existing single-day conservative approach
 
-**Phase:** Independent controller design phase.
+**Detection:** Log forecast age on every scheduler run. Warn when forecast is > 6 hours old. Track forecast accuracy (predicted vs. actual daily solar yield) to calibrate confidence discounts.
+
+**Which phase should address it:** Multi-day scheduling phase.
 
 ---
 
-### Pitfall 7: Coordinator-Controller Race Condition in Async Architecture
+### Pitfall 7: Grid Charge Target Overshoot with Two Independent Chargers
 
-**What goes wrong:** With independent controllers running as separate async tasks, the coordinator reads grid meter data, computes budgets, and sends them to controllers. But between the coordinator reading the grid meter and the controller applying the setpoint, the grid meter value has changed. The controller applies a stale budget, producing incorrect output.
+**What goes wrong:** When the multi-day scheduler computes "charge 40 kWh tonight split as 13 kWh Huawei + 27 kWh Victron," the two controllers charge independently. Neither knows the other's progress. If Huawei finishes early (30 kWh pack charges faster at 5 kW), it idles while Victron is still charging at 3 kW. Fine so far. But if the tariff window ends before Victron finishes, the system has under-charged. Conversely, if the scheduler over-estimates how much energy is needed, both batteries reach target early, and the remaining cheap-rate window is wasted.
 
-**Why it happens:** In an async architecture with a 5-second control loop, there is inherent latency between observation and action. With two independent controllers potentially writing setpoints at different times within the same cycle, the effective control delay doubles.
+**Why it happens:** The existing scheduler sets `target_soc_pct` per battery, not `target_energy_kwh`. SoC is measured by the BMS, which has its own calibration drift. A Victron BMS reporting 60% might actually be at 55% or 65%. Over a 64 kWh battery, a 5% SoC error is 3.2 kWh — significant when the total charge target is 27 kWh.
 
 **Prevention:**
-1. Use a single-writer pattern: the coordinator computes budgets AND writes setpoints in a single atomic cycle. Controllers are responsible for hardware abstraction (read/write methods) but not for deciding what to write.
-2. If controllers must be independent tasks, use a versioned state object: the coordinator publishes a budget with a monotonic sequence number. The controller checks that its budget is not stale (sequence number matches the latest grid meter reading) before applying it.
-3. Use `asyncio.gather` with a timeout to poll both systems in parallel, then compute and apply setpoints sequentially within the same event loop iteration. This is what v1 already does (orchestrator.py:485-533) and it works. Do not break this into separate tasks without solving the consistency problem.
+- Use energy-based targets (`charge_energy_kwh`) alongside SoC targets, and stop when either is reached
+- Monitor actual energy delivered (integrate power over time) during the charge window, not just BMS-reported SoC
+- Add a "charge progress" check at the midpoint of the tariff window: if the current charging rate will not reach the target by window end, increase the charge power (if hardware allows) or extend to the next cheapest slot
+- Accept that BMS SoC accuracy is +/- 5% and build that into the safety margin
 
-**Phase:** Core architecture phase --- the coordinator/controller boundary design.
+**Detection:** Log energy delivered vs. energy planned for each charge session. Alert when the delta exceeds 10%.
+
+**Which phase should address it:** Multi-day scheduling phase, but only after the model changes from Pitfall 4.
 
 ---
 
-### Pitfall 8: Grid Charge Slot Handoff Between Systems
+### Pitfall 8: Consumption Forecaster Not Adapted for Multi-Day
 
-**What goes wrong:** During a scheduled cheap-tariff grid charge window, both batteries charge simultaneously. When the window ends, both systems try to resume normal dispatch at the same instant. The combined discharge spike (both systems going from +5000W charge to -3000W discharge) creates a transient power reversal of 16000W+ that can trip the grid relay or cause the Victron to enter fault state.
+**What goes wrong:** The existing `ConsumptionForecaster` predicts next-24h consumption as a single scalar (`today_expected_kwh`). The multi-day scheduler needs per-hour consumption profiles for 72 hours. Using the scalar 3 times (one per day) ignores weekday variation (e.g., Monday vs. Sunday), weather-dependent heating loads, and time-of-use patterns within each day.
 
-**Why it happens:** The v1 `_cleanup_grid_charge` method (orchestrator.py:869) zeros setpoints on slot exit. But zeroing both systems simultaneously means the house load, which was being served by the grid during the charge window, must instantly switch to battery supply. If the house load is 3000W and both systems were charging at 5000W each, the net swing is 13000W.
+**Why it happens:** The forecaster trains GBR models on `[outdoor_temp, ewm_temp, day_of_week, hour_of_day, month]` features and predicts hourly loads — but `query_consumption_history()` sums these into a single scalar. The hourly resolution is already in the model; it is just not exposed.
 
 **Prevention:**
-1. Implement a soft-exit ramp: on charge slot end, reduce charge power by 25% per cycle over 4 cycles (20 seconds), then hold at 0 for 2 cycles, then resume normal dispatch. This limits the ramp rate to ~2500W/cycle.
-2. Stagger the exit: stop Huawei charging first (it has slower Modbus response), wait 2 cycles, then stop Victron. This distributes the transient over 10 seconds.
-3. During the ramp-down, temporarily increase the hysteresis dead-band to 500W to prevent oscillation during the transition.
+- Add a `predict_hourly(horizon_hours: int = 72) -> list[tuple[datetime, float]]` method that returns per-hour consumption predictions for the requested horizon
+- The multi-day scheduler uses this hourly profile, not the scalar
+- The scalar `query_consumption_history()` interface remains for backward compatibility with the existing single-day scheduler
+- Use the outdoor temperature forecast (if available from HA or weather integration) instead of the placeholder 10 C. This becomes critical for multi-day: a 15 C day vs. a 5 C day can differ by 10+ kWh in heat pump load
 
-**Phase:** Scheduler/coordinator integration phase.
+**Detection:** Compare hourly predictions against actual consumption (from InfluxDB or HA statistics) to validate per-hour accuracy, not just daily total.
+
+**Which phase should address it:** Must be extended before or during multi-day scheduling implementation.
 
 ---
 
-### Pitfall 9: HA Add-on Memory Constraints with Dual Control Loops
+### Pitfall 9: DST Transitions Break Multi-Day Slot Boundaries
 
-**What goes wrong:** The HA Add-on runs on devices ranging from Raspberry Pi 4 (4GB RAM) to Intel NUCs (16GB+). With v2 adding a second independent control loop, ML forecaster, two Modbus TCP connections, MQTT client, WebSocket server, and InfluxDB writer, memory usage can exceed available resources on constrained devices.
+**What goes wrong:** The existing tariff engine carefully handles DST transitions for single-day schedules (documented in `tariff.py`). Multi-day schedules that span a DST transition (e.g., schedule computed Saturday for Saturday-Monday, with DST change on Sunday) can produce slots with incorrect UTC boundaries. A charge window "02:00-05:00 Berlin time" on the DST spring-forward night only lasts 2 hours instead of 3, under-delivering charge energy.
 
-**Why it happens:** The current Dockerfile (ha-addon/Dockerfile) installs scipy/sklearn (~100MB resident) plus two async connection pools. On a Pi 4 running HAOS, the EMS Add-on competes with HA Core, Mosquitto, Z-Wave, and other add-ons for ~2.5GB of usable RAM.
+**Why it happens:** The `ChargeSlot` stores `start_utc` and `end_utc`. If the scheduler computes "3 hours of charging" by naively adding `timedelta(hours=3)` to a wall-clock time that crosses DST, the UTC slot is 2 or 4 hours instead of 3.
 
 **Prevention:**
-1. Profile memory usage with both control loops active on a Pi 4. Target: <256MB RSS for the EMS process.
-2. Make sklearn truly optional at the container level (don't install it unless `ha_ml_min_days > 0`). This saves ~100MB on constrained devices.
-3. Use connection pooling with limits: maximum 1 Modbus TCP connection per system, maximum 1 MQTT connection. No connection retry storms that spawn multiple simultaneous connections.
-4. Add a `/api/health` memory metric that reports RSS. Alert when RSS exceeds 200MB.
-5. Consider using `uvloop` instead of the default asyncio event loop for lower per-task memory overhead.
+- Always compute slot boundaries in wall-clock time first, then convert to UTC. Never add `timedelta` to UTC and convert back
+- The existing `get_price_schedule` already handles this correctly for one day. The multi-day extension must use the same pattern (convert per-day, concatenate)
+- Add explicit DST-transition-spanning test cases: schedules that cross the last Sunday of March and October
 
-**Phase:** HA Add-on packaging phase --- performance testing must happen on target hardware.
+**Detection:** Unit test: create a 3-day schedule spanning the March DST transition, verify all slot durations in UTC match expected wall-clock durations.
+
+**Which phase should address it:** Multi-day scheduling phase.
 
 ---
 
-### Pitfall 10: Inconsistent Sign Conventions Across Systems
+### Pitfall 10: Export Power Allocation Ignores Inverter Limitations
 
-**What goes wrong:** Huawei and Victron use opposite sign conventions for power. Huawei: positive = discharge power limit (how much the battery CAN discharge). Victron: negative AcPowerSetpoint = export/discharge, positive = import/charge. The v1 codebase documents this (orchestrator.py docstring lines 12-15) but the convention is implicit, scattered across the codebase, and easy to get backwards when writing new code.
+**What goes wrong:** The Huawei SUN2000 inverter has specific feed-in power limits set in its configuration (often 0 W for zero-export installations). The Victron MultiPlus-II has its own AC output limits per phase. The export optimization logic computes "export 3 kW" without checking whether the hardware is actually configured to allow grid export.
 
-**Why it happens:** Each manufacturer defines their own Modbus register semantics. There is no industry standard for battery power sign convention. The current code handles this correctly through convention and comments, but during a rewrite, a sign error in one controller will cause a system to charge when it should discharge (or vice versa).
+**Why it happens:** The existing `SystemConfig` has `huawei_feed_in_allowed: bool` and `victron_feed_in_allowed: bool`, both defaulting to `False`. The coordinator respects these flags for PV surplus handling but the new export optimization might bypass these checks if it operates at a different layer.
 
 **Prevention:**
-1. Define an explicit `PowerDirection` enum or type alias in the shared model layer: `DISCHARGE = -1, CHARGE = +1, IDLE = 0`. All internal EMS logic uses this convention. Conversion to/from hardware-specific signs happens ONLY in the driver layer.
-2. Add unit tests that verify: "when the coordinator says DISCHARGE 3000W, the Huawei driver writes +3000 to the discharge limit register, and the Victron driver writes -1000 per phase to AcPowerSetpoint."
-3. Document the sign convention in a single canonical location (not scattered in docstrings). Include a truth table:
+- The export optimization must check `feed_in_allowed` before commanding any export
+- For Huawei: the inverter itself may have a hardware feed-in limit register that overrides software commands. The driver should read and expose this limit
+- For Victron: ESS mode settings on Venus OS control whether grid feed-in is permitted. The driver's `ess_mode` register value must be checked
+- If neither system allows feed-in, the export optimization feature should log "export optimization disabled: no systems allow feed-in" and skip entirely
 
-| EMS Intent | Huawei Register | Victron AcPowerSetpoint |
-|------------|----------------|------------------------|
-| Discharge 3000W | write_max_discharge_power(3000) | write_ac_power_setpoint(N, -1000) |
-| Charge 3000W | write_max_charge_power(3000) + ac_charging(True) | write_ac_power_setpoint(N, +1000) |
-| Hold | write_max_discharge_power(0) | write_ac_power_setpoint(N, 0) |
+**Detection:** Startup check: if export optimization is enabled but both `feed_in_allowed` flags are False, log a clear warning. Never silently skip.
 
-**Phase:** Shared model/driver interface phase --- must be locked down before implementing controllers.
+**Which phase should address it:** Grid export optimization phase, as a prerequisite check before any export logic.
 
 ## Minor Pitfalls
 
-### Pitfall 11: Modbus TCP Connection Timeout vs. Register Read Timeout
+### Pitfall 11: InfluxDB Write Volume Explosion
 
-**What goes wrong:** The Huawei driver uses a single `timeout_s=10.0` (config.py:46) for both TCP connection establishment and individual register reads. On a congested network, TCP connection takes 2 seconds, leaving only 8 seconds for the register read. If the read takes 9 seconds, it times out despite being a valid (slow) response.
+**What goes wrong:** The existing system writes one `ems_decision` point per role change and one `ems_huawei` + `ems_victron` point per control cycle (every 5 seconds). Adding export decisions, multi-day schedule metrics, and forecast accuracy tracking can easily triple the write volume. On a Raspberry Pi running HA, this can exhaust the SD card's write endurance or fill the InfluxDB bucket.
 
-**Prevention:** Separate connection timeout (3s) from read timeout (10s). The `AsyncHuaweiSolar` library supports both. Use `connect_timeout` for the TCP handshake and `request_timeout` for Modbus transactions.
+**Prevention:**
+- Aggregate export metrics per 15-minute window, not per control cycle
+- Write multi-day schedule data once per computation (twice daily), not per cycle
+- Respect the existing InfluxDB-optional pattern: all new metrics must gracefully degrade when InfluxDB is unavailable
 
-**Phase:** Driver rewrite phase.
-
----
-
-### Pitfall 12: Victron Keepalive Drift Under Load
-
-**What goes wrong:** The Victron MQTT keepalive is sent every 30 seconds (victron_driver.py:350). If the event loop is blocked by a long Huawei Modbus read (up to 10 seconds), the keepalive may be delayed by 10+ seconds. If two consecutive keepalives are delayed, Venus OS stops publishing telemetry updates, causing stale data detection and the Victron system being marked offline.
-
-**Prevention:** Run the keepalive as a dedicated `asyncio.Task` that is not blocked by the control loop. Use `asyncio.create_task` (already done) but ensure the control loop does not hold the event loop with synchronous blocking calls. The current Huawei driver uses `await` properly, but verify that `AsyncHuaweiSolar.get_multiple()` does not internally block.
-
-**Phase:** Driver refactoring phase.
+**Which phase should address it:** Both phases, as each adds new metrics.
 
 ---
 
-### Pitfall 13: DST Transition in Charge Windows
+### Pitfall 12: Dashboard Overload with Multi-Day Data
 
-**What goes wrong:** Already documented in CONCERNS.md (scheduler.py:120-150). Charge windows are defined in minutes-from-midnight without DST adjustment. On spring-forward, the charge window effectively shifts 1 hour later, potentially missing the cheap tariff period entirely.
+**What goes wrong:** The existing dashboard shows a tariff timeline for 24 hours and per-battery charge slots for one night. Extending to 72 hours makes the timeline unreadable on mobile. Adding export indicators and forecast confidence bands further clutters the UI.
 
-**Prevention:** Store charge windows as local time ranges with explicit timezone (e.g., "00:30-05:00 Europe/Berlin"). Convert to UTC at runtime using `zoneinfo`. Test with `time_machine` or `freezegun` across DST boundaries.
+**Prevention:**
+- Default view: today + tonight (same as current). Expandable to 3-day view on tap
+- Use a summary card for Day 2/3: "Tomorrow: mostly sunny, light grid charge planned" rather than showing full timelines
+- Export activity: show as a simple indicator on the energy flow diagram, not a separate timeline
 
-**Phase:** Scheduler phase.
-
----
-
-### Pitfall 14: InfluxDB Write Backpressure During Dual-System Metrics
-
-**What goes wrong:** With two independent control loops writing metrics, the InfluxDB write rate doubles (from 1 write/5s to 2 writes/5s per system, plus coordinator metrics). The current fire-and-forget writer (influx_writer.py) spawns a thread per write via the influxdb-client async wrapper. Under sustained load, thread count grows.
-
-**Prevention:** Batch metrics from both systems into a single InfluxDB write per control cycle. Use the InfluxDB line protocol batch API (write multiple points in one HTTP request). Limit the thread pool to 4 workers maximum.
-
-**Phase:** Metrics/observability phase.
+**Which phase should address it:** After core logic works. UI changes should follow the backend implementation.
 
 ---
 
-### Pitfall 15: Assertions as Precondition Checks in Driver Code
+### Pitfall 13: EVCC Interaction with Export Decisions
 
-**What goes wrong:** Already documented in CONCERNS.md. The drivers use `assert self._client is not None` which is compiled out with `python -O`. In production, if the assertion is optimized away, a `NoneType has no attribute 'get_multiple'` error occurs instead of the clear "Driver not connected" message.
+**What goes wrong:** EVCC manages EV charging and can send `batteryMode=hold` to prevent battery discharge during EV charging. If the EMS is exporting from battery while EVCC sends a hold signal, the export must stop immediately. But if the export is already committed (e.g., the grid meter is reading negative because of ongoing export), the transition to hold can cause a brief grid import spike.
 
-**Prevention:** Replace all driver `assert` statements with `if ... raise RuntimeError(...)` before the rewrite. This is a prerequisite for reliable independent controllers --- each controller must get clear error messages when its driver is in a bad state.
+**Prevention:**
+- The existing EVCC hold signal already takes priority over all other decisions in the coordinator (lines 330-363 of coordinator.py). Export must follow the same pattern: EVCC hold = immediate stop of export
+- Export decisions should check EVCC state before committing, not just react to hold signals
 
-**Phase:** Pre-rewrite cleanup --- should be addressed in current codebase before the v2 work begins.
+**Which phase should address it:** Grid export optimization phase.
 
 ## Phase-Specific Warnings
 
 | Phase Topic | Likely Pitfall | Mitigation |
 |-------------|---------------|------------|
-| Victron Modbus TCP driver | Per-phase control may not be available via Modbus TCP (#5) | Verify register map on actual hardware BEFORE writing the driver. Keep MQTT as fallback. |
-| Independent controller design | Cross-system oscillation from shared grid meter (#2) | Single-writer coordinator pattern. Never let controllers independently react to grid readings. |
-| Coordinator architecture | Race conditions between budget computation and setpoint application (#7) | Atomic read-compute-write cycle. No separate async tasks for budget and setpoint. |
-| Safety layer | Stale setpoints on communication loss (#4) | Dead man's switch watchdog task. Write safe setpoints actively, don't just stop computing. |
-| Grid charge scheduling | Power reversal transient on slot exit (#8) | Soft-exit ramp over 4 cycles. Stagger system transitions. |
-| HA Add-on packaging | Memory constraints on Pi 4 (#9) | Profile on target hardware. Make sklearn optional at container level. |
-| Shared model layer | Sign convention confusion (#10) | Canonical PowerDirection type. Conversion only in drivers. Truth table in docs. |
-| Anti-oscillation tuning | Single hysteresis threshold insufficient (#6) | Per-system hysteresis + ramp-rate limiting + derivative dampening. |
-| ESS mode management | Victron internal state machine overrides external setpoints (#1) | Read back actual power. Monitor VE.Bus state. Detect setpoint clamping. |
-
-## Confidence Assessment
-
-| Pitfall | Confidence | Basis |
-|---------|-----------|-------|
-| #1 ESS Mode Conflicts | HIGH | Observed in v1 codebase (orchestrator.py:756 guard), documented Victron behavior |
-| #2 Cross-System Oscillation | HIGH | Fundamental control theory; directly caused by the architectural change from unified to independent |
-| #3 Huawei Single Connection | HIGH | Documented Huawei limitation, observed in field (reconnect logic exists for this reason) |
-| #4 Stale Setpoints | HIGH | Observed in v1 codebase (safe setpoint logic in stop()), applies to all Modbus TCP control |
-| #5 MQTT-to-Modbus Semantics | MEDIUM | Based on Victron published register maps; per-phase availability needs hardware verification |
-| #6 Hysteresis Mismatch | HIGH | Already identified in CONCERNS.md, directly measured timing differences |
-| #7 Coordinator Race Condition | MEDIUM | Standard async architecture concern; severity depends on implementation choice |
-| #8 Grid Charge Handoff | MEDIUM | Extrapolated from v1 cleanup logic; power reversal magnitude is calculated |
-| #9 HA Add-on Memory | MEDIUM | Based on Dockerfile analysis and typical Pi 4 constraints; needs profiling to confirm |
-| #10 Sign Conventions | HIGH | Directly observed in codebase --- two different conventions already in use |
+| Grid export: core arbitrage logic | Export-then-buyback (Pitfall 1) | Forward-looking consumption reserve before every export decision |
+| Grid export: coordinator integration | Oscillation between export and charge (Pitfall 3) | Export as coordinator role, one battery at a time, P_target offset |
+| Grid export: tariff comparison | Wrong import rate comparison (Pitfall 5) | Compare against weighted future import rate, not current rate |
+| Grid export: hardware limits | Inverter feed-in limits (Pitfall 10) | Check `feed_in_allowed` + hardware register limits before any export |
+| Multi-day: schedule model | Flat slot list incompatibility (Pitfall 4) | Introduce `DayPlan` container before implementing multi-day logic |
+| Multi-day: forecast chaining | Cascading forecast errors (Pitfall 2) | Independent daily plans, confidence discounts, intra-day replanning |
+| Multi-day: consumption model | Scalar forecast insufficient (Pitfall 8) | Expose hourly predictions from existing GBR models |
+| Multi-day: time handling | DST slot boundary errors (Pitfall 9) | Wall-clock-first computation, DST-spanning test cases |
+| Multi-day: solar forecast | Limited horizon from EVCC (Pitfall 6) | Verify EVCC timeseries length, degrade gracefully for Day 3 |
+| Both phases: metrics | InfluxDB write volume (Pitfall 11) | Aggregate per-window, not per-cycle; respect optional pattern |
 
 ## Sources
 
-- Codebase analysis: `backend/orchestrator.py`, `backend/drivers/victron_driver.py`, `backend/drivers/huawei_driver.py`, `backend/unified_model.py`, `backend/config.py`
-- Known issues: `.planning/codebase/CONCERNS.md`
-- Project requirements: `.planning/PROJECT.md`
-- HA Add-on config: `ha-addon/config.yaml`, `ha-addon/Dockerfile`
-- Victron Venus OS MQTT/Modbus documentation (training data, MEDIUM confidence for register-level details)
-- Huawei SUN2000 Modbus TCP behavior (training data + codebase evidence from `huawei-solar` library usage)
+- Direct codebase analysis: `backend/scheduler.py`, `backend/coordinator.py`, `backend/tariff.py`, `backend/live_tariff.py`, `backend/consumption_forecaster.py`, `backend/schedule_models.py`, `backend/controller_model.py`, `backend/config.py`
+- Architecture context: `.planning/PROJECT.md` (v1.0 design decisions, dual-battery independence principle)
+- Domain knowledge: HIGH confidence -- battery energy management and tariff arbitrage are well-understood engineering domains with documented failure modes

@@ -1,126 +1,121 @@
-# Feature Landscape
+# Feature Landscape: Grid Export Optimization & Multi-Day Scheduling
 
-**Domain:** Dual-battery energy management system with independent dispatch
-**Researched:** 2026-03-22
-**Confidence:** MEDIUM (based on domain expertise, current codebase analysis, and established control theory for multi-storage systems; no live web search available for competitive landscape validation)
+**Domain:** Battery energy management -- export arbitrage with fixed feed-in tariff and multi-day weather-aware charge scheduling
+**Researched:** 2026-03-23
+**Overall confidence:** MEDIUM-HIGH (algorithm patterns well-established in domain; specific integration points verified against existing codebase)
 
 ## Table Stakes
 
-Features users expect. Missing = system is unreliable or unusable.
+Features users expect from an export-aware, weather-planning battery system. Missing = system leaves money on the table or makes obviously bad decisions.
 
-| Feature | Why Expected | Complexity | Notes |
-|---------|--------------|------------|-------|
-| Independent per-battery control loops | Without this, the two systems fight each other. Current weighted-average SoC approach causes oscillation because Huawei (30 kWh, 500 ms Modbus latency) and Victron (64 kWh, <100 ms response) have fundamentally different characteristics. A unified setpoint proportionally split is mathematically wrong for asymmetric systems. | High | **Core architectural change.** Each battery needs its own controller with its own state machine, hysteresis thresholds, and debounce counters. This is the whole reason for the rewrite. |
-| Per-system failure isolation | If Huawei Modbus goes down, Victron must continue operating normally (and vice versa). Current code partially handles this but the unified state model means a failure in one system degrades decisions for the other. | Medium | v1 has partial support. v2 needs complete isolation: each controller enters safe state independently, coordinator adapts dispatch to the remaining system. |
-| Per-system hysteresis and dead-band | Huawei needs wider dead-band (~300-500 W) due to slower Modbus response; Victron can use tighter dead-band (~100-200 W) because of faster AC phase response. A single threshold causes either unnecessary Victron oscillation or sluggish Huawei response. | Low | Currently flagged as a concern in CONCERNS.md. Config already needs `huawei_hysteresis_w` and `victron_hysteresis_w` split. |
-| Safe state on communication loss | Each battery must independently enter a zero-power safe state if its driver loses contact. Non-negotiable for any production battery system -- hardware damage and safety risk otherwise. | Low | v1 already has this. v2 must preserve it per-controller. |
-| PV self-consumption maximization | The primary value proposition: use solar energy before grid. Both batteries should absorb excess PV generation, prioritizing the system with more headroom or lower SoC. Without this, the system has no purpose. | Medium | Requires the coordinator to distribute PV surplus intelligently across both systems based on current SoC, charge rate limits, and remaining capacity. |
-| Tariff-aware grid charging | Charge from grid during cheap tariff windows (Octopus Go overnight, Modul3 low-fee windows). Must target each battery independently because they have different charge rates (Huawei 5 kW, Victron 3 kW) and different current SoC levels. | Medium | v1 scheduler already produces per-battery charge slots. v2 needs the controllers to execute those slots independently. |
-| Per-system SoC monitoring and reporting | Operators need to see each battery's SoC, power flow, and health independently. A combined SoC hides which system is depleted and which has headroom. | Low | v1 already exposes `huawei_soc_pct` and `victron_soc_pct`. v2 needs richer per-system telemetry: charge/discharge power, temperature, cycle count if available. |
-| EVCC coordination | EVCC's `batteryMode=hold` must lock both batteries. When the EV is fast-charging, batteries should not discharge to avoid overloading the house connection. | Low | v1 has this via EVCC MQTT driver. v2 must propagate hold to both controllers. |
-| Graceful degradation for all integrations | InfluxDB, EVCC, HA, Telegram must all be optional. System must operate with zero external dependencies beyond the two inverters. | Low | v1 already implements this pattern. v2 must maintain it across the coordinator/controller split. |
-| Coordinator-level power stability | Total household power draw from/to grid must remain stable even as individual battery setpoints change. No visible flicker or power swings when the coordinator reassigns load between systems. | High | This is the hardest table-stakes feature. Requires the coordinator to ensure that when one system ramps up, the other ramps down by the same amount, with timing synchronization. |
+| Feature | Why Expected | Complexity | Dependencies on Existing | Notes |
+|---------|--------------|------------|--------------------------|-------|
+| Export-vs-store decision logic | Core value proposition -- with a fixed feed-in rate, the system must decide whether PV surplus goes to battery or grid based on whether stored energy will displace a more expensive future import | Medium | Tariff engine (`get_effective_price`), feed-in config (NEW), coordinator dispatch | The fundamental decision: if `feed_in_rate >= upcoming_import_rate * round_trip_efficiency`, export now rather than store. With a FIXED feed-in rate this simplifies to a threshold comparison against time-varying import prices. |
+| Feed-in rate configuration | Users must be able to set their fixed feed-in tariff (EUR/kWh). Germany: typically 0.08-0.12 EUR/kWh for PV < 10 kWp | Low | Config system (`SystemConfig`), setup wizard, API | Single float value. Already have `feed_in_allowed` booleans per system -- this adds the economic rate. |
+| Avoid export-then-buyback | System must not export energy it will need to buy back at a higher rate within the planning horizon. If evening consumption is predictable, don't export afternoon PV surplus that will be needed at 18:00-22:00 | High | Consumption forecaster (ML), solar forecast (EVCC), tariff engine | This is the hardest table-stakes feature. Requires forward-looking simulation: "If I export this kWh now at 0.08 EUR, will I need to import it tonight at 0.25 EUR?" The answer depends on consumption forecast + remaining solar forecast for the day. |
+| Multi-day solar awareness in charge scheduler | Scheduler must consider 2-3 day solar forecast horizon, not just tomorrow. Charge more before cloudy stretches, defer grid charge when sunny days ahead | Medium | EVCC solar data (`tomorrow_energy_wh`, `day_after_energy_wh` -- already parsed), scheduler | EVCC already provides `day_after_energy_wh`. The scheduler currently only uses `tomorrow_energy_wh`. Extending to a 2-3 day horizon is a natural evolution of the existing `net_charge_kwh` formula. |
+| PV-full forced export | When both batteries are full (SoC >= max) and PV is still producing, the system MUST allow grid export rather than curtailing PV. This is the simplest export case -- no decision needed, it is pure waste otherwise | Low | Coordinator (`_compute_setpoints`), existing `feed_in_allowed` flags | Partially exists: coordinator already checks `victron_feed_in_allowed` when both systems are charging at capacity. Needs to transition from a binary flag to an always-on behavior when feed-in rate is configured. |
+| Export decision transparency | Every export/store decision must be logged with reasoning (feed-in rate vs upcoming import rate, consumption forecast, battery headroom) so users can verify the system is making good choices | Medium | Decision ring buffer (`/api/decisions`), existing logging infrastructure | Users of battery systems are deeply analytical. Opaque export decisions erode trust fast. The existing decision transparency infrastructure (ring buffer + API) is a strong foundation. |
 
 ## Differentiators
 
-Features that set the product apart. Not expected in basic EMS, but high value for a dual-battery setup.
+Features that set this system apart. Not expected by every user, but valuable for advanced optimization.
 
-| Feature | Value Proposition | Complexity | Notes |
-|---------|-------------------|------------|-------|
-| Dynamic role assignment | Instead of fixed "Huawei = base load, Victron = peak", assign roles based on current conditions: SoC, tariff, PV generation, time of day. A nearly-full Victron should discharge first to create headroom for tomorrow's PV, while a low-SoC Huawei should hold. This maximizes the combined 94 kWh pool utilization. | High | Requires a role engine in the coordinator that evaluates conditions each cycle and assigns one of: PRIMARY_DISCHARGE, SECONDARY_DISCHARGE, CHARGING, HOLDING, GRID_CHARGE. Role transitions need their own hysteresis to avoid flip-flopping. |
-| Anti-oscillation with soft-start/soft-stop ramps | Instead of step-function setpoint changes (0 W -> 3000 W), ramp power over 3-5 cycles. Prevents voltage transients on the house bus, reduces inverter stress, and eliminates visible flicker. Particularly important when both systems change state simultaneously. | Medium | Implement as a setpoint filter in each controller: `next_setpoint = current + min(delta, max_ramp_rate_per_cycle)`. Ramp rate configurable per system (Huawei can ramp faster, Victron needs gentler ramps for AC coupling stability). |
-| SoC-based discharge priority | When both batteries are above min SoC, discharge the one with higher SoC first. This naturally balances the two systems over time without explicit balancing logic, and ensures the larger Victron (64 kWh) is utilized proportionally more during high-consumption periods. | Medium | Simple to implement in the coordinator: sort available controllers by SoC descending, assign discharge to highest-SoC system first, overflow to second system only if first cannot cover load. |
-| Charge rate optimization per tariff window | During a cheap tariff window, charge the system with the larger energy deficit first (lower SoC * capacity = more kWh needed). If the window is short, prioritize the system with the higher charge rate (Huawei 5 kW > Victron 3 kW) to maximize captured energy. | Medium | Extends the existing scheduler: instead of parallel charge slots, produce sequential or staggered slots. Charge Huawei first (faster), then Victron, maximizing total energy captured in limited windows. |
-| Decision transparency and audit log | Show operators WHY the system made each decision: "Discharging Victron because SoC=87% > Huawei SoC=42%, tariff=high, PV=0 W". Dual-battery systems are harder to understand; transparency builds trust and aids debugging. | Medium | Log structured decision records each cycle. Surface last N decisions in the dashboard. Store in InfluxDB for historical analysis. Each decision record: timestamp, inputs (SoC, tariff, PV, load), chosen action, reasoning string. |
-| Per-battery nightly charge targets | Instead of "charge both to 80%", compute per-battery targets: "Huawei to 95% (small capacity, charge fast), Victron to 60% (large capacity, enough for tomorrow's forecast)". Saves grid energy costs by not overcharging. | Low | v1 scheduler already computes per-battery targets. v2 needs to make this more intelligent: factor in next-day solar forecast, per-system discharge efficiency, and historical consumption patterns per day-of-week. |
-| Phase-aware Victron dispatch | Victron MultiPlus-II is AC-coupled with per-phase setpoints (L1/L2/L3). Current v1 splits setpoints evenly across phases or mirrors grid import. v2 can optimize: send more power to the phase with higher load, reducing grid import per-phase and avoiding phase imbalance penalties (relevant in German grid code). | Medium | Requires reading per-phase grid power from Victron (already available in VictronSystemData) and computing per-phase setpoints. Coordinator provides total Victron budget; Victron controller distributes across phases. |
-| Predictive pre-charging | If tomorrow's solar forecast is low and consumption forecast is high, start grid-charging earlier (in the cheapest window). If solar forecast is abundant, skip grid charging entirely. Goes beyond simple tariff windows to weather-aware optimization. | Medium | Extends the existing ML consumption forecaster + EVCC solar forecast. The scheduler already has solar and consumption inputs; this refines the logic to produce "no charge needed" decisions when solar covers demand. |
-| Configurable min-SoC per time-of-day | Instead of a static min SoC (e.g., 10%), allow time-based profiles: "keep 30% until 16:00 (afternoon peak), allow down to 10% after 22:00 (overnight, cheap grid available)". Prevents morning depletion while maximizing afternoon self-consumption. | Low | New config structure: list of `(time_range, min_soc_pct)` tuples. Controller uses the active time window's threshold. Falls back to static min SoC if no profile configured. |
+| Feature | Value Proposition | Complexity | Dependencies on Existing | Notes |
+|---------|-------------------|------------|--------------------------|-------|
+| Dual-battery export coordination | Decide WHICH battery to discharge for export based on SoC, capacity, and inverter efficiency. Huawei (30 kWh) exports faster to free headroom for afternoon PV; Victron (64 kWh) has more energy but different max discharge rates | Medium | Coordinator role assignment, per-system SoC tracking | Unique to this system -- most home batteries are single-system. The existing SoC-headroom-weighted dispatch can be extended with an export allocation strategy. |
+| Battery cycle cost accounting | Factor in battery degradation cost per kWh cycle when deciding export. If `feed_in_rate - degradation_cost <= 0`, don't force-discharge from battery to grid -- only export direct PV surplus | Low | Config (NEW: cycle cost parameter), export decision logic | Predbat calls this `metric_battery_cycle`. Typical value: 0.01-0.04 EUR/kWh depending on battery chemistry and warranty. Without this, the system might force-discharge batteries for marginal 1-2 cent gains that cost more in degradation. |
+| Cloudy-stretch pre-charging | When day+2 and day+3 forecasts show low solar (< 30% of average), proactively charge batteries during cheap off-peak hours the night before, even if tomorrow's forecast alone wouldn't warrant it | Medium | Multi-day solar data from EVCC, consumption forecaster, scheduler | This is the key multi-day value add. Single-day optimization misses the "sunny today, cloudy next 3 days" pattern where you should store today's PV rather than export it. |
+| Rolling forecast confidence weighting | Weight day+1 forecast more heavily than day+2, day+2 more than day+3. Weather forecasts degrade with horizon -- solar forecast for day+3 has 2-3x the error of day+1 | Low | Scheduler logic only | Simple multiplicative discount factors (e.g., day+1: 1.0, day+2: 0.85, day+3: 0.70). Prevents over-reliance on unreliable distant forecasts. |
+| Export scheduling for high-rate windows | With time-varying import tariffs (Octopus Go), schedule battery-to-grid export during peak import windows when it is most valuable to have displaced grid power, even if the feed-in rate is fixed | Medium | Tariff engine (`get_price_schedule`), coordinator, scheduler | The feed-in rate is fixed, but the VALUE of stored energy is time-varying. 1 kWh stored is worth more if it displaces a 0.30 EUR/kWh peak import than a 0.15 EUR/kWh off-peak import. This means: prefer to use battery during peak hours, export PV directly during off-peak hours if battery headroom is limited. |
 
 ## Anti-Features
 
-Features to explicitly NOT build.
+Features to explicitly NOT build. These seem appealing but create more problems than they solve.
 
 | Anti-Feature | Why Avoid | What to Do Instead |
 |--------------|-----------|-------------------|
-| Virtual coupling / unified battery pool | This is the exact problem v1 has. Treating both batteries as one pool with weighted-average SoC produces incorrect setpoints for asymmetric systems, causes oscillation, and prevents independent failure handling. Every multi-battery EMS that aggregates into a virtual pool eventually hits the same oscillation problems. | Independent controllers with a coordinator. Each system is autonomous; the coordinator optimizes total output but never computes a "combined setpoint" that gets split. |
-| Proportional setpoint splitting | Computing a total target watts and splitting 30/64 proportionally ignores that the two systems have different response times, different charge/discharge curves, and different AC coupling characteristics. Proportional splitting is a special case of virtual coupling. | Role-based dispatch: assign PRIMARY/SECONDARY roles, dispatch to one system at a time when possible, use the second only for overflow. |
-| Real-time SoC balancing between batteries | Actively transferring energy between batteries (discharge one to charge the other) wastes energy through double conversion losses (DC->AC->DC, ~15-20% loss). It also stresses both inverters unnecessarily. | Let natural usage patterns balance over time: discharge the higher-SoC system first, charge the lower-SoC system first. SoC converges naturally without explicit balancing. |
-| Cloud-based optimization | Adds latency, creates a single point of failure, requires internet, and sends household consumption data to third parties. For a 5-second control loop, cloud round-trip latency is unacceptable. | All optimization runs locally. The ML forecaster and scheduler already run on-device. Keep it that way. |
-| Generic multi-battery support (N batteries) | Abstracting for N batteries when we have exactly 2 known systems (Huawei + Victron) adds complexity without value. The two systems have fundamentally different protocols (Modbus TCP vs Modbus TCP/MQTT), different capabilities, and different characteristics. A generic abstraction would be a leaky abstraction. | Purpose-built controllers for Huawei and Victron. Share interfaces (Protocol classes) but not implementation. If a third battery is ever added, refactor then -- YAGNI. |
-| Automatic inverter firmware updates | Too dangerous for production battery systems. A bad firmware update could brick an inverter or cause safety issues. This is the manufacturer's domain. | Document supported firmware versions. Log warnings if detected firmware is outside tested range. |
-| Grid export optimization / feed-in management | German regulations and UK Smart Export Guarantee add complex regulatory requirements. Feed-in tariff optimization is a separate product concern that requires certified metering and regulatory compliance. | Focus on self-consumption and grid-charge. Export is a byproduct of PV surplus, not an optimization target. Can be added as a future milestone if regulatory requirements are met. |
-| Mobile app | Web dashboard served by FastAPI is sufficient. A mobile app doubles the frontend maintenance burden for minimal benefit -- the dashboard is already accessible on mobile browsers. HA companion app provides notifications. | Responsive web dashboard. Ensure it works well on mobile viewports. |
+| Dynamic feed-in rate tracking | The feed-in rate is FIXED by contract (German EEG Verguetung or similar). Building infrastructure for time-varying export rates adds complexity for a use case that doesn't exist here. EVCC already provides `export_eur_kwh` timeseries but it will be a flat line for this installation. | Store the fixed feed-in rate as a single config value. If dynamic export tariffs are ever needed, the tariff engine can be extended then. |
+| Grid export as revenue maximization | Forcing battery discharge to grid purely for revenue (grid arbitrage -- buy low, sell high using the battery as a trading instrument) destroys battery life for marginal gains when the feed-in rate is low (0.08-0.12 EUR/kWh). Round-trip efficiency losses (8-15%) eat most of the spread. | Only export DIRECT PV surplus when batteries are full or when storing would cause export-then-buyback. Never force-discharge batteries to grid unless the spread clearly exceeds round-trip losses + degradation cost. |
+| Weather API integration (Forecast.Solar, Solcast, Open-Meteo) | EVCC already provides solar forecasts sourced from these services. Adding a second forecast source creates conflict (which to trust?), adds API key management, and duplicates existing functionality. | Use EVCC's solar forecast exclusively. EVCC already aggregates and normalizes forecast data. If EVCC is unavailable, fall back to seasonal averages (existing behavior). |
+| Real-time electricity market integration | Spot market prices, balancing market signals, etc. are irrelevant for a residential system with a fixed feed-in tariff and Octopus Go import tariff. The complexity of real-time market integration is enormous for zero benefit. | Keep using the existing Octopus Go + Modul3 composite tariff engine. |
+| Automated export limit compliance | Some grid operators impose export limits (e.g., 70% rule in Germany, now abolished for new installations). Building automated compliance for various regulatory regimes is a rabbit hole. | Document that the user is responsible for configuring hardware-level export limits on their inverter. The EMS controls battery dispatch, not inverter export limits. |
 
 ## Feature Dependencies
 
 ```
-Independent control loops ─────┬──> Dynamic role assignment
-                                ├──> SoC-based discharge priority
-                                ├──> Anti-oscillation ramps
-                                └──> Phase-aware Victron dispatch
+Feed-in rate config ──> Export-vs-store decision logic
+                    ──> PV-full forced export (enhanced)
+                    ──> Battery cycle cost accounting
+                    ──> Export decision transparency
 
-Per-system failure isolation ──> Independent control loops (prerequisite)
+Consumption forecaster (existing) ──> Avoid export-then-buyback
+Solar forecast multi-day (existing data, new logic) ──> Multi-day charge scheduling
+                                                    ──> Cloudy-stretch pre-charging
 
-Per-system hysteresis ─────────> Independent control loops (each controller owns its thresholds)
+Multi-day charge scheduling ──> Cloudy-stretch pre-charging
+Export-vs-store decision ──> Dual-battery export coordination
+                         ──> Export scheduling for high-rate windows
 
-Coordinator power stability ───> Independent control loops + Anti-oscillation ramps
-
-Tariff-aware grid charging ────> Per-battery nightly charge targets
-                                └──> Charge rate optimization per tariff window
-
-ML consumption forecaster ─────> Predictive pre-charging
-EVCC solar forecast ───────────> Predictive pre-charging
-
-Decision transparency ─────────> Dynamic role assignment (needs role decisions to log)
-                                └──> Independent control loops (needs per-system state)
-
-Configurable min-SoC profiles ─> Independent control loops (each controller respects its profile)
-
-EVCC coordination ─────────────> Independent control loops (hold signal propagated to both)
+Tariff engine (existing) ──> Export-vs-store decision logic
+                         ──> Export scheduling for high-rate windows
 ```
 
 ## MVP Recommendation
 
-**Phase 1 -- Foundation (must ship first):**
-1. Independent per-battery control loops with dedicated state machines
-2. Per-system failure isolation
-3. Per-system hysteresis and dead-band (configurable per system)
-4. Safe state on communication loss (preserve from v1)
-5. PV self-consumption with basic coordinator (round-robin or SoC-based priority)
+Prioritize in this order:
 
-**Phase 2 -- Optimization:**
-6. Dynamic role assignment (PRIMARY/SECONDARY/HOLDING/CHARGING)
-7. Anti-oscillation ramps (soft-start/soft-stop)
-8. Coordinator-level power stability
-9. SoC-based discharge priority
+1. **Feed-in rate configuration** -- prerequisite for everything else. Single float in `SystemConfig`, exposed via setup wizard and API. LOW effort, HIGH dependency.
 
-**Phase 3 -- Intelligence:**
-10. Tariff-aware grid charging with per-battery targets
-11. Charge rate optimization per tariff window
-12. Predictive pre-charging (solar + consumption forecasts)
-13. Configurable min-SoC per time-of-day
+2. **PV-full forced export** -- simplest export case, immediate value. When both batteries hit max SoC and PV is producing, allow grid export. Extends existing `feed_in_allowed` logic. LOW effort.
 
-**Phase 4 -- Visibility:**
-14. Decision transparency and audit log
-15. Phase-aware Victron dispatch
-16. Per-system metrics dashboard rework
+3. **Export-vs-store decision logic** -- the core economic brain. Compare `feed_in_rate` against `upcoming_import_rate * round_trip_efficiency` to decide whether PV surplus goes to battery or grid. MEDIUM effort.
 
-**Defer indefinitely:**
-- Grid export optimization: regulatory complexity, not core value
-- Generic N-battery support: YAGNI, only 2 systems exist
-- Mobile app: responsive web is sufficient
+4. **Multi-day solar awareness in scheduler** -- extend existing scheduler to use `day_after_energy_wh` and adjust `net_charge_kwh` based on 2-3 day horizon. MEDIUM effort, builds on existing formula.
 
-**Phase ordering rationale:**
-- Phase 1 must come first because every other feature depends on independent control loops existing.
-- Phase 2 before Phase 3 because optimization logic (roles, ramps, stability) is needed before the scheduler can target individual controllers effectively.
-- Phase 3 before Phase 4 because intelligence features generate the decisions that transparency features need to display.
-- Phase 4 is last because the system must work correctly before it needs to explain itself -- and dashboard rework can use the final API shape.
+5. **Avoid export-then-buyback** -- the hardest table-stakes feature. Requires forward-looking simulation combining consumption forecast + solar forecast + tariff schedule. HIGH effort but critical for economic correctness.
+
+6. **Export decision transparency** -- extend decision ring buffer with export reasoning. MEDIUM effort, builds on existing infrastructure.
+
+**Defer to later milestone:**
+- **Battery cycle cost accounting**: Nice-to-have optimization parameter. Can default to 0 (ignore degradation cost) initially.
+- **Cloudy-stretch pre-charging**: Requires multi-day scheduling to be solid first. Can be a follow-on enhancement.
+- **Dual-battery export coordination**: The existing SoC-based role assignment will produce reasonable results. Explicit export coordination is an optimization on top.
+- **Rolling forecast confidence weighting**: Simple to add but only matters once multi-day scheduling is working correctly.
+
+## Key Algorithmic Insight: The Export Decision
+
+With a FIXED feed-in rate, the export decision simplifies significantly compared to dynamic tariffs:
+
+```
+For each kWh of PV surplus:
+  current_import_rate = tariff_engine.get_effective_price(now)
+  future_import_rate = max(tariff_engine.get_effective_price(t) for t in remaining_peak_hours_today)
+
+  effective_stored_value = future_import_rate * round_trip_efficiency  # ~0.90
+
+  if feed_in_rate >= effective_stored_value:
+    # Export: feed-in pays more than the stored energy is worth
+    ACTION: allow grid export
+  elif battery_soc >= max_soc:
+    # Batteries full: export regardless (waste prevention)
+    ACTION: allow grid export
+  elif remaining_solar_kwh > remaining_consumption_kwh + remaining_battery_headroom_kwh:
+    # More solar coming than can be consumed or stored: export surplus
+    ACTION: allow grid export
+  else:
+    # Store: energy is worth more as future import displacement
+    ACTION: charge battery
+```
+
+The critical nuance: with typical German feed-in rates (0.08-0.12 EUR/kWh) and Octopus Go peak rates (~0.25-0.30 EUR/kWh), the stored value almost always exceeds the feed-in rate. This means the primary export scenario is batteries-full with ongoing PV production, not economic arbitrage. The "avoid export-then-buyback" logic matters most in the transitional hours (14:00-16:00) when batteries are filling and afternoon/evening consumption is uncertain.
 
 ## Sources
 
-- Current codebase analysis: `backend/orchestrator.py`, `backend/scheduler.py`, `backend/unified_model.py`, `backend/config.py`
-- Known concerns: `.planning/codebase/CONCERNS.md` (hysteresis per-system gap, driver lifecycle issues)
-- Project requirements: `.planning/PROJECT.md` (validated and active requirements)
-- Control theory for multi-storage dispatch: established patterns for coordinator/controller hierarchies in distributed energy systems (training data, LOW-MEDIUM confidence for competitive landscape claims)
-- Note: Web search was unavailable for this research session. Competitive landscape claims (what commercial dual-battery EMS products offer) are based on domain knowledge and should be validated against products like SolarEdge Home, Enphase IQ, Sonnen, and GivEnergy when web access is available.
+- [Predbat documentation -- export threshold logic](https://springfall2008.github.io/batpred/what-does-predbat-do/)
+- [Predbat customisation -- metric_battery_cycle](https://springfall2008.github.io/batpred/customisation/)
+- [Aurora Solar -- storage modeling for energy arbitrage](https://help.aurorasolar.com/hc/en-us/articles/28998198908563-Understanding-Storage-Modeling-for-Energy-Arbitrage)
+- [EVCC tariffs and forecasts documentation](https://docs.evcc.io/en/docs/tariffs)
+- [Forecast.Solar -- HA integration](https://www.home-assistant.io/integrations/forecast_solar/)
+- [gridX -- self-sufficiency optimization](https://www.gridx.ai/knowledge/self-sufficiency-optimization)
+- Existing codebase analysis: `backend/scheduler.py`, `backend/tariff.py`, `backend/consumption_forecaster.py`, `backend/coordinator.py`, `backend/config.py`, `backend/schedule_models.py`
