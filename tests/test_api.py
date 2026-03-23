@@ -18,7 +18,7 @@ from typing import Any
 import httpx
 import pytest
 
-from backend.api import api_router, get_orchestrator
+from backend.api import api_router, get_forecaster, get_orchestrator
 from backend.config import SystemConfig
 from backend.controller_model import CoordinatorState
 from backend.unified_model import ControlState, UnifiedPoolState
@@ -1447,4 +1447,68 @@ async def test_optimization_schedule_no_day_plans_for_plain_scheduler() -> None:
     assert resp.status_code == 200
     data = resp.json()
     assert "day_plans" not in data
+
+
+# ===========================================================================
+# Tests: /api/ml/status endpoint (FCST-05)
+# ===========================================================================
+
+
+@pytest.mark.anyio
+async def test_get_ml_status_returns_200():
+    """GET /api/ml/status returns 200 with expected JSON structure."""
+    from unittest.mock import MagicMock
+
+    from fastapi import FastAPI
+
+    app = FastAPI(title="EMS-test")
+    app.include_router(api_router)
+
+    mock_forecaster = MagicMock()
+    mock_forecaster.get_ml_status.return_value = {
+        "models": {
+            "heat_pump": {
+                "trained": True,
+                "last_trained_at": "2025-06-15T12:00:00",
+                "sample_count": 720,
+                "feature_names": ["a", "b"],
+                "sklearn_version": "1.8.0",
+            },
+            "dhw": {"trained": False, "last_trained_at": None, "sample_count": 0, "feature_names": [], "sklearn_version": "1.8.0"},
+            "base_load": {"trained": True, "last_trained_at": "2025-06-15T12:00:00", "sample_count": 720, "feature_names": ["a", "b"], "sklearn_version": "1.8.0"},
+        },
+        "mape": {"current": 12.5, "history": [{"date": "2025-06-14", "mape": 12.5}], "days_tracked": 1},
+        "days_of_history": 30,
+        "min_training_days": 14,
+    }
+    app.dependency_overrides[get_forecaster] = lambda: mock_forecaster
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/ml/status")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "models" in data
+    assert "mape" in data
+    assert data["min_training_days"] == 14
+    assert data["models"]["heat_pump"]["trained"] is True
+
+
+@pytest.mark.anyio
+async def test_get_ml_status_returns_503_when_not_ready():
+    """GET /api/ml/status returns 503 when forecaster is None."""
+    from fastapi import FastAPI
+
+    app = FastAPI(title="EMS-test")
+    app.include_router(api_router)
+    app.dependency_overrides[get_forecaster] = lambda: None
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/ml/status")
+
+    assert resp.status_code == 503
 

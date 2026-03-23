@@ -35,8 +35,11 @@ from backend.consumption_forecaster import (
     ConsumptionForecaster,
     _build_features,
     _build_lag_features,
+    _compute_daily_mape,
     _compute_ewm,
     _compute_recency_weights,
+    _load_mape_history,
+    _save_mape_history,
 )
 from backend.ha_statistics_reader import HaStatisticsReader
 from backend.schedule_models import ConsumptionForecast, HourlyConsumptionForecast
@@ -996,3 +999,122 @@ def test_feature_names_constant():
         "lag_24h",
         "lag_168h",
     ]
+
+
+# ===========================================================================
+# NEW TESTS: MAPE tracking and get_ml_status (Plan 02, FCST-05)
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Tests: _compute_daily_mape
+# ---------------------------------------------------------------------------
+
+def test_mape_computation():
+    """_compute_daily_mape returns correct MAPE percentage for known input pairs."""
+    predicted = [1.0] * 24
+    actual = [1.1] * 24  # 10/110 * 100 = ~9.09% each
+    result = _compute_daily_mape(predicted, actual)
+    assert result is not None
+    # Each hour: |1.0 - 1.1| / 1.1 * 100 = 9.09...
+    assert result == pytest.approx(9.1, abs=0.1)
+
+
+def test_mape_filters_near_zero():
+    """_compute_daily_mape excludes hours where actual < 0.1."""
+    predicted = [1.0] * 24
+    actual = [0.01] * 12 + [1.1] * 12  # first 12 near-zero, last 12 valid
+    result = _compute_daily_mape(predicted, actual)
+    assert result is not None
+    # Only the 12 valid hours count: |1.0 - 1.1| / 1.1 * 100 = 9.09
+    assert result == pytest.approx(9.1, abs=0.1)
+
+
+def test_mape_returns_none_insufficient():
+    """_compute_daily_mape returns None when fewer than 12 valid hours."""
+    predicted = [1.0] * 5
+    actual = [1.1] * 5
+    result = _compute_daily_mape(predicted, actual)
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: MAPE history persistence
+# ---------------------------------------------------------------------------
+
+def test_save_load_mape_history(tmp_path):
+    """Round-trip write/read of MAPE JSON file preserves entries."""
+    from pathlib import Path
+
+    mape_path = Path(tmp_path) / "mape_history.json"
+    _save_mape_history(mape_path, "2025-06-01", 15.2)
+    _save_mape_history(mape_path, "2025-06-02", 12.5)
+    _save_mape_history(mape_path, "2025-06-03", 18.1)
+
+    history = _load_mape_history(mape_path)
+    assert len(history) == 3
+    assert history[0]["date"] == "2025-06-01"
+    assert history[0]["mape"] == 15.2
+    assert history[2]["date"] == "2025-06-03"
+
+
+def test_mape_history_max_days(tmp_path):
+    """_save_mape_history keeps only last max_days entries."""
+    from pathlib import Path
+
+    mape_path = Path(tmp_path) / "mape_history.json"
+    for i in range(35):
+        _save_mape_history(mape_path, f"2025-06-{i + 1:02d}", float(i), max_days=30)
+
+    history = _load_mape_history(mape_path)
+    assert len(history) == 30
+    # Should keep the last 30 entries (indices 5-34)
+    assert history[0]["date"] == "2025-06-06"
+    assert history[-1]["date"] == "2025-06-35"
+
+
+# ---------------------------------------------------------------------------
+# Tests: get_ml_status
+# ---------------------------------------------------------------------------
+
+@pytest.mark.anyio
+async def test_get_ml_status_returns_models(tmp_path):
+    """get_ml_status() returns dict with models, mape, days_of_history, min_training_days."""
+    db_path = str(tmp_path / "ha.db")
+    _populate_db(db_path, days=30, hp_val=2000.0, dhw_val=500.0)
+
+    from backend.model_store import ModelStore
+
+    store_path = str(tmp_path / "models")
+    model_store = ModelStore(store_path)
+    config = _build_config(db_path)
+    reader = HaStatisticsReader(db_path)
+    forecaster = ConsumptionForecaster(
+        reader, config, model_store=model_store
+    )
+    await forecaster.train()
+
+    status = forecaster.get_ml_status()
+    assert "models" in status
+    assert "mape" in status
+    assert "days_of_history" in status
+    assert "min_training_days" in status
+    assert "heat_pump" in status["models"]
+    assert "dhw" in status["models"]
+    assert "base_load" in status["models"]
+    assert status["models"]["heat_pump"]["trained"] is True
+
+
+@pytest.mark.anyio
+async def test_get_ml_status_min_training_days(tmp_path):
+    """get_ml_status()['min_training_days'] == 14."""
+    db_path = str(tmp_path / "ha.db")
+    _populate_db(db_path, days=30, hp_val=2000.0, dhw_val=500.0)
+
+    config = _build_config(db_path, min_training_days=14)
+    reader = HaStatisticsReader(db_path)
+    forecaster = ConsumptionForecaster(reader, config)
+    await forecaster.train()
+
+    status = forecaster.get_ml_status()
+    assert status["min_training_days"] == 14
