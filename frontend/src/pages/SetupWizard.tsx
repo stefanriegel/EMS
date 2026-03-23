@@ -3,10 +3,10 @@
  *
  * Steps:
  *   1. Modbus (Huawei inverter host/port)
- *   2. Victron MQTT (host/port)
+ *   2. Victron Modbus TCP (host/port + unit IDs behind Advanced toggle)
  *   3. EVCC (host/port + EVCC MQTT host/port)
  *   4. HA REST (URL, token, heat pump entity ID)
- *   5. Tariff (Octopus off-peak/peak rates and windows)
+ *   5. Tariff (Octopus off-peak/peak rates and windows + Modul3 grid-fee windows)
  *   6. SoC limits (min/max per system)
  *
  * Steps 1–4 each have a "Test Connection" button that POSTs to
@@ -23,9 +23,12 @@ interface FormValues {
   // Step 1: Modbus
   huawei_host: string;
   huawei_port: string;
-  // Step 2: Victron MQTT
+  // Step 2: Victron Modbus TCP
   victron_host: string;
   victron_port: string;
+  victron_system_unit_id: string;
+  victron_battery_unit_id: string;
+  victron_vebus_unit_id: string;
   // Step 3: EVCC
   evcc_host: string;
   evcc_port: string;
@@ -40,6 +43,12 @@ interface FormValues {
   octopus_off_peak_end_min: string;
   octopus_off_peak_rate_eur_kwh: string;
   octopus_peak_rate_eur_kwh: string;
+  modul3_surplus_start_min: string;
+  modul3_surplus_end_min: string;
+  modul3_deficit_start_min: string;
+  modul3_deficit_end_min: string;
+  modul3_surplus_rate_eur_kwh: string;
+  modul3_deficit_rate_eur_kwh: string;
   // Step 6: SoC limits
   huawei_min_soc_pct: string;
   huawei_max_soc_pct: string;
@@ -51,7 +60,10 @@ const DEFAULT_VALUES: FormValues = {
   huawei_host: "",
   huawei_port: "6607",
   victron_host: "",
-  victron_port: "1883",
+  victron_port: "502",
+  victron_system_unit_id: "100",
+  victron_battery_unit_id: "225",
+  victron_vebus_unit_id: "227",
   evcc_host: "",
   evcc_port: "7070",
   evcc_mqtt_host: "",
@@ -63,6 +75,12 @@ const DEFAULT_VALUES: FormValues = {
   octopus_off_peak_end_min: "270",
   octopus_off_peak_rate_eur_kwh: "0.08",
   octopus_peak_rate_eur_kwh: "0.28",
+  modul3_surplus_start_min: "",
+  modul3_surplus_end_min: "",
+  modul3_deficit_start_min: "",
+  modul3_deficit_end_min: "",
+  modul3_surplus_rate_eur_kwh: "",
+  modul3_deficit_rate_eur_kwh: "",
   huawei_min_soc_pct: "10",
   huawei_max_soc_pct: "95",
   victron_min_soc_pct: "15",
@@ -72,6 +90,7 @@ const DEFAULT_VALUES: FormValues = {
 interface ProbeResult {
   ok: boolean;
   error?: string;
+  warning?: string;
 }
 
 // ---- Helpers ----------------------------------------------------------------
@@ -113,12 +132,15 @@ function Field({
 
 function ProbeBadge({ result }: { result: ProbeResult | null }) {
   if (result === null) return null;
+  if (result.ok && result.warning) {
+    return <span className="probe-badge probe-badge--warn">! {result.warning}</span>;
+  }
   if (result.ok) {
-    return <span className="probe-badge probe-badge--ok">✓ Connection OK</span>;
+    return <span className="probe-badge probe-badge--ok">&#10003; Connection OK</span>;
   }
   return (
     <span className="probe-badge probe-badge--fail">
-      ✗ Failed{result.error ? `: ${result.error}` : ""}
+      &#10007; Failed{result.error ? `: ${result.error}` : ""}
     </span>
   );
 }
@@ -176,12 +198,21 @@ function StepVictron({
 }) {
   return (
     <div className="setup-step">
-      <h2 className="setup-step-title">Victron MQTT</h2>
+      <h2 className="setup-step-title">Victron Modbus TCP</h2>
       <p className="setup-step-desc">
-        Enter the hostname and port of the Venus OS MQTT broker (dbus-flashmq).
+        Enter the hostname or IP address of the Venus OS GX device and the Modbus TCP port.
       </p>
       <Field label="Host" name="victron_host" value={values.victron_host} onChange={onChange} placeholder="192.168.0.101" />
-      <Field label="Port" name="victron_port" value={values.victron_port} onChange={onChange} placeholder="1883" />
+      <Field label="Port" name="victron_port" value={values.victron_port} onChange={onChange} placeholder="502" />
+      <details className="setup-advanced">
+        <summary>Advanced: Unit IDs</summary>
+        <p className="setup-step-desc">
+          Most Venus OS installations use the default unit IDs. Only change these if your system uses non-standard addressing.
+        </p>
+        <Field label="System Unit ID" name="victron_system_unit_id" value={values.victron_system_unit_id} onChange={onChange} placeholder="100" />
+        <Field label="Battery Unit ID" name="victron_battery_unit_id" value={values.victron_battery_unit_id} onChange={onChange} placeholder="225" />
+        <Field label="VE.Bus Unit ID" name="victron_vebus_unit_id" value={values.victron_vebus_unit_id} onChange={onChange} placeholder="227" />
+      </details>
       <div className="setup-probe-row">
         <button
           className="btn btn--secondary"
@@ -286,10 +317,22 @@ function StepTariff({
         Define off-peak and peak electricity rates for smart charging decisions.
         Times are in minutes from midnight (e.g. 90 = 01:30, 270 = 04:30).
       </p>
+      <h3 className="setup-step-title" style={{ fontSize: '16px' }}>Octopus Go Rates</h3>
       <Field label="Off-peak Start (minutes from midnight)" name="octopus_off_peak_start_min" value={values.octopus_off_peak_start_min} onChange={onChange} placeholder="90" />
       <Field label="Off-peak End (minutes from midnight)" name="octopus_off_peak_end_min" value={values.octopus_off_peak_end_min} onChange={onChange} placeholder="270" />
       <Field label="Off-peak Rate (€/kWh)" name="octopus_off_peak_rate_eur_kwh" value={values.octopus_off_peak_rate_eur_kwh} onChange={onChange} placeholder="0.08" />
       <Field label="Peak Rate (€/kWh)" name="octopus_peak_rate_eur_kwh" value={values.octopus_peak_rate_eur_kwh} onChange={onChange} placeholder="0.28" />
+      <hr style={{ borderColor: 'var(--bg-card-border)', margin: '16px 0' }} />
+      <h3 className="setup-step-title" style={{ fontSize: '16px', marginTop: '16px' }}>Modul3 Grid-Fee Windows</h3>
+      <p className="setup-step-desc">
+        Define surplus and deficit time windows with their grid-fee rates for the Modul3 tariff provider.
+      </p>
+      <Field label="Surplus Start (min from midnight)" name="modul3_surplus_start_min" value={values.modul3_surplus_start_min} onChange={onChange} placeholder="0" />
+      <Field label="Surplus End (min from midnight)" name="modul3_surplus_end_min" value={values.modul3_surplus_end_min} onChange={onChange} placeholder="0" />
+      <Field label="Surplus Rate (EUR/kWh)" name="modul3_surplus_rate_eur_kwh" value={values.modul3_surplus_rate_eur_kwh} onChange={onChange} placeholder="0.0" />
+      <Field label="Deficit Start (min from midnight)" name="modul3_deficit_start_min" value={values.modul3_deficit_start_min} onChange={onChange} placeholder="0" />
+      <Field label="Deficit End (min from midnight)" name="modul3_deficit_end_min" value={values.modul3_deficit_end_min} onChange={onChange} placeholder="0" />
+      <Field label="Deficit Rate (EUR/kWh)" name="modul3_deficit_rate_eur_kwh" value={values.modul3_deficit_rate_eur_kwh} onChange={onChange} placeholder="0.0" />
     </div>
   );
 }
@@ -380,7 +423,10 @@ export function SetupWizard() {
         huawei_host: values.huawei_host,
         huawei_port: parseInt(values.huawei_port, 10) || 6607,
         victron_host: values.victron_host,
-        victron_port: parseInt(values.victron_port, 10) || 1883,
+        victron_port: parseInt(values.victron_port, 10) || 502,
+        victron_system_unit_id: parseInt(values.victron_system_unit_id, 10) || 100,
+        victron_battery_unit_id: parseInt(values.victron_battery_unit_id, 10) || 225,
+        victron_vebus_unit_id: parseInt(values.victron_vebus_unit_id, 10) || 227,
         evcc_host: values.evcc_host,
         evcc_port: parseInt(values.evcc_port, 10) || 7070,
         evcc_mqtt_host: values.evcc_mqtt_host,
@@ -392,6 +438,12 @@ export function SetupWizard() {
         octopus_off_peak_end_min: parseInt(values.octopus_off_peak_end_min, 10) || 270,
         octopus_off_peak_rate_eur_kwh: parseFloat(values.octopus_off_peak_rate_eur_kwh) || 0.08,
         octopus_peak_rate_eur_kwh: parseFloat(values.octopus_peak_rate_eur_kwh) || 0.28,
+        modul3_surplus_start_min: parseInt(values.modul3_surplus_start_min, 10) || 0,
+        modul3_surplus_end_min: parseInt(values.modul3_surplus_end_min, 10) || 0,
+        modul3_deficit_start_min: parseInt(values.modul3_deficit_start_min, 10) || 0,
+        modul3_deficit_end_min: parseInt(values.modul3_deficit_end_min, 10) || 0,
+        modul3_surplus_rate_eur_kwh: parseFloat(values.modul3_surplus_rate_eur_kwh) || 0.0,
+        modul3_deficit_rate_eur_kwh: parseFloat(values.modul3_deficit_rate_eur_kwh) || 0.0,
         huawei_min_soc_pct: parseInt(values.huawei_min_soc_pct, 10) || 10,
         huawei_max_soc_pct: parseInt(values.huawei_max_soc_pct, 10) || 95,
         victron_min_soc_pct: parseInt(values.victron_min_soc_pct, 10) || 15,
@@ -443,9 +495,10 @@ export function SetupWizard() {
             values={values}
             onChange={handleChange}
             onProbe={() =>
-              handleProbe("victron_mqtt", {
+              handleProbe("victron_modbus", {
                 host: values.victron_host,
-                port: parseInt(values.victron_port, 10) || 1883,
+                port: parseInt(values.victron_port, 10) || 502,
+                unit_id: parseInt(values.victron_system_unit_id, 10) || 100,
               })
             }
             probeResult={probeResults[2] ?? null}
