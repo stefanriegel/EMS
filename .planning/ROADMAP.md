@@ -72,7 +72,10 @@ Plans:
   1. Scheduler can access 2-3 day solar forecast data from EVCC, with Open-Meteo as automatic fallback when EVCC is unavailable
   2. ConsumptionForecaster produces hourly demand predictions for a 72-hour horizon
   3. Weather data degrades gracefully — if both EVCC and Open-Meteo are unreachable, system falls back to seasonal averages and continues operating
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 09-01-PLAN.md — OpenMeteoClient + cascading solar forecast provider + lifespan wiring
+- [ ] 09-02-PLAN.md — ConsumptionForecaster 72h hourly prediction extension
 
 ### Phase 10: Multi-Day Scheduling
 **Goal**: Nightly charge scheduling uses multi-day weather and consumption outlook to set smarter grid charge targets
@@ -107,6 +110,6 @@ Note: Phase 8 depends on Phase 7. Phase 9 is independent of Phases 7-8 and could
 |-------|-----------|----------------|--------|-----------|
 | 7. Export Foundation | v1.1 | 0/2 | Planned | - |
 | 8. Coordinator Export Integration | v1.1 | 0/2 | Planned | - |
-| 9. Weather & Forecast Data | v1.1 | 0/0 | Not started | - |
+| 9. Weather & Forecast Data | v1.1 | 0/2 | Planned | - |
 | 10. Multi-Day Scheduling | v1.1 | 0/0 | Not started | - |
 | 11. Dashboard & API | v1.1 | 0/0 | Not started | - |
