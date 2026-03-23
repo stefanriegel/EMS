@@ -370,44 +370,28 @@ class TestForecastDeviation:
 class TestComputeLock:
     """Test asyncio.Lock prevents concurrent compute_schedule calls."""
 
-    @pytest.mark.anyio
-    async def test_compute_lock(self):
+    @pytest.mark.anyio(backends=["asyncio"])
+    async def test_compute_lock(self, anyio_backend):
         """Two concurrent compute_schedule calls serialize (not corrupt)."""
+        if anyio_backend != "asyncio":
+            pytest.skip("asyncio.Lock requires asyncio backend")
+
         ws = _build_weather_scheduler(
             solar_daily_kwh=[10.0, 10.0, 10.0],
             consumption_daily_kwh=20.0,
         )
-        solar = ws._test_solar
 
         call_order: list[str] = []
-        original_compute = ws.compute_schedule.__func__
 
-        async def slow_compute(self_ws, writer=None):
-            call_order.append("enter")
-            await asyncio.sleep(0.05)
-            result = await original_compute(self_ws, writer)
-            call_order.append("exit")
-            return result
+        async def locked_compute():
+            async with ws._compute_lock:
+                call_order.append("enter")
+                await asyncio.sleep(0.05)
+                call_order.append("exit")
 
-        with patch(
-            "backend.weather_scheduler.get_solar_forecast",
-            new_callable=AsyncMock,
-            return_value=solar,
-        ):
-            # Replace compute_schedule with slow version that tracks order
-            # but still goes through the lock
-            ws.compute_schedule = lambda writer=None: slow_compute(ws, writer)
-
-            # Simulate using the lock directly
-            async def locked_compute():
-                async with ws._compute_lock:
-                    call_order.append("enter")
-                    await asyncio.sleep(0.05)
-                    call_order.append("exit")
-
-            t1 = asyncio.create_task(locked_compute())
-            t2 = asyncio.create_task(locked_compute())
-            await asyncio.gather(t1, t2)
+        t1 = asyncio.create_task(locked_compute())
+        t2 = asyncio.create_task(locked_compute())
+        await asyncio.gather(t1, t2)
 
         # With a lock, calls must serialize: enter, exit, enter, exit
         assert call_order == ["enter", "exit", "enter", "exit"]

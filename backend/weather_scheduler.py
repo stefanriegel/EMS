@@ -21,6 +21,7 @@ Inspection surfaces
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import date, datetime, timedelta, timezone
 from statistics import mean
@@ -154,8 +155,11 @@ class WeatherScheduler:
         self.schedule_stale: bool = False
         self.active_day_plans: list[DayPlan] | None = None
 
-        # Last solar daily values for deviation checks (Plan 02)
+        # Last solar daily values for deviation checks
         self._last_solar_daily_kwh: list[float] | None = None
+
+        # Serializes concurrent compute_schedule calls (nightly + intra-day)
+        self._compute_lock = asyncio.Lock()
 
     async def compute_schedule(self, writer=None) -> ChargeSchedule:
         """Compute a weather-aware charge schedule for the battery pool.
@@ -166,6 +170,9 @@ class WeatherScheduler:
         4. Adjust tonight's grid charge target.
         5. Build ChargeSchedule with slots split between batteries.
         6. Package into DayPlan containers.
+
+        Uses ``_compute_lock`` to prevent concurrent nightly and intra-day
+        invocations from corrupting scheduler state.
 
         Parameters
         ----------
@@ -178,6 +185,11 @@ class WeatherScheduler:
         ChargeSchedule
             The newly computed weather-aware schedule.
         """
+        async with self._compute_lock:
+            return await self._compute_schedule_unlocked(writer)
+
+    async def _compute_schedule_unlocked(self, writer=None) -> ChargeSchedule:
+        """Inner schedule computation (caller must hold ``_compute_lock``)."""
         # ------------------------------------------------------------------
         # 1. Fetch multi-day solar forecast
         # ------------------------------------------------------------------
@@ -388,3 +400,44 @@ class WeatherScheduler:
                 )
 
         return schedule
+
+    async def check_forecast_deviation(
+        self, threshold: float = 0.20
+    ) -> bool:
+        """Check whether the solar forecast has changed significantly.
+
+        Compares freshly fetched solar forecast against the values stored
+        during the last ``compute_schedule`` call.  Returns ``True`` when
+        any of the first 3 days deviates by more than *threshold* (relative)
+        — signalling that the schedule should be recomputed.
+
+        Parameters
+        ----------
+        threshold:
+            Relative deviation threshold (0.20 = 20%).
+
+        Returns
+        -------
+        bool
+            ``True`` if a re-plan is warranted; ``False`` otherwise.
+        """
+        if self._last_solar_daily_kwh is None:
+            return False
+
+        solar = await get_solar_forecast(self._evcc_client, self._weather_client)
+        new_daily = [wh / 1000.0 for wh in solar.daily_energy_wh]
+
+        for d in range(min(3, len(new_daily))):
+            if d >= len(self._last_solar_daily_kwh):
+                break
+            old = self._last_solar_daily_kwh[d]
+            new = new_daily[d]
+            if old > 0:
+                deviation = abs(new - old) / old
+                if deviation > threshold:
+                    return True
+            elif new > 1.0:
+                # Was zero, now significant
+                return True
+
+        return False
