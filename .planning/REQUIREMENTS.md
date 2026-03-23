@@ -9,10 +9,10 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Self-Consumption Optimization
 
-- [ ] **SCO-01**: System never actively discharges battery to grid — export only from direct PV surplus when batteries are full
-- [ ] **SCO-02**: Feed-in rate configurable as a single EUR/kWh value (default 0.074) in setup config and HA Add-on options
+- [x] **SCO-01**: System never actively discharges battery to grid — export only from direct PV surplus when batteries are full
+- [x] **SCO-02**: Feed-in rate configurable as a single EUR/kWh value (default 0.074) in setup config and HA Add-on options
 - [ ] **SCO-03**: Seasonal self-consumption strategy — winter prioritizes battery reserves and more aggressive grid charging; summer allows natural PV export when batteries full
-- [ ] **SCO-04**: Self-consumption and export decisions logged with structured reasoning in /api/decisions
+- [x] **SCO-04**: Self-consumption and export decisions logged with structured reasoning in /api/decisions
 
 ### Multi-Day Scheduling
 
@@ -60,10 +60,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SCO-01 | Phase 7 | Pending |
-| SCO-02 | Phase 7 | Pending |
+| SCO-01 | Phase 7 | Complete |
+| SCO-02 | Phase 7 | Complete |
 | SCO-03 | Phase 8 | Pending |
-| SCO-04 | Phase 7 | Pending |
+| SCO-04 | Phase 7 | Complete |
 | MDS-01 | Phase 9 | Pending |
 | MDS-02 | Phase 10 | Pending |
 | MDS-03 | Phase 10 | Pending |

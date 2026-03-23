@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Advanced Optimization
-status: Ready to plan
-stopped_at: Roadmap created
-last_updated: "2026-03-23T14:00:00.000Z"
+status: Ready to execute
+stopped_at: Completed 07-01-PLAN.md
+last_updated: "2026-03-23T13:08:22.871Z"
 progress:
   total_phases: 5
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  total_plans: 2
+  completed_plans: 1
 ---
 
 # Project State
@@ -19,16 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-23)
 
 **Core value:** Both battery systems operate independently with zero oscillation to maximize PV self-consumption
-**Current focus:** Phase 7 - Export Foundation
+**Current focus:** Phase 07 — export-foundation
 
 ## Current Position
 
-Phase: 7 of 11 (Export Foundation)
-Plan: -
-Status: Ready to plan
-Last activity: 2026-03-23 -- Roadmap created for v1.1 Advanced Optimization
-
-Progress: [░░░░░░░░░░] 0%
+Phase: 07 (export-foundation) — EXECUTING
+Plan: 2 of 2
 
 ## Performance Metrics
 
@@ -61,6 +57,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 04 | 3 | 3.3 min |
 | Phase 05 | 2 | 3.0 min |
 | Phase 06 | 2 | 7.5 min |
+| Phase 07 P01 | 5min | 2 tasks | 12 files |
 
 ## Accumulated Context
 
@@ -74,6 +71,9 @@ Recent decisions affecting current work:
 - [Roadmap]: WeatherScheduler wraps existing Scheduler, doesn't modify it
 - [Roadmap]: DayPlan model extends ChargeSchedule with per-day containers; Day 2/3 advisory only
 - [Roadmap]: Fixed feed-in rate 0.074 EUR/kWh -- never discharge battery to grid
+- [Phase 07]: ExportAdvisor uses sync advise() with cached forecast updated via async refresh_forecast()
+- [Phase 07]: SoC threshold gate at 90% before any economic analysis
+- [Phase 07]: Conservative default: STORE when forecaster unavailable or fallback used
 
 ### Pending Todos
 
@@ -88,6 +88,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-23
-Stopped at: Roadmap created for v1.1
+Last session: 2026-03-23T13:08:22.866Z
+Stopped at: Completed 07-01-PLAN.md
 Resume file: None

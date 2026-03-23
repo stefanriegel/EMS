@@ -48,7 +48,7 @@ Phase 6: Deployment & Hardening - 3 plans, complete
   4. Export and self-consumption decisions appear in /api/decisions with human-readable reasoning
 **Plans:** 2 plans
 Plans:
-- [ ] 07-01-PLAN.md — ExportAdvisor module + config pipeline + tests
+- [x] 07-01-PLAN.md — ExportAdvisor module + config pipeline + tests
 - [ ] 07-02-PLAN.md — Coordinator wiring + decision logging
 
 ### Phase 8: Coordinator Export Integration
