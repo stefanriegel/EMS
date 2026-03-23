@@ -415,6 +415,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         coordinator.set_scheduler(scheduler)
         logger.info("Coordinator: scheduler wired for GRID_CHARGE slot detection")
 
+        # --- Export advisor (SCO-01) ---
+        from backend.export_advisor import ExportAdvisor  # noqa: PLC0415
+        export_advisor = ExportAdvisor(
+            tariff_engine=tariff_engine,
+            forecaster=consumption_forecaster,
+            sys_config=sys_cfg,
+        )
+        coordinator.set_export_advisor(export_advisor)
+        logger.info("Coordinator: ExportAdvisor wired for export/self-consume decisions")
+
         app.state.orchestrator = coordinator  # backward compat: API uses same attribute name
         app.state.metrics_reader = metrics_reader
 

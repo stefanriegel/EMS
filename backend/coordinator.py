@@ -21,6 +21,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from backend.config import MinSocWindow, OrchestratorConfig, SystemConfig
@@ -33,6 +34,9 @@ from backend.controller_model import (
     IntegrationStatus,
     PoolStatus,
 )
+
+if TYPE_CHECKING:
+    from backend.export_advisor import ExportAdvisor
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +93,11 @@ class Coordinator:
         self._prev_v_role: str = "HOLDING"
         self._prev_h_alloc_w: float = 0.0
         self._prev_v_alloc_w: float = 0.0
+
+        # Export advisor (SCO-01, SCO-04)
+        self._export_advisor: ExportAdvisor | None = None
+        self._prev_export_decision: str = "STORE"
+        self._last_forecast_refresh: float = 0.0
 
         # Integration health tracking (INT-03)
         self._integration_health: dict[str, IntegrationStatus] = {
@@ -172,6 +181,10 @@ class Coordinator:
     def set_ha_mqtt_client(self, client) -> None:
         """Inject the HA MQTT client for per-cycle state publishing."""
         self._ha_mqtt_client = client
+
+    def set_export_advisor(self, advisor: ExportAdvisor) -> None:
+        """Inject the export advisor for surplus PV export/store decisions."""
+        self._export_advisor = advisor
 
     def get_decisions(self, limit: int = 20) -> list[dict]:
         """Return the last *limit* decision entries, newest first."""
@@ -312,6 +325,7 @@ class Coordinator:
         while True:
             try:
                 await self._run_cycle()
+                await self._run_export_advisory()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -484,6 +498,67 @@ class Coordinator:
         self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
         decision = self._check_and_log_decision(h_cmd, v_cmd, p_target)
         await self._write_integrations(h_snap, v_snap, h_cmd, v_cmd, decision)
+
+    # ------------------------------------------------------------------
+    # Export advisory (SCO-01, SCO-04)
+    # ------------------------------------------------------------------
+
+    async def _run_export_advisory(self) -> None:
+        """Query ExportAdvisor and log state transitions.
+
+        Runs after every control cycle.  Advisory-only — does not
+        change P_target or control commands.  Failures are logged
+        at WARNING and never block the control loop.
+        """
+        if self._export_advisor is None:
+            return
+
+        # Periodic forecast refresh (every 30 minutes)
+        now_ts = time.monotonic()
+        if (now_ts - self._last_forecast_refresh) > 1800:
+            try:
+                await self._export_advisor.refresh_forecast()
+                self._last_forecast_refresh = now_ts
+            except Exception:
+                logger.warning(
+                    "ExportAdvisor forecast refresh failed", exc_info=True
+                )
+
+        # Advisory query
+        state = self._state
+        h_snap = self._last_h_snap
+        v_snap = self._last_v_snap
+        if state is None or h_snap is None or v_snap is None:
+            return
+
+        try:
+            _tz = ZoneInfo(os.environ.get("MODUL3_TIMEZONE", "Europe/Berlin"))
+            advice = self._export_advisor.advise(
+                combined_soc_pct=state.combined_soc_pct,
+                huawei_soc_pct=h_snap.soc_pct,
+                victron_soc_pct=v_snap.soc_pct,
+                now=datetime.now(tz=_tz),
+            )
+            # Log on state change only
+            if advice.decision.value != self._prev_export_decision:
+                entry = DecisionEntry(
+                    timestamp=datetime.now(tz=timezone.utc).isoformat(),
+                    trigger="export_change",
+                    huawei_role=state.huawei_role,
+                    victron_role=state.victron_role,
+                    p_target_w=0.0,
+                    huawei_allocation_w=0.0,
+                    victron_allocation_w=0.0,
+                    pool_status=f"combined_soc={state.combined_soc_pct:.1f}%",
+                    reasoning=advice.reasoning,
+                )
+                self._decisions.append(entry)
+                self._prev_export_decision = advice.decision.value
+                logger.info(
+                    "decision: export_change — %s", advice.reasoning
+                )
+        except Exception:
+            logger.warning("ExportAdvisor.advise() failed", exc_info=True)
 
     # ------------------------------------------------------------------
     # P_target computation
