@@ -1183,3 +1183,46 @@ class TestSetHaMqttClient:
         mock_client = MagicMock()
         coord.set_ha_mqtt_client(mock_client)
         assert coord._ha_mqtt_client is mock_client
+
+
+# ===========================================================================
+# Winter config and EXPORTING role (SCO-03)
+# ===========================================================================
+
+
+class TestWinterConfig:
+    """Validate winter config defaults, custom values, and EXPORTING role."""
+
+    def test_winter_config_defaults(self):
+        """SystemConfig() has correct winter defaults."""
+        from backend.config import SystemConfig
+
+        cfg = SystemConfig()
+        assert cfg.winter_months == [11, 12, 1, 2]
+        assert cfg.winter_min_soc_boost_pct == 10
+
+    def test_exporting_role_exists(self):
+        """BatteryRole.EXPORTING exists and has value 'EXPORTING'."""
+        from backend.controller_model import BatteryRole
+
+        assert BatteryRole.EXPORTING.value == "EXPORTING"
+        assert BatteryRole.EXPORTING == "EXPORTING"
+
+    def test_winter_config_custom(self):
+        """SystemConfig with custom winter values stores them correctly."""
+        from backend.config import SystemConfig
+
+        cfg = SystemConfig(winter_months=[12, 1, 2], winter_min_soc_boost_pct=15)
+        assert cfg.winter_months == [12, 1, 2]
+        assert cfg.winter_min_soc_boost_pct == 15
+
+    def test_api_config_winter_fields(self):
+        """SystemConfigRequest validates winter fields correctly."""
+        from backend.api import SystemConfigRequest
+
+        req = SystemConfigRequest(
+            winter_months=[11, 12, 1, 2],
+            winter_min_soc_boost_pct=10,
+        )
+        assert req.winter_months == [11, 12, 1, 2]
+        assert req.winter_min_soc_boost_pct == 10
