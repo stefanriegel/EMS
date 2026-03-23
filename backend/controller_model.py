@@ -167,6 +167,8 @@ class CoordinatorState:
 
     # --- Flags (backward-compatible defaults) ---
     grid_charge_slot_active: bool = False
+    export_active: bool = False
+    """True when the export advisor recommends exporting (selling to grid)."""
     evcc_battery_mode: str = "normal"
 
     # --- New coordinator fields ---

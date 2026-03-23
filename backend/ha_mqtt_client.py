@@ -102,27 +102,77 @@ class EntityDefinition:
 
 
 SENSOR_ENTITIES: list[EntityDefinition] = [
-    # --- Huawei device (5 entities) ---
+    # --- Huawei device (4 sensor entities) ---
     EntityDefinition("huawei_soc", "Battery SoC", "sensor", "%", "battery", "measurement", None, "huawei_soc_pct", "huawei"),
     EntityDefinition("huawei_setpoint", "Discharge Setpoint", "sensor", "W", "power", "measurement", None, "huawei_discharge_setpoint_w", "huawei"),
     EntityDefinition("huawei_power", "Battery Power", "sensor", "W", "power", "measurement", None, "huawei_power_w", "huawei"),
     EntityDefinition("huawei_role", "Battery Role", "sensor", None, "enum", None, "diagnostic", "huawei_role", "huawei"),
-    EntityDefinition("huawei_online", "Online", "sensor", None, None, None, "diagnostic", "huawei_available", "huawei"),
-    # --- Victron device (8 entities) ---
+    # --- Victron device (7 sensor entities) ---
     EntityDefinition("victron_soc", "Battery SoC", "sensor", "%", "battery", "measurement", None, "victron_soc_pct", "victron"),
     EntityDefinition("victron_setpoint", "AC Setpoint", "sensor", "W", "power", "measurement", None, "victron_discharge_setpoint_w", "victron"),
     EntityDefinition("victron_power", "Battery Power", "sensor", "W", "power", "measurement", None, "victron_power_w", "victron"),
     EntityDefinition("victron_role", "Battery Role", "sensor", None, "enum", None, "diagnostic", "victron_role", "victron"),
-    EntityDefinition("victron_online", "Online", "sensor", None, None, None, "diagnostic", "victron_available", "victron"),
     EntityDefinition("victron_l1_power", "L1 Power", "sensor", "W", "power", "measurement", "diagnostic", "victron_l1_power_w", "victron"),
     EntityDefinition("victron_l2_power", "L2 Power", "sensor", "W", "power", "measurement", "diagnostic", "victron_l2_power_w", "victron"),
     EntityDefinition("victron_l3_power", "L3 Power", "sensor", "W", "power", "measurement", "diagnostic", "victron_l3_power_w", "victron"),
-    # --- System device (4 entities) ---
+    # --- System device (4 sensor entities) ---
     EntityDefinition("combined_power", "Combined Power", "sensor", "W", "power", "measurement", None, "combined_power_w", "system"),
     EntityDefinition("control_state", "Control State", "sensor", None, "enum", None, "diagnostic", "control_state", "system"),
     EntityDefinition("evcc_battery_mode", "EVCC Battery Mode", "sensor", None, "enum", None, "diagnostic", "evcc_battery_mode", "system"),
     EntityDefinition("pool_status", "Pool Status", "sensor", None, "enum", None, "diagnostic", "pool_status", "system"),
 ]
+
+BINARY_SENSOR_ENTITIES: list[EntityDefinition] = [
+    EntityDefinition(
+        entity_id="huawei_online",
+        name=None,
+        platform="binary_sensor",
+        unit=None,
+        device_class="connectivity",
+        state_class=None,
+        entity_category="diagnostic",
+        value_key="huawei_available",
+        device_group="huawei",
+    ),
+    EntityDefinition(
+        entity_id="victron_online",
+        name=None,
+        platform="binary_sensor",
+        unit=None,
+        device_class="connectivity",
+        state_class=None,
+        entity_category="diagnostic",
+        value_key="victron_available",
+        device_group="victron",
+    ),
+    EntityDefinition(
+        entity_id="grid_charge_active",
+        name="Grid Charge Active",
+        platform="binary_sensor",
+        unit=None,
+        device_class="running",
+        state_class=None,
+        entity_category="diagnostic",
+        value_key="grid_charge_slot_active",
+        device_group="system",
+    ),
+    EntityDefinition(
+        entity_id="export_active",
+        name="Export Active",
+        platform="binary_sensor",
+        unit=None,
+        device_class="running",
+        state_class=None,
+        entity_category="diagnostic",
+        value_key="export_active",
+        device_group="system",
+    ),
+]
+
+# Entities that were migrated from sensor to binary_sensor platform.
+# Their old sensor discovery topics must be cleared with empty retained payloads
+# to prevent ghost entities in Home Assistant.
+_MIGRATED_TO_BINARY: list[str] = ["huawei_online", "victron_online"]
 
 
 _DEVICES: dict[str, dict[str, Any]] = {
@@ -185,6 +235,7 @@ class HomeAssistantMqttClient:
         # Inspectable state flags
         self._connected: bool = False
         self._discovery_sent: bool = False
+        self._migration_done: bool = False
 
         # Event loop captured at connect() time — used by paho callbacks
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -298,6 +349,9 @@ class HomeAssistantMqttClient:
 
         if entity.platform == "sensor":
             payload["expire_after"] = 120
+        elif entity.platform == "binary_sensor":
+            payload["payload_on"] = "True"
+            payload["payload_off"] = "False"
 
         if entity.unit is not None:
             payload["unit_of_measurement"] = entity.unit
@@ -319,12 +373,27 @@ class HomeAssistantMqttClient:
         """Publish discovery config for all entities if not already done."""
         if self._discovery_sent:
             return
+        self._cleanup_old_sensor_topics()
         for entity in SENSOR_ENTITIES:
+            topic = self._discovery_topic(entity)
+            payload = self._discovery_payload(entity)
+            self._client.publish(topic, payload, retain=True)
+        for entity in BINARY_SENSOR_ENTITIES:
             topic = self._discovery_topic(entity)
             payload = self._discovery_payload(entity)
             self._client.publish(topic, payload, retain=True)
         self._discovery_sent = True
         logger.info("HA MQTT discovery published")
+
+    def _cleanup_old_sensor_topics(self) -> None:
+        """One-time migration: clear old sensor topics for entities moved to binary_sensor."""
+        if self._migration_done:
+            return
+        for entity_id in _MIGRATED_TO_BINARY:
+            old_topic = f"homeassistant/sensor/{self._device_id}/{entity_id}/config"
+            self._client.publish(old_topic, "", retain=True)
+        self._migration_done = True
+        logger.info("HA MQTT: cleaned up old sensor topics for binary_sensor migration")
 
     def _publish_state(
         self,

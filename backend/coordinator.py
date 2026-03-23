@@ -1192,6 +1192,7 @@ class Coordinator:
             victron_charge_headroom_w=v_snap.charge_headroom_w,
             timestamp=time.monotonic(),
             grid_charge_slot_active=(control_state == "GRID_CHARGE"),
+            export_active=(control_state == "EXPORTING"),
             evcc_battery_mode=self._evcc_battery_mode,
             huawei_role=h_cmd.role.value,
             victron_role=v_cmd.role.value,

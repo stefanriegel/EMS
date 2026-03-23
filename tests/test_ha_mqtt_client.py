@@ -181,8 +181,9 @@ class TestUniqueIdPreservation:
         payloads = []
         for c in mock_paho.publish.call_args_list:
             topic = c.args[0] if c.args else c.kwargs.get("topic")
-            if "config" in topic:
-                payload = json.loads(c.args[1] if len(c.args) > 1 else c.kwargs["payload"])
+            raw = c.args[1] if len(c.args) > 1 else c.kwargs.get("payload", "")
+            if "config" in topic and raw:  # skip empty migration cleanup payloads
+                payload = json.loads(raw)
                 payloads.append(payload)
 
         unique_ids = {p["unique_id"] for p in payloads}
@@ -210,7 +211,7 @@ class TestDiscoveryOriginMetadata:
 
         for c in mock_paho.publish.call_args_list:
             topic = c.args[0]
-            if "config" in topic:
+            if "config" in topic and c.args[1]:
                 payload = json.loads(c.args[1])
                 assert "origin" in payload, f"Missing origin in {topic}"
                 assert payload["origin"]["name"] == "EMS"
@@ -230,7 +231,7 @@ class TestDiscoveryAvailability:
 
         for c in mock_paho.publish.call_args_list:
             topic = c.args[0]
-            if "config" in topic:
+            if "config" in topic and c.args[1]:
                 payload = json.loads(c.args[1])
                 assert "availability" in payload, f"Missing availability in {topic}"
                 avail = payload["availability"]
@@ -309,7 +310,7 @@ class TestDiscoveryExpireAfter:
 
         for c in mock_paho.publish.call_args_list:
             topic = c.args[0]
-            if "config" in topic and "/sensor/" in topic:
+            if "config" in topic and "/sensor/" in topic and c.args[1]:
                 payload = json.loads(c.args[1])
                 assert payload.get("expire_after") == 120, (
                     f"Missing expire_after in {topic}"
@@ -329,7 +330,7 @@ class TestDiscoveryHasEntityName:
 
         for c in mock_paho.publish.call_args_list:
             topic = c.args[0]
-            if "config" in topic:
+            if "config" in topic and c.args[1]:
                 payload = json.loads(c.args[1])
                 assert payload.get("has_entity_name") is True, (
                     f"Missing has_entity_name in {topic}"
@@ -411,7 +412,7 @@ class TestDiscoveryEntityCategory:
         }
         for c in mock_paho.publish.call_args_list:
             topic = c.args[0]
-            if "config" in topic:
+            if "config" in topic and c.args[1]:
                 payload = json.loads(c.args[1])
                 # Extract entity_id from topic
                 parts = topic.split("/")
@@ -476,7 +477,7 @@ class TestDiscoveryConfigurationUrl:
 
         for c in mock_paho.publish.call_args_list:
             topic = c.args[0]
-            if "config" in topic:
+            if "config" in topic and c.args[1]:
                 payload = json.loads(c.args[1])
                 assert "configuration_url" in payload["device"], (
                     f"Missing configuration_url in {topic}"
@@ -526,7 +527,7 @@ class TestThreeDeviceGrouping:
         device_identifiers = set()
         for c in mock_paho.publish.call_args_list:
             topic = c.args[0]
-            if "config" in topic:
+            if "config" in topic and c.args[1]:
                 payload = json.loads(c.args[1])
                 ids = tuple(payload["device"]["identifiers"])
                 device_identifiers.add(ids)
@@ -546,7 +547,7 @@ class TestThreeDeviceGrouping:
         device_names = set()
         for c in mock_paho.publish.call_args_list:
             topic = c.args[0]
-            if "config" in topic:
+            if "config" in topic and c.args[1]:
                 payload = json.loads(c.args[1])
                 device_names.add(payload["device"]["name"])
 
