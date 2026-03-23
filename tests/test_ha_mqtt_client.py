@@ -597,7 +597,7 @@ class TestHaMqttDiscovery:
         client._ensure_discovery()
 
         # 15 sensors + 4 binary_sensors + 2 migration cleanup = 21
-        expected = len(SENSOR_ENTITIES) + len(BINARY_SENSOR_ENTITIES) + 2
+        expected = len(SENSOR_ENTITIES) + len(BINARY_SENSOR_ENTITIES) + len(NUMBER_ENTITIES) + len(SELECT_ENTITIES) + len(BUTTON_ENTITIES) + 2
         assert mock_paho.publish.call_count == expected
         # All discovery publishes must use retain=True
         for c in mock_paho.publish.call_args_list:
@@ -612,7 +612,7 @@ class TestHaMqttDiscovery:
         client._ensure_discovery()
         client._ensure_discovery()
 
-        expected = len(SENSOR_ENTITIES) + len(BINARY_SENSOR_ENTITIES) + 2
+        expected = len(SENSOR_ENTITIES) + len(BINARY_SENSOR_ENTITIES) + len(NUMBER_ENTITIES) + len(SELECT_ENTITIES) + len(BUTTON_ENTITIES) + 2
         assert mock_paho.publish.call_count == expected
 
     def test_ensure_discovery_sets_flag(self):
@@ -674,7 +674,7 @@ class TestHaMqttPublishAsync:
         await client.publish(_make_state())
 
         # 15 sensors + 4 binary + 2 migration + 1 state = 22
-        discovery_count = len(SENSOR_ENTITIES) + len(BINARY_SENSOR_ENTITIES) + 2
+        discovery_count = len(SENSOR_ENTITIES) + len(BINARY_SENSOR_ENTITIES) + len(NUMBER_ENTITIES) + len(SELECT_ENTITIES) + len(BUTTON_ENTITIES) + 2
         assert mock_paho.publish.call_count == discovery_count + 1
 
     async def test_publish_sends_only_state_on_subsequent_calls(self):
@@ -687,7 +687,7 @@ class TestHaMqttPublishAsync:
         await client.publish(_make_state())
 
         # First call: discovery + 1 state; Second call: 1 state only
-        discovery_count = len(SENSOR_ENTITIES) + len(BINARY_SENSOR_ENTITIES) + 2
+        discovery_count = len(SENSOR_ENTITIES) + len(BINARY_SENSOR_ENTITIES) + len(NUMBER_ENTITIES) + len(SELECT_ENTITIES) + len(BUTTON_ENTITIES) + 2
         assert mock_paho.publish.call_count == discovery_count + 2
 
 
@@ -773,7 +773,7 @@ class TestHaMqttPublishCoordinatorState:
         await client.publish(state)
 
         # discovery (sensors + binary + migration) + state
-        discovery_count = len(SENSOR_ENTITIES) + len(BINARY_SENSOR_ENTITIES) + 2
+        discovery_count = len(SENSOR_ENTITIES) + len(BINARY_SENSOR_ENTITIES) + len(NUMBER_ENTITIES) + len(SELECT_ENTITIES) + len(BUTTON_ENTITIES) + 2
         assert mock_paho.publish.call_count == discovery_count + 1
 
     async def test_coordinator_state_payload_has_new_fields(self):
@@ -1024,7 +1024,7 @@ class TestPlatformMigrationCleanup:
         # Second run should NOT publish migration cleanup again
         # (migration_done flag stays True even after reconnect)
         # Both runs publish discovery (sensors + binary), but only first run has migration
-        discovery_per_run = len(SENSOR_ENTITIES) + len(BINARY_SENSOR_ENTITIES)
+        discovery_per_run = len(SENSOR_ENTITIES) + len(BINARY_SENSOR_ENTITIES) + len(NUMBER_ENTITIES) + len(SELECT_ENTITIES) + len(BUTTON_ENTITIES)
         assert count_first == discovery_per_run + 2  # +2 for migration
         assert count_second == count_first + discovery_per_run  # no extra migration
 

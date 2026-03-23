@@ -46,7 +46,9 @@ import asyncio
 import dataclasses
 import json
 import logging
-from dataclasses import dataclass
+import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import paho.mqtt.client as mqtt
@@ -67,10 +69,11 @@ _EMS_VERSION = "1.2.0"
 
 @dataclass(frozen=True)
 class EntityDefinition:
-    """Typed definition for a single HA MQTT sensor entity.
+    """Typed definition for a single HA MQTT entity.
 
-    Replaces the previous flat tuple format with named fields for clarity
-    and type safety.
+    Supports sensor, binary_sensor, number, select, and button platforms.
+    Optional fields (command_topic, min_val, etc.) default to None so
+    existing sensor/binary_sensor definitions remain unchanged.
     """
 
     entity_id: str
@@ -80,13 +83,13 @@ class EntityDefinition:
     """Short display name (has_entity_name removes device prefix), or None."""
 
     platform: str
-    """HA platform: 'sensor' or 'binary_sensor'."""
+    """HA platform: 'sensor', 'binary_sensor', 'number', 'select', 'button'."""
 
     unit: str | None
     """Unit of measurement, e.g. '%', 'W', or None."""
 
     device_class: str | None
-    """HA device class: 'battery', 'power', 'enum', etc."""
+    """HA device class: 'battery', 'power', 'enum', 'restart', etc."""
 
     state_class: str | None
     """HA state class: 'measurement', 'total_increasing', or None."""
@@ -99,6 +102,29 @@ class EntityDefinition:
 
     device_group: str
     """Device grouping: 'huawei', 'victron', or 'system'."""
+
+    # --- Controllable entity fields (optional, default None) ---
+
+    command_topic: str | None = None
+    """MQTT topic for incoming commands (number/select/button)."""
+
+    min_val: float | None = None
+    """Minimum value for number entities."""
+
+    max_val: float | None = None
+    """Maximum value for number entities."""
+
+    step: float | None = None
+    """Step increment for number entities."""
+
+    mode: str | None = None
+    """Input mode for number entities: 'auto', 'slider', or 'box'."""
+
+    options: list[str] | None = field(default=None)
+    """Options list for select entities."""
+
+    payload_press: str | None = None
+    """Payload sent when a button entity is pressed."""
 
 
 SENSOR_ENTITIES: list[EntityDefinition] = [
@@ -166,6 +192,71 @@ BINARY_SENSOR_ENTITIES: list[EntityDefinition] = [
         entity_category="diagnostic",
         value_key="export_active",
         device_group="system",
+    ),
+]
+
+NUMBER_ENTITIES: list[EntityDefinition] = [
+    EntityDefinition(
+        entity_id="min_soc_huawei", name="Min SoC", platform="number",
+        unit="%", device_class=None, state_class=None, entity_category="config",
+        value_key="huawei_min_soc_pct", device_group="huawei",
+        command_topic="homeassistant/number/ems/min_soc_huawei/set",
+        min_val=10, max_val=100, step=5, mode="slider",
+    ),
+    EntityDefinition(
+        entity_id="min_soc_victron", name="Min SoC", platform="number",
+        unit="%", device_class=None, state_class=None, entity_category="config",
+        value_key="victron_min_soc_pct", device_group="victron",
+        command_topic="homeassistant/number/ems/min_soc_victron/set",
+        min_val=10, max_val=100, step=5, mode="slider",
+    ),
+    EntityDefinition(
+        entity_id="deadband_huawei", name="Deadband", platform="number",
+        unit="W", device_class=None, state_class=None, entity_category="config",
+        value_key="huawei_deadband_w", device_group="huawei",
+        command_topic="homeassistant/number/ems/deadband_huawei/set",
+        min_val=50, max_val=1000, step=50, mode="box",
+    ),
+    EntityDefinition(
+        entity_id="deadband_victron", name="Deadband", platform="number",
+        unit="W", device_class=None, state_class=None, entity_category="config",
+        value_key="victron_deadband_w", device_group="victron",
+        command_topic="homeassistant/number/ems/deadband_victron/set",
+        min_val=50, max_val=500, step=50, mode="box",
+    ),
+    EntityDefinition(
+        entity_id="ramp_rate", name="Ramp Rate", platform="number",
+        unit="W", device_class=None, state_class=None, entity_category="config",
+        value_key="ramp_rate_w", device_group="system",
+        command_topic="homeassistant/number/ems/ramp_rate/set",
+        min_val=100, max_val=2000, step=100, mode="box",
+    ),
+]
+
+SELECT_ENTITIES: list[EntityDefinition] = [
+    EntityDefinition(
+        entity_id="control_mode", name="Control Mode", platform="select",
+        unit=None, device_class=None, state_class=None, entity_category="config",
+        value_key="control_mode_override", device_group="system",
+        command_topic="homeassistant/select/ems/control_mode/set",
+        options=["AUTO", "HOLD", "GRID_CHARGE", "DISCHARGE_LOCKED"],
+    ),
+]
+
+BUTTON_ENTITIES: list[EntityDefinition] = [
+    EntityDefinition(
+        entity_id="force_grid_charge", name="Force Grid Charge", platform="button",
+        unit=None, device_class=None, state_class=None, entity_category=None,
+        value_key="force_grid_charge", device_group="system",
+        command_topic="homeassistant/button/ems/force_grid_charge/set",
+        payload_press="PRESS",
+    ),
+    EntityDefinition(
+        entity_id="reset_to_auto", name="Reset to Auto", platform="button",
+        unit=None, device_class="restart", state_class=None, entity_category=None,
+        value_key="reset_to_auto", device_group="system",
+        command_topic="homeassistant/button/ems/reset_to_auto/set",
+        payload_press="PRESS",
     ),
 ]
 
@@ -240,6 +331,12 @@ class HomeAssistantMqttClient:
         # Event loop captured at connect() time — used by paho callbacks
         self._loop: asyncio.AbstractEventLoop | None = None
 
+        # Command callback for incoming MQTT commands (set by orchestrator)
+        self._command_callback: Callable[[str, str], None] | None = None
+
+        # Health check: timestamp of last successful publish
+        self._last_publish_time: float = 0.0
+
         # paho client (created here so it is inspectable before connect)
         self._client: mqtt.Client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2,
@@ -247,6 +344,7 @@ class HomeAssistantMqttClient:
         )
         self._client.on_connect = self._on_connect
         self._client.on_disconnect = self._on_disconnect
+        self._client.on_message = self._on_message
 
         if username:
             self._client.username_pw_set(username, password)
@@ -285,6 +383,37 @@ class HomeAssistantMqttClient:
         self._connected = False
         self._discovery_sent = False
         logger.debug("HA MQTT disconnected from %s:%d", self._host, self._port)
+
+    def set_command_callback(self, callback: Callable[[str, str], None]) -> None:
+        """Register a callback for incoming MQTT commands.
+
+        The callback receives (entity_id, payload_str) and is invoked in
+        the asyncio event loop thread via ``call_soon_threadsafe()``.
+        """
+        self._command_callback = callback
+
+    def check_health(self, max_stale_s: float = 60.0) -> bool:
+        """Check MQTT health: connected and publishing recently.
+
+        Returns ``False`` if not connected or if no publish has occurred
+        within ``max_stale_s`` seconds.  On stale detection, forces a
+        reconnect attempt to recover from silent paho thread crashes.
+        """
+        if not self._connected:
+            return False
+        if self._last_publish_time > 0 and (
+            time.monotonic() - self._last_publish_time
+        ) > max_stale_s:
+            logger.warning(
+                "HA MQTT health check failed: no publish in %ds, forcing reconnect",
+                max_stale_s,
+            )
+            try:
+                self._client.reconnect()
+            except Exception:
+                pass
+            return False
+        return True
 
     async def publish(
         self,
@@ -333,8 +462,6 @@ class HomeAssistantMqttClient:
         payload: dict[str, Any] = {
             "name": entity.name,
             "unique_id": f"{self._device_id}_{entity.entity_id}",
-            "state_topic": self._state_topic(),
-            "value_template": f"{{{{ value_json.{entity.value_key} }}}}",
             "has_entity_name": True,
             "origin": {"name": "EMS", "sw": _EMS_VERSION},
             "availability": [
@@ -347,11 +474,34 @@ class HomeAssistantMqttClient:
             "device": device_info,
         }
 
+        # Buttons are stateless -- no state_topic or value_template
+        if entity.platform != "button":
+            payload["state_topic"] = self._state_topic()
+            payload["value_template"] = f"{{{{ value_json.{entity.value_key} }}}}"
+
         if entity.platform == "sensor":
             payload["expire_after"] = 120
         elif entity.platform == "binary_sensor":
             payload["payload_on"] = "True"
             payload["payload_off"] = "False"
+        elif entity.platform == "number":
+            payload["command_topic"] = entity.command_topic
+            if entity.min_val is not None:
+                payload["min"] = entity.min_val
+            if entity.max_val is not None:
+                payload["max"] = entity.max_val
+            if entity.step is not None:
+                payload["step"] = entity.step
+            if entity.mode is not None:
+                payload["mode"] = entity.mode
+        elif entity.platform == "select":
+            payload["command_topic"] = entity.command_topic
+            if entity.options is not None:
+                payload["options"] = entity.options
+        elif entity.platform == "button":
+            payload["command_topic"] = entity.command_topic
+            if entity.payload_press is not None:
+                payload["payload_press"] = entity.payload_press
 
         if entity.unit is not None:
             payload["unit_of_measurement"] = entity.unit
@@ -374,11 +524,14 @@ class HomeAssistantMqttClient:
         if self._discovery_sent:
             return
         self._cleanup_old_sensor_topics()
-        for entity in SENSOR_ENTITIES:
-            topic = self._discovery_topic(entity)
-            payload = self._discovery_payload(entity)
-            self._client.publish(topic, payload, retain=True)
-        for entity in BINARY_SENSOR_ENTITIES:
+        all_entities = (
+            list(SENSOR_ENTITIES)
+            + list(BINARY_SENSOR_ENTITIES)
+            + list(NUMBER_ENTITIES)
+            + list(SELECT_ENTITIES)
+            + list(BUTTON_ENTITIES)
+        )
+        for entity in all_entities:
             topic = self._discovery_topic(entity)
             payload = self._discovery_payload(entity)
             self._client.publish(topic, payload, retain=True)
@@ -413,6 +566,7 @@ class HomeAssistantMqttClient:
             raw.update(extra_fields)
         payload = json.dumps(raw)
         self._client.publish(self._state_topic(), payload)
+        self._last_publish_time = time.monotonic()
 
     # ------------------------------------------------------------------
     # paho callbacks  (run in paho's background thread)
@@ -431,9 +585,51 @@ class HomeAssistantMqttClient:
             return
         # Publish online status
         client.publish(_AVAILABILITY_TOPIC, "online", qos=1, retain=True)
+
+        # Subscribe to command topics for controllable entities
+        all_controllable = list(NUMBER_ENTITIES) + list(SELECT_ENTITIES) + list(BUTTON_ENTITIES)
+        for entity in all_controllable:
+            if entity.command_topic:
+                try:
+                    client.subscribe(entity.command_topic, qos=1)
+                except (BrokenPipeError, OSError) as exc:
+                    logger.warning(
+                        "HA MQTT subscribe failed for %s: %s",
+                        entity.command_topic, exc,
+                    )
+
         if self._loop is not None:
             self._loop.call_soon_threadsafe(self._set_connected, True)
         logger.info("HA MQTT connected")
+
+    def _on_message(
+        self,
+        client: mqtt.Client,  # noqa: ARG002
+        userdata: Any,  # noqa: ARG002
+        msg: Any,
+    ) -> None:
+        """Dispatch incoming MQTT command to the registered callback.
+
+        Parses entity_id from topic (e.g. ``homeassistant/number/ems/min_soc_huawei/set``
+        -> ``min_soc_huawei``), decodes payload as UTF-8, and dispatches via
+        ``call_soon_threadsafe`` to cross the paho->asyncio thread boundary.
+        """
+        # Parse entity_id from topic: .../ems/{entity_id}/set
+        parts = msg.topic.split("/")
+        if len(parts) >= 5:
+            entity_id = parts[-2]  # second-to-last segment
+        else:
+            logger.debug("HA MQTT: unexpected topic format: %s", msg.topic)
+            return
+
+        payload_str = msg.payload.decode("utf-8") if isinstance(msg.payload, bytes) else str(msg.payload)
+
+        if self._command_callback is None:
+            logger.debug("HA MQTT: no command callback set, ignoring %s", entity_id)
+            return
+
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._command_callback, entity_id, payload_str)
 
     def _on_disconnect(
         self,
