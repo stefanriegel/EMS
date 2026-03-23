@@ -26,7 +26,7 @@ See MILESTONES.md for details.
 
 **Milestone Goal:** Make EMS a first-class HA citizen -- proper entity model, controllable via services, accessible via Ingress, and runtime-tunable through HA entities.
 
-- [ ] **Phase 12: Wizard Removal** - Remove setup wizard; Add-on options page becomes sole config surface
+- [x] **Phase 12: Wizard Removal** - Remove setup wizard; Add-on options page becomes sole config surface (completed 2026-03-23)
 - [ ] **Phase 13: MQTT Discovery Overhaul** - Availability, origin metadata, binary sensors, entity naming, and translations
 - [ ] **Phase 14: Controllable Entities** - Number, Select, and Button entities with MQTT subscribe infrastructure
 - [ ] **Phase 15: HA Ingress Support** - Dashboard accessible in HA sidebar with proper path and auth handling
@@ -43,7 +43,7 @@ See MILESTONES.md for details.
   3. All runtime configuration is read from Add-on options (`options.json`) with no `ems_config.json` fallback layer
 **Plans**: 2 plans
 Plans:
-- [ ] 12-01-PLAN.md — Backend wizard removal (delete setup_api.py, setup_config.py, clean main.py lifespan)
+- [x] 12-01-PLAN.md — Backend wizard removal (delete setup_api.py, setup_config.py, clean main.py lifespan)
 - [x] 12-02-PLAN.md — Frontend wizard removal (delete SetupWizard.tsx, clean App.tsx routing)
 
 ### Phase 13: MQTT Discovery Overhaul
@@ -89,7 +89,7 @@ Phases execute in numeric order: 12 -> 13 -> 14 -> 15
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 12. Wizard Removal | v1.2 | 1/2 | In Progress|  |
+| 12. Wizard Removal | v1.2 | 2/2 | Complete   | 2026-03-23 |
 | 13. MQTT Discovery Overhaul | v1.2 | 0/TBD | Not started | - |
 | 14. Controllable Entities | v1.2 | 0/TBD | Not started | - |
 | 15. HA Ingress Support | v1.2 | 0/TBD | Not started | - |
