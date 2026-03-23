@@ -36,7 +36,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Feature extraction from InfluxDB and HA statistics completes in a single cached read without blocking the 5s control loop
   4. sklearn .fit() calls run in a background executor and never block the async event loop
   5. OMP_NUM_THREADS=2 is set in the Docker image so training on aarch64 does not oversubscribe CPU threads
-**Plans**: TBD
+**Plans**: 3 plans
+Plans:
+- [ ] 16-01-PLAN.md — ModelStore module with joblib persistence and version-tracked JSON sidecars
+- [ ] 16-02-PLAN.md — FeaturePipeline with cached extraction from HA statistics and InfluxDB
+- [ ] 16-03-PLAN.md — Non-blocking training, ModelStore wiring, and OMP_NUM_THREADS in Docker
 
 ### Phase 17: Consumption Forecaster Upgrade
 **Goal**: The consumption forecaster produces meaningfully better predictions using real weather, historical patterns, and proper validation -- and the system knows how accurate those predictions are
@@ -81,7 +85,7 @@ Phases execute in numeric order: 16 -> 17 -> 18 -> 19
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 16. ML Infrastructure | 0/? | Not started | - |
+| 16. ML Infrastructure | 0/3 | Planning complete | - |
 | 17. Consumption Forecaster Upgrade | 0/? | Not started | - |
 | 18. Anomaly Detection | 0/? | Not started | - |
 | 19. Self-Tuning Control | 0/? | Not started | - |
