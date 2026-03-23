@@ -745,3 +745,28 @@ class OpenMeteoConfig:
             dc_kwp=float(os.environ.get("OPEN_METEO_DC_KWP", "10")),
         )
 
+
+@dataclass
+class ModelStoreConfig:
+    """Configuration for ML model persistence.
+
+    Attributes:
+        model_dir: Directory for persisted models (default /config/ems_models).
+        enabled: Whether model persistence is active.
+
+    Environment variables:
+        ``EMS_MODEL_DIR`` -- directory path (default ``/config/ems_models``).
+    """
+
+    model_dir: str = "/config/ems_models"
+    enabled: bool = True
+
+    @classmethod
+    def from_env(cls) -> "ModelStoreConfig":
+        """Construct from environment variables."""
+        model_dir = os.environ.get("EMS_MODEL_DIR", "/config/ems_models")
+        return cls(
+            model_dir=model_dir,
+            enabled=bool(model_dir),
+        )
+
