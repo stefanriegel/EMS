@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 
 logger = logging.getLogger("ems.evcc")
 
@@ -286,6 +286,37 @@ class ChargeSchedule:
     reasoning: OptimizationReasoning
     computed_at: datetime
     stale: bool = False
+
+
+@dataclass
+class DayPlan:
+    """Per-day charge plan within a multi-day weather-aware schedule.
+
+    Day 0 is actionable (tonight's charge window).
+    Days 1-2 are advisory (shown in dashboard, not executed).
+
+    Attributes:
+        day_index:                0=today/tonight, 1=tomorrow, 2=day_after.
+        date:                     Calendar date for this day.
+        solar_forecast_kwh:       Expected solar production in kWh.
+        consumption_forecast_kwh: Expected consumption in kWh.
+        net_energy_kwh:           Solar minus consumption (positive = surplus).
+        confidence:               Confidence weight (1.0, 0.8, or 0.6).
+        charge_target_kwh:        Grid charge energy needed for this day in kWh.
+        slots:                    Charge slots (populated for Day 0, empty for
+                                  advisory days).
+        advisory:                 ``True`` for Day 1/2 (not executed).
+    """
+
+    day_index: int
+    date: date
+    solar_forecast_kwh: float
+    consumption_forecast_kwh: float
+    net_energy_kwh: float
+    confidence: float
+    charge_target_kwh: float
+    slots: list[ChargeSlot]
+    advisory: bool
 
 
 @dataclass
