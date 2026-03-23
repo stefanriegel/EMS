@@ -35,7 +35,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Optional
 
 from backend.influx_reader import _seasonal_fallback_kwh
-from backend.schedule_models import ConsumptionForecast
+from backend.schedule_models import ConsumptionForecast, HourlyConsumptionForecast
 
 if TYPE_CHECKING:
     from backend.config import HaStatisticsConfig
@@ -94,6 +94,54 @@ def _build_features(
             float(ts.month),
         ])
     return rows
+
+
+def _seasonal_hourly_fallback(horizon_hours: int = 72) -> HourlyConsumptionForecast:
+    """Return a seasonal hourly consumption forecast with hour-of-day variation.
+
+    Uses ``_seasonal_fallback_kwh()`` for the daily total and distributes it
+    across hours using realistic household weighting: low at night (0-5, 23),
+    moderate morning/evening (6-9, 17-22), higher midday (10-16).
+
+    Parameters
+    ----------
+    horizon_hours:
+        Number of hours to predict (default 72).
+
+    Returns
+    -------
+    HourlyConsumptionForecast
+        With ``source="seasonal"`` and ``fallback_used=True``.
+    """
+    # Hour-of-day weights — sum to ~24.0 so daily total is preserved
+    _HOUR_WEIGHTS: dict[int, float] = {}
+    for h in range(24):
+        if h in (0, 1, 2, 3, 4, 5, 23):
+            _HOUR_WEIGHTS[h] = 0.6
+        elif h in (6, 7, 8, 9, 17, 18, 19, 20, 21, 22):
+            _HOUR_WEIGHTS[h] = 1.2
+        else:  # 10-16
+            _HOUR_WEIGHTS[h] = 1.4
+
+    weight_sum = sum(_HOUR_WEIGHTS.values())  # normalisation denominator
+
+    now_utc = datetime.now(tz=timezone.utc)
+    today = date.today()
+    daily_kwh = _seasonal_fallback_kwh(today)
+
+    hourly_kwh: list[float] = []
+    for h in range(horizon_hours):
+        future_hour = (now_utc + timedelta(hours=h)).hour
+        weight = _HOUR_WEIGHTS[future_hour]
+        hourly_kwh.append(max(0.0, daily_kwh * weight / weight_sum))
+
+    return HourlyConsumptionForecast(
+        hourly_kwh=hourly_kwh,
+        total_kwh=sum(hourly_kwh),
+        horizon_hours=horizon_hours,
+        source="seasonal",
+        fallback_used=True,
+    )
 
 
 class ConsumptionForecaster:
@@ -381,6 +429,87 @@ class ConsumptionForecaster:
             kwh_by_weekday={},
             today_expected_kwh=total_kwh,
             days_of_history=self._days_of_history,
+            fallback_used=False,
+        )
+
+    async def predict_hourly(
+        self, horizon_hours: int = 72
+    ) -> HourlyConsumptionForecast:
+        """Predict per-hour consumption for the next *horizon_hours* hours.
+
+        Uses the trained ML models (heat pump, DHW, base load) when available,
+        otherwise falls back to ``_seasonal_hourly_fallback()``.
+
+        Parameters
+        ----------
+        horizon_hours:
+            Number of hours to predict (default 72 for 3-day horizon).
+
+        Returns
+        -------
+        HourlyConsumptionForecast
+            Always returns a result — never raises.
+        """
+        min_samples = self._config.min_training_days * 24
+
+        # Cold-start guard
+        if (
+            self._heat_pump_model is None
+            or self._total_samples < min_samples
+        ):
+            logger.warning(
+                "ConsumptionForecaster: predict_hourly cold-start fallback"
+                " (days_of_history=%d < min_training_days=%d)",
+                self._days_of_history,
+                self._config.min_training_days,
+            )
+            return _seasonal_hourly_fallback(horizon_hours)
+
+        # ML prediction path
+        neutral_temp = 10.0
+        ewm_placeholder = neutral_temp
+
+        now_utc = datetime.now(tz=timezone.utc)
+        hourly_kwh: list[float] = []
+
+        for h in range(horizon_hours):
+            ts = now_utc + timedelta(hours=h)
+            features = [[
+                neutral_temp,
+                ewm_placeholder,
+                float(ts.weekday()),
+                float(ts.hour),
+                float(ts.month),
+            ]]
+
+            hp_pred = max(0.0, float(self._heat_pump_model.predict(features)[0]))
+
+            dhw_pred = 0.0
+            if self._dhw_model is not None:
+                dhw_pred = max(0.0, float(self._dhw_model.predict(features)[0]))
+
+            if self._base_model is not None:
+                base_pred = max(0.0, float(self._base_model.predict(features)[0]))
+            else:
+                base_pred = _BASE_LOAD_W
+
+            hourly_kwh.append(max(0.0, (hp_pred + dhw_pred + base_pred) / 1000.0))
+
+        total_kwh = sum(hourly_kwh)
+
+        logger.info(
+            "ConsumptionForecaster: predict_hourly total=%.1f kWh"
+            " horizon=%d hours (days_of_history=%d)",
+            total_kwh,
+            horizon_hours,
+            self._days_of_history,
+        )
+
+        return HourlyConsumptionForecast(
+            hourly_kwh=hourly_kwh,
+            total_kwh=total_kwh,
+            horizon_hours=horizon_hours,
+            source="ml",
             fallback_used=False,
         )
 
