@@ -1,119 +1,109 @@
-# Requirements: EMS v1.2
+# Requirements: EMS v1.3
 
 **Defined:** 2026-03-23
 **Core Value:** Both battery systems operate independently with zero oscillation to maximize PV self-consumption across the combined 94 kWh pool.
 
-## v1.2 Requirements
+## v1.3 Requirements
 
-Requirements for Home Assistant Best Practice Alignment milestone.
+Requirements for Intelligent Self-Tuning milestone.
 
-### Config & Setup
+### ML Infrastructure
 
-- [x] **CFG-01**: Setup wizard code is removed (backend routes, frontend pages, setup_config.py)
-- [x] **CFG-02**: Add-on options page is the sole configuration surface — no ems_config.json layer
-- [x] **CFG-03**: Frontend `/setup` route removed; direct access shows dashboard or Add-on config redirect
+- [ ] **INFRA-01**: ModelStore persists trained models with joblib, tracks sklearn version, discards on version mismatch
+- [ ] **INFRA-02**: FeaturePipeline extracts training features from InfluxDB and HA statistics in a single cached read
+- [ ] **INFRA-03**: All sklearn .fit() calls wrapped in run_in_executor to avoid blocking the event loop
+- [ ] **INFRA-04**: OMP_NUM_THREADS=2 set in Dockerfile/run.sh for aarch64 thread safety
+- [ ] **INFRA-05**: Model directory at /config/ems_models/ with JSON metadata sidecars for each model
 
-### MQTT Discovery
+### Consumption Forecasting
 
-- [x] **DISC-01**: All discovery payloads include `origin` metadata (name, sw version)
-- [x] **DISC-02**: Availability topic with LWT — entities show "unavailable" when EMS goes offline
-- [x] **DISC-03**: `expire_after: 120` on all sensor entities as stale-data safety net
-- [x] **DISC-04**: `has_entity_name: True` with shortened entity names (no device name duplication)
-- [x] **DISC-05**: `entity_category` tagging — diagnostic for status/online, config for tunable parameters
-- [x] **DISC-06**: `device_class` and `state_class` audit — all applicable entities have correct classes
-- [x] **DISC-07**: `configuration_url` in device info pointing to EMS dashboard
-- [x] **DISC-08**: `huawei_online` and `victron_online` moved from sensor to binary_sensor with device_class connectivity
-- [x] **DISC-09**: `grid_charge_active` and `export_active` published as binary_sensor with device_class running
-- [x] **DISC-10**: Three HA devices — EMS Huawei, EMS Victron, EMS System — with entities grouped by physical device
-- [x] **DISC-11**: Platform migration cleanup — empty retained payloads to old sensor topics before new binary_sensor publication
-- [x] **DISC-12**: Existing `unique_id` values preserved — no breaking changes for existing HA dashboards/automations
-- [x] **DISC-13**: Add-on `translations/en.yaml` with human-readable names and descriptions for all config options
+- [ ] **FCST-01**: Weather features integrated — outdoor temp from HA + Open-Meteo forecast temps as model inputs
+- [ ] **FCST-02**: Lagged consumption features — 24h and 168h (1 week) ago as predictors
+- [ ] **FCST-03**: Calendar features — day-of-week encoding, optional holiday detection
+- [ ] **FCST-04**: Migrate to HistGradientBoostingRegressor with native NaN handling and early stopping
+- [ ] **FCST-05**: MAPE tracking — compute and log forecast accuracy after each day, expose via API
+- [ ] **FCST-06**: Recency-weighted training — recent data weighted higher than old data
+- [ ] **FCST-07**: Time-series cross-validation — expanding window CV instead of random split
 
-### Controllable Entities
+### Self-Tuning Control
 
-- [x] **CTRL-01**: MQTT subscribe infrastructure — EMS listens on command topics for bidirectional control
-- [x] **CTRL-02**: Number entity for Huawei min-SoC (10-100%, step 5, slider mode)
-- [x] **CTRL-03**: Number entity for Victron min-SoC (10-100%, step 5, slider mode)
-- [x] **CTRL-04**: Number entity for Huawei dead-band (50-1000W, step 50, box mode)
-- [x] **CTRL-05**: Number entity for Victron dead-band (50-500W, step 50, box mode)
-- [x] **CTRL-06**: Number entity for ramp rate (100-2000W, step 100, box mode)
-- [x] **CTRL-07**: Select entity for control mode (AUTO, HOLD, GRID_CHARGE, DISCHARGE_LOCKED)
-- [x] **CTRL-08**: Button entity for Force Grid Charge with auto-timeout
-- [x] **CTRL-09**: Button entity for Reset to Auto
-- [x] **CTRL-10**: State echo — after processing a command, publish updated state on state_topic
-- [x] **CTRL-11**: Defensive paho threading — wrap subscribe in try/except, periodic health check for silent thread crash
+- [ ] **TUNE-01**: Oscillation detector counts state transitions per hour from coordinator decisions
+- [ ] **TUNE-02**: Dead-band auto-tuning — adjust Huawei/Victron hysteresis based on oscillation rate
+- [ ] **TUNE-03**: Ramp rate auto-tuning — adjust based on grid import spikes during transitions
+- [ ] **TUNE-04**: Min-SoC profile auto-tuning — adjust based on consumption patterns and solar forecast accuracy
+- [ ] **TUNE-05**: Shadow mode — log recommended vs actual parameters for 14 days before live application
+- [ ] **TUNE-06**: Bounded changes — max 10% adjustment per night with absolute safe bounds
+- [ ] **TUNE-07**: Automatic rollback — revert to previous parameters if oscillation rate increases after tuning
+- [ ] **TUNE-08**: Activation gate — self-tuning only activates when forecast MAPE < 25% and 60+ days of data
 
-### Ingress
+### Anomaly Detection
 
-- [x] **INGR-01**: `ingress: true` and `ingress_port` in Add-on config.yaml with panel_icon and panel_title
-- [x] **INGR-02**: ASGI IngressMiddleware reading X-Ingress-Path header and setting root_path
-- [x] **INGR-03**: Frontend Vite `base: './'` for relative asset paths
-- [x] **INGR-04**: Dynamic WebSocket URL construction from window.location (works with both direct and Ingress access)
-- [x] **INGR-05**: Auth bypass for Ingress requests — detect X-Ingress-Path header, skip JWT validation
-- [x] **INGR-06**: Dashboard accessible in HA sidebar and via direct port simultaneously
+- [ ] **ANOM-01**: Communication loss pattern detection — identify recurring driver timeout patterns
+- [ ] **ANOM-02**: Consumption spike detection — flag unusual consumption relative to time-of-day baseline
+- [ ] **ANOM-03**: Tiered alerts with confirmation periods — warning after 1 occurrence, alert after 3 within 24h
+- [ ] **ANOM-04**: SoC curve anomaly detection — flag when charge/discharge curves deviate from learned profile
+- [ ] **ANOM-05**: Efficiency degradation tracking — monitor round-trip efficiency trends over weeks
+- [ ] **ANOM-06**: Nightly Isolation Forest training on InfluxDB metrics for multi-dimensional anomaly scoring
+- [ ] **ANOM-07**: Per-cycle anomaly check uses pre-computed statistical thresholds only (no sklearn predict in 5s loop)
+- [ ] **ANOM-08**: Anomaly events exposed via REST API and Telegram notifications
 
 ## Future Requirements
 
-### Deferred to v2+
+### Deferred to v1.4+
 
-- **DIAG-01**: Diagnostic sensors (uptime, cycle duration, MQTT message count)
-- **CUST-01**: Custom HA integration (Python component) for native HA services
-- **TRIG-01**: MQTT device triggers for state change events
+- **ADV-01**: Battery degradation modeling — predict optimal charge/discharge for lifespan maximization
+- **ADV-02**: Dynamic tariff price prediction — forecast Octopus Agile prices for smarter charging
+- **ADV-03**: Federated learning — aggregate anonymized patterns across multiple EMS installations
 
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| Custom HA integration (Python) | MQTT discovery provides 90% of the value at 5% of the complexity |
-| MQTT device triggers | Wrong semantic model for continuous-state EMS |
-| Climate entity | Wrong platform for battery management |
-| 50+ granular entities (one per register) | Entity sprawl harms usability |
-| Retained state messages | HA docs recommend against it; use expire_after instead |
-| Config migration from wizard | No existing users to migrate — clean break |
+| Deep learning (LSTM, Transformer) | Overkill for ~2,000 samples/year residential data; trains slower on aarch64 |
+| Reinforcement learning | Needs thousands of real-day episodes, makes bad decisions during exploration |
+| LightGBM / XGBoost | Docker build complexity on aarch64 Alpine with zero benefit at this scale |
+| GPU inference | HA Add-on runs on Raspberry Pi; no GPU available |
+| Real-time model retraining | Nightly batch is sufficient; per-cycle retraining wastes CPU |
+| Anomaly-triggered control changes | Anomalies are observability, not control — never auto-change parameters |
 
 ## Traceability
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| CFG-01 | Phase 12 | Complete |
-| CFG-02 | Phase 12 | Complete |
-| CFG-03 | Phase 12 | Complete |
-| DISC-01 | Phase 13 | Complete |
-| DISC-02 | Phase 13 | Complete |
-| DISC-03 | Phase 13 | Complete |
-| DISC-04 | Phase 13 | Complete |
-| DISC-05 | Phase 13 | Complete |
-| DISC-06 | Phase 13 | Complete |
-| DISC-07 | Phase 13 | Complete |
-| DISC-08 | Phase 13 | Complete |
-| DISC-09 | Phase 13 | Complete |
-| DISC-10 | Phase 13 | Complete |
-| DISC-11 | Phase 13 | Complete |
-| DISC-12 | Phase 13 | Complete |
-| DISC-13 | Phase 13 | Complete |
-| CTRL-01 | Phase 14 | Complete |
-| CTRL-02 | Phase 14 | Complete |
-| CTRL-03 | Phase 14 | Complete |
-| CTRL-04 | Phase 14 | Complete |
-| CTRL-05 | Phase 14 | Complete |
-| CTRL-06 | Phase 14 | Complete |
-| CTRL-07 | Phase 14 | Complete |
-| CTRL-08 | Phase 14 | Complete |
-| CTRL-09 | Phase 14 | Complete |
-| CTRL-10 | Phase 14 | Complete |
-| CTRL-11 | Phase 14 | Complete |
-| INGR-01 | Phase 15 | Complete |
-| INGR-02 | Phase 15 | Complete |
-| INGR-03 | Phase 15 | Complete |
-| INGR-04 | Phase 15 | Complete |
-| INGR-05 | Phase 15 | Complete |
-| INGR-06 | Phase 15 | Complete |
+| INFRA-01 | TBD | Pending |
+| INFRA-02 | TBD | Pending |
+| INFRA-03 | TBD | Pending |
+| INFRA-04 | TBD | Pending |
+| INFRA-05 | TBD | Pending |
+| FCST-01 | TBD | Pending |
+| FCST-02 | TBD | Pending |
+| FCST-03 | TBD | Pending |
+| FCST-04 | TBD | Pending |
+| FCST-05 | TBD | Pending |
+| FCST-06 | TBD | Pending |
+| FCST-07 | TBD | Pending |
+| TUNE-01 | TBD | Pending |
+| TUNE-02 | TBD | Pending |
+| TUNE-03 | TBD | Pending |
+| TUNE-04 | TBD | Pending |
+| TUNE-05 | TBD | Pending |
+| TUNE-06 | TBD | Pending |
+| TUNE-07 | TBD | Pending |
+| TUNE-08 | TBD | Pending |
+| ANOM-01 | TBD | Pending |
+| ANOM-02 | TBD | Pending |
+| ANOM-03 | TBD | Pending |
+| ANOM-04 | TBD | Pending |
+| ANOM-05 | TBD | Pending |
+| ANOM-06 | TBD | Pending |
+| ANOM-07 | TBD | Pending |
+| ANOM-08 | TBD | Pending |
 
 **Coverage:**
-- v1.2 requirements: 33 total
-- Mapped to phases: 33
-- Unmapped: 0
+- v1.3 requirements: 28 total
+- Mapped to phases: 0
+- Unmapped: 28
 
 ---
 *Requirements defined: 2026-03-23*
-*Last updated: 2026-03-23 after roadmap creation*
+*Last updated: 2026-03-23 after initial definition*
