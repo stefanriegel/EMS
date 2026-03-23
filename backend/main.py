@@ -69,6 +69,7 @@ from backend.huawei_controller import HuaweiController
 from backend.orchestrator import Orchestrator
 from backend.victron_controller import VictronController
 from backend.scheduler import Scheduler
+from backend.weather_scheduler import WeatherScheduler
 from backend.tariff import CompositeTariffEngine
 from influxdb_client.client.influxdb_client_async import InfluxDBClientAsync
 
@@ -174,6 +175,45 @@ async def _nightly_scheduler_loop(
         except Exception as exc:  # noqa: BLE001
             logger.warning("nightly-scheduler: compute_schedule failed: %s", exc)
         await asyncio.sleep(86400)
+
+
+# ---------------------------------------------------------------------------
+# Intra-day re-planning loop
+# ---------------------------------------------------------------------------
+
+
+async def _intraday_replan_loop(
+    weather_scheduler,
+    writer,
+    interval_s: int = 21600,  # 6 hours
+    deviation_threshold: float = 0.20,
+) -> None:
+    """Re-run schedule when solar forecast deviates significantly.
+
+    Runs every ``interval_s`` seconds (default 6 hours).  On each tick,
+    checks whether the solar forecast has changed by more than
+    ``deviation_threshold`` relative to the last schedule computation.
+    If so, triggers a full recompute via ``weather_scheduler.compute_schedule``.
+
+    The initial delay ensures this loop does not fire immediately after the
+    nightly schedule has been computed.
+    """
+    await asyncio.sleep(interval_s)  # initial delay
+    while True:
+        try:
+            changed = await weather_scheduler.check_forecast_deviation(
+                deviation_threshold
+            )
+            if changed:
+                await weather_scheduler.compute_schedule(writer)
+                logger.info(
+                    "intraday-replan: forecast deviation detected, schedule recomputed"
+                )
+            else:
+                logger.debug("intraday-replan: forecast stable, no replan needed")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("intraday-replan: failed: %s", exc)
+        await asyncio.sleep(interval_s)
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +443,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         evcc_client = EvccClient(evcc_cfg)
         scheduler = Scheduler(evcc_client, effective_consumption_reader, tariff_engine, sys_cfg, orch_cfg)
-        app.state.scheduler = scheduler
+        weather_scheduler = WeatherScheduler(
+            scheduler=scheduler,
+            evcc_client=evcc_client,
+            weather_client=weather_client,
+            consumption_forecaster=consumption_forecaster,
+            sys_config=sys_cfg,
+            orch_config=orch_cfg,
+            tariff_engine=tariff_engine,
+        )
+        app.state.scheduler = weather_scheduler
+        logger.info(
+            "WeatherScheduler wired — wrapping Scheduler with multi-day forecast"
+        )
         logger.info(
             "Scheduler wired — run_hour=%d charge_window=%d–%d min",
             sched_cfg.run_hour,
@@ -414,7 +466,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # --- Start nightly scheduler loop ---
         sched_task = asyncio.create_task(
             _nightly_scheduler_loop(
-                scheduler,
+                weather_scheduler,
                 metrics_writer,
                 sched_cfg.run_hour,
                 consumption_forecaster=consumption_forecaster,
@@ -423,6 +475,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             name="nightly-scheduler",
         )
         app.state.sched_task = sched_task
+
+        # --- Start intra-day re-planning loop ---
+        intraday_task = asyncio.create_task(
+            _intraday_replan_loop(weather_scheduler, metrics_writer),
+            name="intraday-replan",
+        )
+        app.state.intraday_task = intraday_task
 
         # --- Start coordinator (replaces Orchestrator) ---
         huawei_ctrl = HuaweiController(huawei, sys_cfg, loop_interval_s=orch_cfg.loop_interval_s)
@@ -437,7 +496,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
         await coordinator.start()
         logger.info("Coordinator control loop started (replaces Orchestrator)")
-        coordinator.set_scheduler(scheduler)
+        coordinator.set_scheduler(weather_scheduler)
         logger.info("Coordinator: scheduler wired for GRID_CHARGE slot detection")
 
         # --- Export advisor (SCO-01) ---
@@ -559,6 +618,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.orchestrator = None
         app.state.scheduler = None
         app.state.sched_task = None
+        app.state.intraday_task = None
         app.state.metrics_reader = None
         app.state.evcc_driver = None
         app.state.ha_mqtt_client = None
@@ -577,6 +637,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.sched_task.cancel()
         await asyncio.gather(app.state.sched_task, return_exceptions=True)
         logger.info("nightly-scheduler: task cancelled")
+    intraday_task = getattr(app.state, "intraday_task", None)
+    if intraday_task is not None:
+        intraday_task.cancel()
+        await asyncio.gather(intraday_task, return_exceptions=True)
+        logger.info("intraday-replan: task cancelled")
     if app.state.evcc_driver is not None:
         await app.state.evcc_driver.close()
     if app.state.ha_mqtt_client is not None:
