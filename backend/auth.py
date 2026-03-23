@@ -200,7 +200,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
     Exempt paths (always pass through, even when auth is enabled):
     - ``/api/health`` — liveness probe, must always be reachable
     - ``/api/auth/*`` — login/logout themselves cannot require auth
-    - ``/api/setup/*`` — setup wizard is pre-auth by design
 
     Non-``/api/`` paths (static assets, React SPA) always pass through.
 
@@ -243,11 +242,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # Exempt API paths.
-        if (
-            path == "/api/health"
-            or path.startswith("/api/auth/")
-            or path.startswith("/api/setup/")
-        ):
+        if path == "/api/health" or path.startswith("/api/auth/"):
             return await call_next(request)
 
         # All other /api/* — require a valid cookie.
