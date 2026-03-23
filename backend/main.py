@@ -50,6 +50,7 @@ from starlette.staticfiles import StaticFiles
 
 from backend.api import api_router
 from backend.auth import AdminConfig, AuthMiddleware, auth_router, ensure_jwt_secret
+from backend.ingress import IngressMiddleware
 from backend.config import HuaweiConfig, InfluxConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig, EvccConfig, SchedulerConfig, EvccMqttConfig, HaMqttConfig, TelegramConfig, HaRestConfig, HaStatisticsConfig, MultiEntityHaConfig, LiveTariffConfig, OpenMeteoConfig
 from backend.weather_client import OpenMeteoClient
 from backend.supervisor_client import SupervisorClient
@@ -661,6 +662,7 @@ def create_app() -> FastAPI:
     config_path = os.environ.get("EMS_CONFIG_PATH", "/config/ems_config.json")
     ensure_jwt_secret(os.path.dirname(config_path))
     app.add_middleware(AuthMiddleware, admin_cfg=AdminConfig.from_env())
+    app.add_middleware(IngressMiddleware)
     app.include_router(api_router)
     app.include_router(auth_router)
 

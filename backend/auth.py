@@ -207,6 +207,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
     When ``ADMIN_PASSWORD_HASH`` is absent, auth is disabled globally and
     all requests pass through — this is the default dev-mode behavior
     that keeps all existing tests working without any modifications.
+
+    **Ingress bypass:** When the request carries an ``X-Ingress-Path`` header,
+    it originated from the HA Supervisor Ingress proxy which has already
+    authenticated the user via the HA session.  JWT auth is skipped entirely.
     """
 
     def __init__(self, app, admin_cfg: AdminConfig) -> None:
@@ -224,6 +228,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):  # type: ignore[override]
         # Auth disabled — pass everything through.
         if not self._cfg.password_hash:
+            return await call_next(request)
+
+        # Ingress bypass — HA Supervisor has already authenticated the user.
+        ingress_path = request.headers.get("x-ingress-path", "")
+        if ingress_path:
+            logger.debug("Auth bypass: Ingress request (X-Ingress-Path: %s)", ingress_path)
             return await call_next(request)
 
         path = request.url.path
