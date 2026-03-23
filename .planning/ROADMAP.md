@@ -72,7 +72,10 @@ Plans:
   3. User can press "Force Grid Charge" and "Reset to Auto" button entities in HA and EMS responds within one control cycle
   4. After any command is processed, the entity's state topic reflects the updated value (state echo)
   5. MQTT subscribe infrastructure survives paho reconnects without silent thread crash
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [ ] 14-01-PLAN.md — MQTT subscribe infrastructure, entity definitions, and defensive paho threading
+- [ ] 14-02-PLAN.md — Coordinator command handler, mode override, Supervisor persistence, and main.py wiring
 
 ### Phase 15: HA Ingress Support
 **Goal**: Dashboard is accessible from the HA sidebar without separate port or URL, while direct access continues to work
@@ -95,5 +98,5 @@ Phases execute in numeric order: 12 -> 13 -> 14 -> 15
 |-------|-----------|----------------|--------|-----------|
 | 12. Wizard Removal | v1.2 | 2/2 | Complete    | 2026-03-23 |
 | 13. MQTT Discovery Overhaul | v1.2 | 3/3 | Complete    | 2026-03-23 |
-| 14. Controllable Entities | v1.2 | 0/TBD | Not started | - |
+| 14. Controllable Entities | v1.2 | 0/2 | Not started | - |
 | 15. HA Ingress Support | v1.2 | 0/TBD | Not started | - |
