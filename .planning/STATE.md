@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: milestone
 status: Ready to execute
-stopped_at: Completed 16-02-PLAN.md
-last_updated: "2026-03-23T22:35:34.194Z"
+stopped_at: Completed 16-01-PLAN.md
+last_updated: "2026-03-23T22:36:40.849Z"
 progress:
   total_phases: 4
   completed_phases: 0
   total_plans: 3
-  completed_plans: 1
+  completed_plans: 2
 ---
 
 # Project State
@@ -24,7 +24,7 @@ See: .planning/PROJECT.md (updated 2026-03-23)
 ## Current Position
 
 Phase: 16 (ML Infrastructure) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 
 ## Performance Metrics
 
@@ -55,6 +55,7 @@ Plan: 2 of 3
 | Phase 07-11 | 10 | 3.3 min |
 | Phase 12-15 | 9 | 2.9 min |
 | Phase 16 P02 | 2min | 1 tasks | 2 files |
+| Phase 16 P01 | 3min | 1 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -68,6 +69,8 @@ Recent decisions affecting current work:
 - [v1.3 roadmap]: All sklearn .fit() calls use run_in_executor; per-cycle anomaly checks use pre-computed thresholds only
 - [v1.3 roadmap]: No new core dependencies needed; entire ML feature set built on existing scikit-learn + numpy
 - [Phase 16]: FeaturePipeline uses ems.feature_pipeline logger name; DHW entity optional matching HaStatisticsConfig
+- [Phase 16]: Used joblib (bundled with sklearn) for model serialisation -- no new dependency
+- [Phase 16]: sklearn version mismatch triggers silent discard and retrain, not error
 
 ### Pending Todos
 
@@ -80,6 +83,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-23T22:35:34.191Z
-Stopped at: Completed 16-02-PLAN.md
+Last session: 2026-03-23T22:36:40.846Z
+Stopped at: Completed 16-01-PLAN.md
 Resume file: None

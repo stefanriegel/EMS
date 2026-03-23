@@ -9,11 +9,11 @@ Requirements for Intelligent Self-Tuning milestone.
 
 ### ML Infrastructure
 
-- [ ] **INFRA-01**: ModelStore persists trained models with joblib, tracks sklearn version, discards on version mismatch
+- [x] **INFRA-01**: ModelStore persists trained models with joblib, tracks sklearn version, discards on version mismatch
 - [x] **INFRA-02**: FeaturePipeline extracts training features from InfluxDB and HA statistics in a single cached read
 - [ ] **INFRA-03**: All sklearn .fit() calls wrapped in run_in_executor to avoid blocking the event loop
 - [ ] **INFRA-04**: OMP_NUM_THREADS=2 set in Dockerfile/run.sh for aarch64 thread safety
-- [ ] **INFRA-05**: Model directory at /config/ems_models/ with JSON metadata sidecars for each model
+- [x] **INFRA-05**: Model directory at /config/ems_models/ with JSON metadata sidecars for each model
 
 ### Consumption Forecasting
 
@@ -70,11 +70,11 @@ Requirements for Intelligent Self-Tuning milestone.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INFRA-01 | Phase 16 | Pending |
+| INFRA-01 | Phase 16 | Complete |
 | INFRA-02 | Phase 16 | Complete |
 | INFRA-03 | Phase 16 | Pending |
 | INFRA-04 | Phase 16 | Pending |
-| INFRA-05 | Phase 16 | Pending |
+| INFRA-05 | Phase 16 | Complete |
 | FCST-01 | Phase 17 | Pending |
 | FCST-02 | Phase 17 | Pending |
 | FCST-03 | Phase 17 | Pending |
