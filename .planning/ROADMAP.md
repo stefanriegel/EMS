@@ -49,7 +49,7 @@ Phase 6: Deployment & Hardening - 3 plans, complete
 **Plans:** 2 plans
 Plans:
 - [x] 07-01-PLAN.md — ExportAdvisor module + config pipeline + tests
-- [ ] 07-02-PLAN.md — Coordinator wiring + decision logging
+- [x] 07-02-PLAN.md — Coordinator wiring + decision logging
 
 ### Phase 8: Coordinator Export Integration
 **Goal**: Coordinator executes export decisions in real time with seasonal awareness, adding the EXPORTING battery role to the control loop
