@@ -15,18 +15,18 @@ Requirements for Home Assistant Best Practice Alignment milestone.
 
 ### MQTT Discovery
 
-- [ ] **DISC-01**: All discovery payloads include `origin` metadata (name, sw version)
-- [ ] **DISC-02**: Availability topic with LWT — entities show "unavailable" when EMS goes offline
-- [ ] **DISC-03**: `expire_after: 120` on all sensor entities as stale-data safety net
-- [ ] **DISC-04**: `has_entity_name: True` with shortened entity names (no device name duplication)
-- [ ] **DISC-05**: `entity_category` tagging — diagnostic for status/online, config for tunable parameters
-- [ ] **DISC-06**: `device_class` and `state_class` audit — all applicable entities have correct classes
-- [ ] **DISC-07**: `configuration_url` in device info pointing to EMS dashboard
+- [x] **DISC-01**: All discovery payloads include `origin` metadata (name, sw version)
+- [x] **DISC-02**: Availability topic with LWT — entities show "unavailable" when EMS goes offline
+- [x] **DISC-03**: `expire_after: 120` on all sensor entities as stale-data safety net
+- [x] **DISC-04**: `has_entity_name: True` with shortened entity names (no device name duplication)
+- [x] **DISC-05**: `entity_category` tagging — diagnostic for status/online, config for tunable parameters
+- [x] **DISC-06**: `device_class` and `state_class` audit — all applicable entities have correct classes
+- [x] **DISC-07**: `configuration_url` in device info pointing to EMS dashboard
 - [ ] **DISC-08**: `huawei_online` and `victron_online` moved from sensor to binary_sensor with device_class connectivity
 - [ ] **DISC-09**: `grid_charge_active` and `export_active` published as binary_sensor with device_class running
-- [ ] **DISC-10**: Three HA devices — EMS Huawei, EMS Victron, EMS System — with entities grouped by physical device
+- [x] **DISC-10**: Three HA devices — EMS Huawei, EMS Victron, EMS System — with entities grouped by physical device
 - [ ] **DISC-11**: Platform migration cleanup — empty retained payloads to old sensor topics before new binary_sensor publication
-- [ ] **DISC-12**: Existing `unique_id` values preserved — no breaking changes for existing HA dashboards/automations
+- [x] **DISC-12**: Existing `unique_id` values preserved — no breaking changes for existing HA dashboards/automations
 - [x] **DISC-13**: Add-on `translations/en.yaml` with human-readable names and descriptions for all config options
 
 ### Controllable Entities
@@ -78,18 +78,18 @@ Requirements for Home Assistant Best Practice Alignment milestone.
 | CFG-01 | Phase 12 | Complete |
 | CFG-02 | Phase 12 | Complete |
 | CFG-03 | Phase 12 | Complete |
-| DISC-01 | Phase 13 | Pending |
-| DISC-02 | Phase 13 | Pending |
-| DISC-03 | Phase 13 | Pending |
-| DISC-04 | Phase 13 | Pending |
-| DISC-05 | Phase 13 | Pending |
-| DISC-06 | Phase 13 | Pending |
-| DISC-07 | Phase 13 | Pending |
+| DISC-01 | Phase 13 | Complete |
+| DISC-02 | Phase 13 | Complete |
+| DISC-03 | Phase 13 | Complete |
+| DISC-04 | Phase 13 | Complete |
+| DISC-05 | Phase 13 | Complete |
+| DISC-06 | Phase 13 | Complete |
+| DISC-07 | Phase 13 | Complete |
 | DISC-08 | Phase 13 | Pending |
 | DISC-09 | Phase 13 | Pending |
-| DISC-10 | Phase 13 | Pending |
+| DISC-10 | Phase 13 | Complete |
 | DISC-11 | Phase 13 | Pending |
-| DISC-12 | Phase 13 | Pending |
+| DISC-12 | Phase 13 | Complete |
 | DISC-13 | Phase 13 | Complete |
 | CTRL-01 | Phase 14 | Pending |
 | CTRL-02 | Phase 14 | Pending |

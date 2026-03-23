@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Home Assistant Best Practice Alignment
 status: Ready to execute
-stopped_at: Completed 13-03-PLAN.md
-last_updated: "2026-03-23T17:58:12.550Z"
+stopped_at: Completed 13-01-PLAN.md
+last_updated: "2026-03-23T18:03:07.117Z"
 progress:
   total_phases: 4
   completed_phases: 1
   total_plans: 5
-  completed_plans: 3
+  completed_plans: 4
 ---
 
 # Project State
@@ -24,7 +24,7 @@ See: .planning/PROJECT.md (updated 2026-03-23)
 ## Current Position
 
 Phase: 13 (mqtt-discovery-overhaul) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 
 ## Performance Metrics
 
@@ -56,6 +56,7 @@ Plan: 2 of 3
 | Phase 12 P02 | 1min | 1 tasks | 2 files |
 | Phase 12 P01 | 3 | 2 tasks | 6 files |
 | Phase 13 P03 | 1min | 1 tasks | 0 files |
+| Phase 13 P01 | 5min | 1 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -73,6 +74,8 @@ Recent decisions affecting current work:
 - [Phase 12]: Kept EMS_CONFIG_PATH in run.sh for JWT secret directory resolution
 - [Phase 12]: Env-var-only config: no ems_config.json fallback, Add-on options are sole config surface
 - [Phase 13]: en.yaml already covered all 40 config and schema keys -- no changes needed
+- [Phase 13]: Replaced device_name with configuration_url constructor param for HA device info
+- [Phase 13]: Used get_running_loop() instead of get_event_loop() for trio compatibility
 
 ### Pending Todos
 
@@ -86,6 +89,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-23T17:58:12.547Z
-Stopped at: Completed 13-03-PLAN.md
+Last session: 2026-03-23T18:03:07.114Z
+Stopped at: Completed 13-01-PLAN.md
 Resume file: None
