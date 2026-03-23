@@ -19,7 +19,9 @@ services:
       - influxdb-data:/var/lib/influxdb2
 
   ems:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
       - "8080:8000"
     depends_on:
@@ -28,6 +30,7 @@ services:
     environment:
       HUAWEI_HOST: ${HUAWEI_HOST:-192.168.0.10}
       VICTRON_HOST: ${VICTRON_HOST:-192.168.0.20}
+      VICTRON_PORT: ${VICTRON_PORT:-502}
       INFLUXDB_URL: ${INFLUXDB_URL:-http://influxdb:8086}
       INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-ems-dev-token-change-me}
       INFLUXDB_ORG: ${INFLUXDB_ORG:-ems}
