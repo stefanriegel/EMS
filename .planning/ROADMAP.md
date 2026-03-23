@@ -100,9 +100,9 @@ Plans:
   1. Energy flow visualization shows an export indicator when PV surplus flows to the grid
   2. A multi-day solar forecast view displays expected solar production for the next 2-3 days
   3. Charge schedule view shows a multi-day plan with per-day breakdown
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 Plans:
-- [ ] 11-01-PLAN.md — Backend API endpoints + frontend types + export indicator
+- [x] 11-01-PLAN.md — Backend API endpoints + frontend types + export indicator
 - [ ] 11-02-PLAN.md — ForecastCard + OptimizationCard day plans + App wiring
 
 ## Progress
@@ -117,4 +117,4 @@ Note: Phase 8 depends on Phase 7. Phase 9 is independent of Phases 7-8 and could
 | 8. Coordinator Export Integration | v1.1 | 0/2 | Planned | - |
 | 9. Weather & Forecast Data | v1.1 | 0/2 | Planned | - |
 | 10. Multi-Day Scheduling | v1.1 | 2/2 | Complete    | 2026-03-23 |
-| 11. Dashboard & API | v1.1 | 0/2 | Planned | - |
+| 11. Dashboard & API | v1.1 | 1/2 | In Progress|  |

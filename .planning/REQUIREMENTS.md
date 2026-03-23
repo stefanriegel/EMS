@@ -26,9 +26,9 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Dashboard
 
-- [ ] **DSH-01**: Energy flow visualization shows export indicator when PV surplus goes to grid
-- [ ] **DSH-02**: Multi-day solar forecast visualization showing expected solar production for the next 2-3 days
-- [ ] **DSH-03**: Charge schedule view shows multi-day plan with per-day breakdown
+- [x] **DSH-01**: Energy flow visualization shows export indicator when PV surplus goes to grid
+- [x] **DSH-02**: Multi-day solar forecast visualization showing expected solar production for the next 2-3 days
+- [x] **DSH-03**: Charge schedule view shows multi-day plan with per-day breakdown
 
 ## v2 Requirements
 
@@ -71,9 +71,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | MDS-05 | Phase 10 | Complete |
 | MDS-06 | Phase 9 | Complete |
 | MDS-07 | Phase 10 | Complete |
-| DSH-01 | Phase 11 | Pending |
-| DSH-02 | Phase 11 | Pending |
-| DSH-03 | Phase 11 | Pending |
+| DSH-01 | Phase 11 | Complete |
+| DSH-02 | Phase 11 | Complete |
+| DSH-03 | Phase 11 | Complete |
 
 **Coverage:**
 - v1.1 requirements: 14 total
