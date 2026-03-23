@@ -411,6 +411,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             else:
                 logger.info("ConsumptionForecaster disabled — HA_DB_PATH not configured")
 
+        # Wire forecaster to app.state for API access
+        app.state.consumption_forecaster = consumption_forecaster
+
         # Use ML forecaster as the consumption reader for the scheduler if available
         effective_consumption_reader = consumption_forecaster if consumption_forecaster is not None else metrics_reader
 
@@ -608,6 +611,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.sched_task = None
         app.state.intraday_task = None
         app.state.metrics_reader = None
+        app.state.consumption_forecaster = None
         app.state.evcc_driver = None
         app.state.ha_mqtt_client = None
         app.state.notifier = None

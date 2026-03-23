@@ -33,9 +33,11 @@ Observability
 """
 from __future__ import annotations
 
+import json
 import logging
 import math
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 import anyio.to_thread
@@ -216,6 +218,92 @@ def _build_features(
     return rows
 
 
+def _compute_daily_mape(
+    predicted_hourly: list[float],
+    actual_hourly: list[float],
+) -> float | None:
+    """Compute Mean Absolute Percentage Error for daily hourly pairs.
+
+    Parameters
+    ----------
+    predicted_hourly:
+        Predicted hourly consumption values.
+    actual_hourly:
+        Actual hourly consumption values.
+
+    Returns
+    -------
+    float or None
+        MAPE percentage (e.g. 12.5 means 12.5%), or ``None`` if fewer than
+        12 valid pairs remain after filtering near-zero actuals.
+    """
+    if len(predicted_hourly) == 0 or len(actual_hourly) == 0:
+        return None
+
+    errors: list[float] = []
+    for pred, actual in zip(predicted_hourly, actual_hourly):
+        if actual < 0.1:
+            continue  # skip near-zero to avoid MAPE explosion
+        errors.append(abs(pred - actual) / actual * 100.0)
+
+    if len(errors) < 12:
+        return None
+
+    return round(sum(errors) / len(errors), 1)
+
+
+def _save_mape_history(
+    mape_path: Path,
+    date_str: str,
+    mape_value: float,
+    max_days: int = 30,
+) -> None:
+    """Append a MAPE entry to the history JSON file.
+
+    Parameters
+    ----------
+    mape_path:
+        Path to the JSON file storing MAPE history.
+    date_str:
+        ISO date string (YYYY-MM-DD) for the entry.
+    mape_value:
+        MAPE percentage value.
+    max_days:
+        Maximum number of entries to keep (oldest trimmed first).
+    """
+    history = _load_mape_history(mape_path)
+    history.append({"date": date_str, "mape": mape_value})
+    # Keep only the last max_days entries
+    if len(history) > max_days:
+        history = history[-max_days:]
+    mape_path.parent.mkdir(parents=True, exist_ok=True)
+    mape_path.write_text(json.dumps(history, indent=2))
+
+
+def _load_mape_history(mape_path: Path) -> list[dict]:
+    """Load MAPE history from a JSON file.
+
+    Parameters
+    ----------
+    mape_path:
+        Path to the JSON file.
+
+    Returns
+    -------
+    list[dict]
+        List of ``{"date": str, "mape": float}`` entries, or empty list on
+        any error.
+    """
+    try:
+        raw = mape_path.read_text()
+        data = json.loads(raw)
+        if isinstance(data, list):
+            return data
+        return []
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return []
+
+
 def _seasonal_hourly_fallback(
     horizon_hours: int = 72,
 ) -> HourlyConsumptionForecast:
@@ -326,6 +414,15 @@ class ConsumptionForecaster:
 
         # Last known outdoor temp from training data (fallback for predict)
         self._last_outdoor_temp: float = 10.0
+
+        # MAPE tracking
+        self._mape_path: Path | None = None
+        if model_store is not None:
+            try:
+                self._mape_path = Path(model_store._dir) / "mape_history.json"
+            except Exception:  # noqa: BLE001
+                self._mape_path = None
+        self._last_hourly_predictions: list[float] | None = None
 
         # Attempt to restore previously trained models from disk
         self._try_load_models()
@@ -892,6 +989,9 @@ class ConsumptionForecaster:
                 max(0.0, (hp_pred + dhw_pred + base_pred) / 1000.0)
             )
 
+        # Store first 24 hours for daily MAPE comparison
+        self._last_hourly_predictions = list(hourly_kwh[:24])
+
         total_kwh = sum(hourly_kwh)
 
         logger.info(
@@ -913,12 +1013,57 @@ class ConsumptionForecaster:
     async def retrain_if_stale(self, stale_hours: int = 24) -> None:
         """Retrain models if they are ``None`` or older than *stale_hours*.
 
+        Before retraining, computes MAPE for yesterday's predictions vs actual
+        hourly consumption if predictions are available.
+
         Parameters
         ----------
         stale_hours:
             Maximum age of the trained models in hours before a retrain is
             triggered (default 24).
         """
+        # Compute MAPE before retraining (fire-and-forget on error)
+        if (
+            self._last_hourly_predictions is not None
+            and self._mape_path is not None
+        ):
+            try:
+                actual_data = await self._reader.read_entity_hourly(
+                    self._config.heat_pump_entity, days=2
+                )
+                if actual_data:
+                    # Extract yesterday's 24 hours
+                    yesterday = (
+                        datetime.now(tz=timezone.utc) - timedelta(days=1)
+                    ).date()
+                    actual_yesterday = [
+                        val
+                        for ts, val in actual_data
+                        if ts.date() == yesterday
+                    ]
+                    if len(actual_yesterday) >= 12:
+                        mape_value = _compute_daily_mape(
+                            self._last_hourly_predictions[
+                                : len(actual_yesterday)
+                            ],
+                            actual_yesterday,
+                        )
+                        if mape_value is not None:
+                            date_str = yesterday.isoformat()
+                            _save_mape_history(
+                                self._mape_path, date_str, mape_value
+                            )
+                            logger.info(
+                                "Daily MAPE: %.1f%% (date=%s)",
+                                mape_value,
+                                date_str,
+                            )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "MAPE computation failed (non-fatal): %s", exc
+                )
+            self._last_hourly_predictions = None
+
         if self._heat_pump_model is None:
             await self.train()
             return
@@ -967,6 +1112,69 @@ class ConsumptionForecaster:
             "predicted_kwh": round(self._last_prediction_kwh, 2),
             "actual_kwh": round(actual_kwh, 2),
             "error_pct": round(error_pct, 1),
+        }
+
+    def get_ml_status(self) -> dict:
+        """Return ML model status, training info, and MAPE history.
+
+        Returns
+        -------
+        dict
+            Contains ``models`` (per-model info), ``mape`` (history and
+            current value), ``days_of_history``, and ``min_training_days``.
+        """
+        models: dict[str, dict] = {}
+        model_names = [
+            ("heat_pump", self._heat_pump_model),
+            ("dhw", self._dhw_model),
+            ("base_load", self._base_model),
+        ]
+        for name, model in model_names:
+            info: dict = {
+                "trained": model is not None,
+                "last_trained_at": None,
+                "sample_count": 0,
+                "feature_names": FEATURE_NAMES,
+                "sklearn_version": sklearn.__version__,
+            }
+            if (
+                model is not None
+                and self._model_store is not None
+            ):
+                try:
+                    result = self._model_store.load(name)
+                    if result is not None:
+                        _, meta = result
+                        info["last_trained_at"] = meta.trained_at
+                        info["sample_count"] = meta.sample_count
+                        info["sklearn_version"] = meta.sklearn_version
+                except Exception:  # noqa: BLE001
+                    pass
+            elif (
+                model is not None
+                and self._last_trained_at is not None
+            ):
+                info["last_trained_at"] = self._last_trained_at.isoformat()
+                info["sample_count"] = self._total_samples
+            models[name] = info
+
+        # MAPE history
+        mape_history: list[dict] = []
+        current_mape: float | None = None
+        if self._mape_path is not None:
+            mape_history = _load_mape_history(self._mape_path)
+            if mape_history:
+                current_mape = mape_history[-1].get("mape")
+
+        return {
+            "models": models,
+            "mape": {
+                "current": current_mape,
+                "history": mape_history,
+                "days_tracked": len(mape_history),
+            },
+            "days_of_history": self._days_of_history,
+            "min_training_days": self._config.min_training_days,
         }
 
     # ------------------------------------------------------------------
