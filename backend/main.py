@@ -53,8 +53,6 @@ from backend.auth import AdminConfig, AuthMiddleware, auth_router, ensure_jwt_se
 from backend.config import HuaweiConfig, InfluxConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig, EvccConfig, SchedulerConfig, EvccMqttConfig, HaMqttConfig, TelegramConfig, HaRestConfig, HaStatisticsConfig, MultiEntityHaConfig, LiveTariffConfig, OpenMeteoConfig
 from backend.weather_client import OpenMeteoClient
 from backend.supervisor_client import SupervisorClient
-from backend.setup_config import load_setup_config, EMS_CONFIG_PATH
-from backend.setup_api import setup_router
 from backend.ha_rest_client import HomeAssistantClient, MultiEntityHaClient
 from backend.drivers.huawei_driver import HuaweiDriver
 from backend.drivers.victron_driver import VictronDriver
@@ -233,42 +231,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     On shutdown (after the ``yield``), the coordinator is stopped gracefully
     and both drivers are disconnected.
 
-    If ``HUAWEI_HOST`` / ``VICTRON_HOST`` are absent (and no wizard config is
-    present on disk), the lifespan starts in **degraded setup-only mode**:
-    ``app.state.orchestrator`` is set to ``None`` and only the setup endpoints
-    are served.  Existing ``GET /api/state`` callers will receive 503 via the
-    ``get_orchestrator()`` dependency — which is the correct signal that the
-    coordinator is not running.
+    If required environment variables are absent, the lifespan starts in
+    degraded mode: ``app.state.orchestrator`` is set to ``None`` and state
+    endpoints return 503.
     """
-    # --- Load wizard-persisted config and inject into env (setdefault = env vars win) ---
-    config_path = os.environ.get("EMS_CONFIG_PATH", EMS_CONFIG_PATH)
-    app.state.setup_config_path = config_path
-
     # Ensure a persistent JWT secret exists before any auth config is read.
-    # Uses the same directory as the wizard config file so it lives on the
-    # same persistent volume (HA config volume / Docker bind mount).
-    config_dir = os.path.dirname(config_path)
+    # Uses the directory of EMS_CONFIG_PATH so it lives on the same persistent
+    # volume (HA config volume / Docker bind mount).
+    config_dir = os.path.dirname(os.environ.get("EMS_CONFIG_PATH", "/config/ems_config.json"))
     ensure_jwt_secret(config_dir)
-
-    setup_cfg = load_setup_config(config_path)
-    if setup_cfg is not None:
-        os.environ.setdefault("HUAWEI_HOST", setup_cfg.huawei_host)
-        os.environ.setdefault("HUAWEI_PORT", str(setup_cfg.huawei_port))
-        os.environ.setdefault("VICTRON_HOST", setup_cfg.victron_host)
-        os.environ.setdefault("VICTRON_PORT", str(setup_cfg.victron_port))
-        os.environ.setdefault("EVCC_HOST", setup_cfg.evcc_host)
-        os.environ.setdefault("EVCC_PORT", str(setup_cfg.evcc_port))
-        os.environ.setdefault("EVCC_MQTT_HOST", setup_cfg.evcc_mqtt_host)
-        os.environ.setdefault("EVCC_MQTT_PORT", str(setup_cfg.evcc_mqtt_port))
-        os.environ.setdefault("HA_URL", setup_cfg.ha_url)
-        os.environ.setdefault("HA_TOKEN", setup_cfg.ha_token)
-        os.environ.setdefault("HA_HEAT_PUMP_ENTITY_ID", setup_cfg.ha_heat_pump_entity_id)
-        if setup_cfg.feed_in_rate_eur_kwh != 0.074:
-            os.environ.setdefault("FEED_IN_RATE_EUR_KWH", str(setup_cfg.feed_in_rate_eur_kwh))
-        if setup_cfg.winter_months != "11,12,1,2":
-            os.environ.setdefault("WINTER_MONTHS", setup_cfg.winter_months)
-        if setup_cfg.winter_min_soc_boost_pct != 10:
-            os.environ.setdefault("WINTER_MIN_SOC_BOOST_PCT", str(setup_cfg.winter_min_soc_boost_pct))
 
     # --- Supervisor service discovery (HA add-on mode only, no-op otherwise) ---
     # Resolves MQTT broker credentials and EVCC add-on location automatically
@@ -315,7 +286,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 influx_info.url,
             )
     else:
-        logger.debug("Supervisor: not detected — using env vars / wizard config only")
+        logger.debug("Supervisor: not detected — using env vars only")
 
     try:
         huawei_cfg = HuaweiConfig.from_env()
@@ -612,7 +583,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except KeyError as exc:
         logger.warning(
             "Orchestrator not started — missing required env var %s "
-            "(setup-only mode; open /setup to configure)",
+            "(check Add-on options or environment)",
             exc,
         )
         app.state.orchestrator = None
@@ -685,11 +656,10 @@ def create_app() -> FastAPI:
     )
     # Ensure JWT secret is generated/loaded before middleware reads AdminConfig.
     # Uses the configured config dir; falls back to the directory of the default path.
-    config_path = os.environ.get("EMS_CONFIG_PATH", EMS_CONFIG_PATH)
+    config_path = os.environ.get("EMS_CONFIG_PATH", "/config/ems_config.json")
     ensure_jwt_secret(os.path.dirname(config_path))
     app.add_middleware(AuthMiddleware, admin_cfg=AdminConfig.from_env())
     app.include_router(api_router)
-    app.include_router(setup_router)
     app.include_router(auth_router)
 
     # Mount the React SPA build artifacts.  The os.path.exists guard is
