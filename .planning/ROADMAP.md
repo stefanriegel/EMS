@@ -28,7 +28,7 @@ See MILESTONES.md for details.
 
 - [x] **Phase 12: Wizard Removal** - Remove setup wizard; Add-on options page becomes sole config surface (completed 2026-03-23)
 - [x] **Phase 13: MQTT Discovery Overhaul** - Availability, origin metadata, binary sensors, entity naming, and translations (completed 2026-03-23)
-- [ ] **Phase 14: Controllable Entities** - Number, Select, and Button entities with MQTT subscribe infrastructure
+- [x] **Phase 14: Controllable Entities** - Number, Select, and Button entities with MQTT subscribe infrastructure (completed 2026-03-23)
 - [ ] **Phase 15: HA Ingress Support** - Dashboard accessible in HA sidebar with proper path and auth handling
 
 ## Phase Details
@@ -75,7 +75,7 @@ Plans:
 **Plans**: 2 plans
 Plans:
 - [x] 14-01-PLAN.md — MQTT subscribe infrastructure, entity definitions, and defensive paho threading
-- [ ] 14-02-PLAN.md — Coordinator command handler, mode override, Supervisor persistence, and main.py wiring
+- [x] 14-02-PLAN.md — Coordinator command handler, mode override, Supervisor persistence, and main.py wiring
 
 ### Phase 15: HA Ingress Support
 **Goal**: Dashboard is accessible from the HA sidebar without separate port or URL, while direct access continues to work
@@ -98,5 +98,5 @@ Phases execute in numeric order: 12 -> 13 -> 14 -> 15
 |-------|-----------|----------------|--------|-----------|
 | 12. Wizard Removal | v1.2 | 2/2 | Complete    | 2026-03-23 |
 | 13. MQTT Discovery Overhaul | v1.2 | 3/3 | Complete    | 2026-03-23 |
-| 14. Controllable Entities | v1.2 | 1/2 | In Progress|  |
+| 14. Controllable Entities | v1.2 | 2/2 | Complete   | 2026-03-23 |
 | 15. HA Ingress Support | v1.2 | 0/TBD | Not started | - |

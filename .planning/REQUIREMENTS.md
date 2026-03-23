@@ -40,7 +40,7 @@ Requirements for Home Assistant Best Practice Alignment milestone.
 - [x] **CTRL-07**: Select entity for control mode (AUTO, HOLD, GRID_CHARGE, DISCHARGE_LOCKED)
 - [x] **CTRL-08**: Button entity for Force Grid Charge with auto-timeout
 - [x] **CTRL-09**: Button entity for Reset to Auto
-- [ ] **CTRL-10**: State echo — after processing a command, publish updated state on state_topic
+- [x] **CTRL-10**: State echo — after processing a command, publish updated state on state_topic
 - [x] **CTRL-11**: Defensive paho threading — wrap subscribe in try/except, periodic health check for silent thread crash
 
 ### Ingress
@@ -100,7 +100,7 @@ Requirements for Home Assistant Best Practice Alignment milestone.
 | CTRL-07 | Phase 14 | Complete |
 | CTRL-08 | Phase 14 | Complete |
 | CTRL-09 | Phase 14 | Complete |
-| CTRL-10 | Phase 14 | Pending |
+| CTRL-10 | Phase 14 | Complete |
 | CTRL-11 | Phase 14 | Complete |
 | INGR-01 | Phase 15 | Pending |
 | INGR-02 | Phase 15 | Pending |
