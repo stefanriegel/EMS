@@ -27,7 +27,7 @@ See MILESTONES.md for details.
 **Milestone Goal:** Make EMS a first-class HA citizen -- proper entity model, controllable via services, accessible via Ingress, and runtime-tunable through HA entities.
 
 - [x] **Phase 12: Wizard Removal** - Remove setup wizard; Add-on options page becomes sole config surface (completed 2026-03-23)
-- [ ] **Phase 13: MQTT Discovery Overhaul** - Availability, origin metadata, binary sensors, entity naming, and translations
+- [x] **Phase 13: MQTT Discovery Overhaul** - Availability, origin metadata, binary sensors, entity naming, and translations (completed 2026-03-23)
 - [ ] **Phase 14: Controllable Entities** - Number, Select, and Button entities with MQTT subscribe infrastructure
 - [ ] **Phase 15: HA Ingress Support** - Dashboard accessible in HA sidebar with proper path and auth handling
 
@@ -59,7 +59,7 @@ Plans:
 **Plans**: 3 plans
 Plans:
 - [x] 13-01-PLAN.md — Entity model refactor with best-practice discovery payloads (LWT, origin, three devices, naming)
-- [ ] 13-02-PLAN.md — Binary sensor entities and platform migration cleanup
+- [x] 13-02-PLAN.md — Binary sensor entities and platform migration cleanup
 - [x] 13-03-PLAN.md — Add-on translations audit and completion
 
 ### Phase 14: Controllable Entities
@@ -94,6 +94,6 @@ Phases execute in numeric order: 12 -> 13 -> 14 -> 15
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 12. Wizard Removal | v1.2 | 2/2 | Complete    | 2026-03-23 |
-| 13. MQTT Discovery Overhaul | v1.2 | 2/3 | In Progress|  |
+| 13. MQTT Discovery Overhaul | v1.2 | 3/3 | Complete   | 2026-03-23 |
 | 14. Controllable Entities | v1.2 | 0/TBD | Not started | - |
 | 15. HA Ingress Support | v1.2 | 0/TBD | Not started | - |

@@ -22,10 +22,10 @@ Requirements for Home Assistant Best Practice Alignment milestone.
 - [x] **DISC-05**: `entity_category` tagging — diagnostic for status/online, config for tunable parameters
 - [x] **DISC-06**: `device_class` and `state_class` audit — all applicable entities have correct classes
 - [x] **DISC-07**: `configuration_url` in device info pointing to EMS dashboard
-- [ ] **DISC-08**: `huawei_online` and `victron_online` moved from sensor to binary_sensor with device_class connectivity
-- [ ] **DISC-09**: `grid_charge_active` and `export_active` published as binary_sensor with device_class running
+- [x] **DISC-08**: `huawei_online` and `victron_online` moved from sensor to binary_sensor with device_class connectivity
+- [x] **DISC-09**: `grid_charge_active` and `export_active` published as binary_sensor with device_class running
 - [x] **DISC-10**: Three HA devices — EMS Huawei, EMS Victron, EMS System — with entities grouped by physical device
-- [ ] **DISC-11**: Platform migration cleanup — empty retained payloads to old sensor topics before new binary_sensor publication
+- [x] **DISC-11**: Platform migration cleanup — empty retained payloads to old sensor topics before new binary_sensor publication
 - [x] **DISC-12**: Existing `unique_id` values preserved — no breaking changes for existing HA dashboards/automations
 - [x] **DISC-13**: Add-on `translations/en.yaml` with human-readable names and descriptions for all config options
 
@@ -85,10 +85,10 @@ Requirements for Home Assistant Best Practice Alignment milestone.
 | DISC-05 | Phase 13 | Complete |
 | DISC-06 | Phase 13 | Complete |
 | DISC-07 | Phase 13 | Complete |
-| DISC-08 | Phase 13 | Pending |
-| DISC-09 | Phase 13 | Pending |
+| DISC-08 | Phase 13 | Complete |
+| DISC-09 | Phase 13 | Complete |
 | DISC-10 | Phase 13 | Complete |
-| DISC-11 | Phase 13 | Pending |
+| DISC-11 | Phase 13 | Complete |
 | DISC-12 | Phase 13 | Complete |
 | DISC-13 | Phase 13 | Complete |
 | CTRL-01 | Phase 14 | Pending |
