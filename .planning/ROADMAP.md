@@ -59,7 +59,10 @@ Plans:
   1. Coordinator assigns EXPORTING role and routes PV surplus to grid export when ExportAdvisor recommends it
   2. Winter behavior prioritizes battery reserves with more aggressive grid charging; summer allows natural PV export when batteries are full
   3. Export does not cause dual-battery oscillation — only one system exports at a time, P_target offset prevents the other from reacting
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 08-01-PLAN.md — EXPORTING role + seasonal config pipeline
+- [ ] 08-02-PLAN.md — Coordinator export integration + seasonal min-SoC + tests
 
 ### Phase 9: Weather & Forecast Data
 **Goal**: System has multi-day solar production forecasts and extended consumption predictions available for scheduling decisions
@@ -103,7 +106,7 @@ Note: Phase 8 depends on Phase 7. Phase 9 is independent of Phases 7-8 and could
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 7. Export Foundation | v1.1 | 0/2 | Planned | - |
-| 8. Coordinator Export Integration | v1.1 | 0/0 | Not started | - |
+| 8. Coordinator Export Integration | v1.1 | 0/2 | Planned | - |
 | 9. Weather & Forecast Data | v1.1 | 0/0 | Not started | - |
 | 10. Multi-Day Scheduling | v1.1 | 0/0 | Not started | - |
 | 11. Dashboard & API | v1.1 | 0/0 | Not started | - |
