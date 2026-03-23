@@ -114,8 +114,8 @@ Plans:
 
 Plans:
 - [x] 06-01-PLAN.md — Dockerfile consolidation, stale ha-addon cleanup, config.yaml + run.sh + translations for v2 fields
-- [ ] 06-02-PLAN.md — Backend wizard migration: EmsSetupConfig + Modbus TCP probe + VictronConfig forward compat
-- [ ] 06-03-PLAN.md — Frontend wizard: Modbus TCP Step 2 + Modul3 Step 5 + CSS classes + E2E tests
+- [x] 06-02-PLAN.md — Backend wizard migration: EmsSetupConfig + Modbus TCP probe + VictronConfig forward compat
+- [x] 06-03-PLAN.md — Frontend wizard: Modbus TCP Step 2 + Modul3 Step 5 + CSS classes + E2E tests
 
 ## Progress
 
