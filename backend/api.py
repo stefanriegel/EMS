@@ -660,6 +660,75 @@ async def get_metrics_latest(
 # ---------------------------------------------------------------------------
 
 
+@api_router.get("/optimization/forecast")
+async def get_optimization_forecast(
+    scheduler: Scheduler | None = Depends(get_scheduler),
+) -> dict[str, Any]:
+    """Return the multi-day solar/consumption forecast from WeatherScheduler.
+
+    Returns
+    -------
+    dict
+        ``{"days": [{"date", "day_index", "solar_kwh", "consumption_kwh",
+        "net_kwh", "confidence", "charge_target_kwh", "advisory"}, ...]}``
+
+    Raises
+    ------
+    HTTPException(503)
+        If the scheduler is absent or has no active day plans.
+    """
+    if scheduler is None:
+        raise HTTPException(
+            status_code=503, detail="Scheduler not available"
+        )
+    day_plans = getattr(scheduler, "active_day_plans", None)
+    if day_plans is None:
+        raise HTTPException(
+            status_code=503, detail="No active day plans"
+        )
+    return {
+        "days": [
+            {
+                "date": dp.date.isoformat(),
+                "day_index": dp.day_index,
+                "solar_kwh": round(dp.solar_forecast_kwh, 1),
+                "consumption_kwh": round(
+                    dp.consumption_forecast_kwh, 1
+                ),
+                "net_kwh": round(dp.net_energy_kwh, 1),
+                "confidence": dp.confidence,
+                "charge_target_kwh": round(dp.charge_target_kwh, 1),
+                "advisory": dp.advisory,
+            }
+            for dp in day_plans
+        ]
+    }
+
+
+def _day_plan_to_dict(dp: Any) -> dict[str, Any]:
+    """Serialise a :class:`~backend.schedule_models.DayPlan` to a JSON-safe dict."""
+    result: dict[str, Any] = {
+        "date": dp.date.isoformat(),
+        "day_index": dp.day_index,
+        "solar_kwh": round(dp.solar_forecast_kwh, 1),
+        "consumption_kwh": round(dp.consumption_forecast_kwh, 1),
+        "net_kwh": round(dp.net_energy_kwh, 1),
+        "confidence": dp.confidence,
+        "charge_target_kwh": round(dp.charge_target_kwh, 1),
+        "advisory": dp.advisory,
+        "slots": [],
+    }
+    for slot in dp.slots:
+        result["slots"].append({
+            "battery": slot.battery,
+            "target_soc_pct": slot.target_soc_pct,
+            "start_utc": slot.start_utc.isoformat(),
+            "end_utc": slot.end_utc.isoformat(),
+            "grid_charge_power_w": slot.grid_charge_power_w,
+        })
+    return result
+
+
 @api_router.get("/optimization/schedule")
 async def get_optimization_schedule(
     scheduler: Scheduler | None = Depends(get_scheduler),
@@ -673,6 +742,8 @@ async def get_optimization_schedule(
         with all ``datetime`` fields serialised to ISO 8601 strings.
         Includes ``stale: true`` when the schedule could not be refreshed
         from EVCC on the last poll cycle.
+        Includes ``day_plans`` array when :class:`WeatherScheduler` has
+        active day plans.
 
     Raises
     ------
@@ -685,7 +756,14 @@ async def get_optimization_schedule(
         raise HTTPException(status_code=503, detail="Scheduler not available")
     if scheduler.active_schedule is None:
         raise HTTPException(status_code=503, detail="No active schedule")
-    return _schedule_to_dict(scheduler.active_schedule)
+    result = _schedule_to_dict(scheduler.active_schedule)
+    # Attach day_plans when WeatherScheduler provides them
+    day_plans = getattr(scheduler, "active_day_plans", None)
+    if day_plans is not None:
+        result["day_plans"] = [
+            _day_plan_to_dict(dp) for dp in day_plans
+        ]
+    return result
 
 
 # ---------------------------------------------------------------------------
