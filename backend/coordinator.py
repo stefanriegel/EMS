@@ -561,6 +561,31 @@ class Coordinator:
             await self._write_integrations(h_snap, v_snap, h_cmd, v_cmd, None)
             return
 
+        # 2b. Check HA mode override (CTRL-07..CTRL-09)
+        if self._mode_override is not None:
+            if self._mode_override == "HOLD":
+                h_cmd = ControllerCommand(role=BatteryRole.HOLDING, target_watts=0.0)
+                v_cmd = ControllerCommand(role=BatteryRole.HOLDING, target_watts=0.0)
+            elif self._mode_override == "GRID_CHARGE":
+                h_cmd = ControllerCommand(role=BatteryRole.GRID_CHARGE, target_watts=0.0)
+                v_cmd = ControllerCommand(role=BatteryRole.GRID_CHARGE, target_watts=0.0)
+            elif self._mode_override == "DISCHARGE_LOCKED":
+                h_cmd = ControllerCommand(
+                    role=BatteryRole.HOLDING, target_watts=0.0, evcc_hold=True
+                )
+                v_cmd = ControllerCommand(
+                    role=BatteryRole.HOLDING, target_watts=0.0, evcc_hold=True
+                )
+            else:
+                h_cmd = v_cmd = None  # type: ignore[assignment]
+
+            if h_cmd is not None:
+                await self._huawei_ctrl.execute(h_cmd)
+                await self._victron_ctrl.execute(v_cmd)
+                self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
+                await self._write_integrations(h_snap, v_snap, h_cmd, v_cmd, None)
+                return
+
         # 3. Check grid charge
         slot = self._check_grid_charge()
         if slot is not None:
@@ -1281,6 +1306,7 @@ class Coordinator:
         # HA MQTT publish
         if self._ha_mqtt_client is not None:
             try:
+                self._ha_mqtt_client.check_health()
                 extra = {
                     "huawei_power_w": h_snap.power_w,
                     "victron_power_w": v_snap.power_w,
@@ -1288,6 +1314,7 @@ class Coordinator:
                     "victron_l2_power_w": v_snap.grid_l2_power_w or 0.0,
                     "victron_l3_power_w": v_snap.grid_l3_power_w or 0.0,
                 }
+                extra.update(self._build_controllable_extra_fields())
                 await self._ha_mqtt_client.publish(self._state, extra_fields=extra)
                 self._integration_health["ha_mqtt"].available = True
                 self._integration_health["ha_mqtt"].last_seen = now

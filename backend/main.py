@@ -468,6 +468,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await coordinator.start()
         logger.info("Coordinator control loop started (replaces Orchestrator)")
         coordinator.set_scheduler(weather_scheduler)
+        coordinator.set_supervisor_client(supervisor)
         logger.info("Coordinator: scheduler wired for GRID_CHARGE slot detection")
 
         # --- Export advisor (SCO-01) ---
@@ -509,10 +510,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             await ha_client.connect()
             app.state.ha_mqtt_client = ha_client
             coordinator.set_ha_mqtt_client(ha_client)
+            ha_client.set_command_callback(coordinator._handle_ha_command)
             logger.info(
                 "HA MQTT client connecting — host=%s:%d", ha_mqtt_cfg.host, ha_mqtt_cfg.port
             )
-            logger.info("Coordinator: HA MQTT client wired")
+            logger.info("Coordinator: HA MQTT client wired (command callback registered)")
         except Exception as exc:  # noqa: BLE001
             logger.warning("HA MQTT client failed to connect — running without HA MQTT: %s", exc)
             app.state.ha_mqtt_client = None
