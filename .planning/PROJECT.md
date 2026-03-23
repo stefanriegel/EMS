@@ -83,7 +83,7 @@ See REQUIREMENTS.md for v1.2 milestone requirements.
 
 ## Current State
 
-**v1.1 shipped 2026-03-23.** Advanced optimization with grid export management and multi-day weather-aware scheduling.
+**v1.2 in progress.** Phase 12 (Wizard Removal) complete — setup wizard deleted, Add-on options is sole config surface.
 
 **Codebase:**
 - Backend: ~11,200 LOC Python (FastAPI, pymodbus, paho-mqtt)
@@ -123,6 +123,7 @@ See REQUIREMENTS.md for v1.2 milestone requirements.
 | SoC-headroom weighting for PV surplus | Proportional distribution by available capacity, not battery order | ✓ Validated Phase 3 |
 | Predictive pre-charging with solar forecast | Skip grid charge when solar covers demand (1.2x threshold) | ✓ Validated Phase 3 |
 | Independent controllers with coordinator pattern | Prevents oscillation while allowing optimization; each system is autonomous | ✓ Validated Phase 2 |
+| Add-on options as sole config surface | Setup wizard adds complexity; HA users expect Add-on config page | ✓ Validated Phase 12 |
 
 ## Evolution
 
@@ -143,4 +144,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 ---
-*Last updated: 2026-03-23 after v1.2 milestone start*
+*Last updated: 2026-03-23 after Phase 12 completion*
