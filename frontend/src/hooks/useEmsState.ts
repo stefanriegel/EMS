@@ -32,8 +32,8 @@ export function useEmsState(): EmsPollingState {
       controllers.push(ctrl);
       try {
         const [poolRes, devicesRes] = await Promise.all([
-          fetch("/api/state", { signal: ctrl.signal }),
-          fetch("/api/devices", { signal: ctrl.signal }),
+          fetch("./api/state", { signal: ctrl.signal }),
+          fetch("./api/devices", { signal: ctrl.signal }),
         ]);
         if (aborted) return;
 

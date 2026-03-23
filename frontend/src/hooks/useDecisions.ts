@@ -19,7 +19,7 @@ export function useDecisions(limit = 20, intervalMs = 30_000): DecisionEntry[] {
       const ctrl = new AbortController();
       controllers.push(ctrl);
       try {
-        const res = await fetch(`/api/decisions?limit=${limit}`, { signal: ctrl.signal });
+        const res = await fetch(`./api/decisions?limit=${limit}`, { signal: ctrl.signal });
         if (aborted) return;
         if (res.ok) {
           const data = (await res.json()) as DecisionEntry[];

@@ -19,7 +19,7 @@ export function useForecast(intervalMs = 60_000): ForecastPayload | null {
       const ctrl = new AbortController();
       controllers.push(ctrl);
       try {
-        const res = await fetch("/api/optimization/forecast", { signal: ctrl.signal });
+        const res = await fetch("./api/optimization/forecast", { signal: ctrl.signal });
         if (aborted) return;
         if (res.ok) {
           const data = (await res.json()) as ForecastPayload;

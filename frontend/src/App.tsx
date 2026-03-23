@@ -32,9 +32,16 @@ import { ForecastCard } from "./components/ForecastCard";
 import { Login } from "./pages/Login";
 import type { PoolState, DevicesPayload } from "./types";
 
-// In production, location.host resolves to the FastAPI server address.
-// In development, Vite proxy forwards /api/ws/state → ws://localhost:8000/api/ws/state.
-const WS_URL = `ws://${location.host}/api/ws/state`;
+// Build WS URL dynamically from window.location so it works under both
+// direct access (ws://host:8000/api/ws/state) and HA Ingress
+// (wss://ha.local/api/hassio_ingress/{token}/api/ws/state).
+function buildWsUrl(): string {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const wsUrl = new URL("./api/ws/state", location.href);
+  wsUrl.protocol = proto;
+  return wsUrl.href;
+}
+const WS_URL = buildWsUrl();
 
 /**
  * FallbackConsumer — renders when WS has disconnected. Calls useEmsState()
@@ -143,7 +150,7 @@ export default function App() {
   // On mount: check auth status. If 401, redirect to /login.
   // Silently ignore errors (no backend in preview/test environment).
   useEffect(() => {
-    fetch("/api/state")
+    fetch("./api/state")
       .then((r) => {
         if (r.status === 401) {
           setLocation("/login");
