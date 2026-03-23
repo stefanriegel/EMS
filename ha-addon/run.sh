@@ -109,6 +109,10 @@ _m3_sr=$(get_option 'modul3_surplus_rate_eur_kwh')
 _m3_dr=$(get_option 'modul3_deficit_rate_eur_kwh')
 [ -n "$_m3_dr" ] && export MODUL3_DEFICIT_RATE_EUR_KWH="$_m3_dr"
 
+# --- Feed-in tariff ---
+_feed_in=$(get_option 'feed_in_rate_eur_kwh')
+[ -n "$_feed_in" ] && export FEED_IN_RATE_EUR_KWH="$_feed_in"
+
 # --- Logging ---
 export LOG_LEVEL=$(get_option 'log_level')
 

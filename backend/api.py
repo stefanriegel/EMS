@@ -110,6 +110,10 @@ class SystemConfigRequest(BaseModel):
         default=False,
         description="Whether the Victron system may export to the grid.",
     )
+    feed_in_rate_eur_kwh: float = Field(
+        default=0.074, ge=0.0,
+        description="Fixed feed-in tariff rate in EUR/kWh.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -285,6 +289,7 @@ async def post_config(
         victron_max_soc_pct=body.victron_max_soc_pct,
         huawei_feed_in_allowed=body.huawei_feed_in_allowed,
         victron_feed_in_allowed=body.victron_feed_in_allowed,
+        feed_in_rate_eur_kwh=body.feed_in_rate_eur_kwh,
     )
     orchestrator.sys_config = new_cfg
     return _config_to_dict(new_cfg)

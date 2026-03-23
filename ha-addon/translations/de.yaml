@@ -182,6 +182,11 @@ configuration:
     name: Modul3 Defizit-Tarif
     description: Netzentgelt waehrend des Defizitfensters in EUR/kWh.
 
+  # --- Einspeiseverguetung ---
+  feed_in_rate_eur_kwh:
+    name: Einspeiseverguetung (EUR/kWh)
+    description: Feste Einspeiseverguetung. Standard 0,074 (7,4 ct/kWh, EEG-Verguetung).
+
   # --- Logging ---
   log_level:
     name: Log-Level

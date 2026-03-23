@@ -85,6 +85,9 @@ class EmsSetupConfig:
     modul3_surplus_rate_eur_kwh: float = 0.0
     modul3_deficit_rate_eur_kwh: float = 0.0
 
+    # --- Feed-in tariff ---
+    feed_in_rate_eur_kwh: float = 0.074
+
     # --- SoC limits ---
     huawei_min_soc_pct: float = 10.0
     huawei_max_soc_pct: float = 95.0

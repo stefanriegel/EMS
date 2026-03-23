@@ -181,6 +181,11 @@ configuration:
     name: Modul3 Deficit Rate
     description: Grid-fee rate during deficit window in EUR/kWh.
 
+  # --- Feed-in tariff ---
+  feed_in_rate_eur_kwh:
+    name: Feed-in Rate (EUR/kWh)
+    description: Fixed grid feed-in tariff rate. Default 0.074 (7.4 ct/kWh, German EEG rate).
+
   # --- Logging ---
   log_level:
     name: Log Level

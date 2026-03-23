@@ -222,6 +222,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         os.environ.setdefault("HA_URL", setup_cfg.ha_url)
         os.environ.setdefault("HA_TOKEN", setup_cfg.ha_token)
         os.environ.setdefault("HA_HEAT_PUMP_ENTITY_ID", setup_cfg.ha_heat_pump_entity_id)
+        if setup_cfg.feed_in_rate_eur_kwh != 0.074:
+            os.environ.setdefault("FEED_IN_RATE_EUR_KWH", str(setup_cfg.feed_in_rate_eur_kwh))
 
     # --- Supervisor service discovery (HA add-on mode only, no-op otherwise) ---
     # Resolves MQTT broker credentials and EVCC add-on location automatically
@@ -273,7 +275,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         huawei_cfg = HuaweiConfig.from_env()
         victron_cfg = VictronConfig.from_env()
-        sys_cfg = SystemConfig()
+        _feed_in = float(os.environ.get("FEED_IN_RATE_EUR_KWH", "0.074"))
+        sys_cfg = SystemConfig(feed_in_rate_eur_kwh=_feed_in)
         orch_cfg = OrchestratorConfig()
 
         logger.info(
