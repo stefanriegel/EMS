@@ -406,6 +406,41 @@ class Coordinator:
 
         # 5. PV surplus → charge routing
         if p_target < 0:
+            # Export check: both batteries full + advisor says EXPORT
+            if (
+                self._prev_export_decision == "EXPORT"
+                and h_snap.soc_pct >= self._full_soc_pct
+                and v_snap.soc_pct >= self._full_soc_pct
+            ):
+                if h_snap.soc_pct >= v_snap.soc_pct:
+                    h_role_raw = BatteryRole.EXPORTING
+                    v_role_raw = BatteryRole.HOLDING
+                else:
+                    v_role_raw = BatteryRole.EXPORTING
+                    h_role_raw = BatteryRole.HOLDING
+
+                h_role = self._debounce_role("huawei", h_role_raw)
+                v_role = self._debounce_role("victron", v_role_raw)
+
+                h_cmd = ControllerCommand(role=h_role, target_watts=0.0)
+                v_cmd = ControllerCommand(role=v_role, target_watts=0.0)
+
+                self._last_huawei_cmd_w = 0.0
+                self._last_victron_cmd_w = 0.0
+
+                await self._huawei_ctrl.execute(h_cmd)
+                await self._victron_ctrl.execute(v_cmd)
+                self._state = self._build_state(
+                    h_snap, v_snap, h_cmd, v_cmd
+                )
+                decision = self._check_and_log_decision(
+                    h_cmd, v_cmd, p_target
+                )
+                await self._write_integrations(
+                    h_snap, v_snap, h_cmd, v_cmd, decision
+                )
+                return
+
             surplus_w = abs(p_target)
             h_charge_w, v_charge_w = self._allocate_charge(
                 surplus_w, h_snap, v_snap
@@ -772,19 +807,26 @@ class Coordinator:
             static = self._sys_config.victron_min_soc_pct
 
         if not profiles:
-            return static
+            base = static
+        else:
+            base = static
+            current_hour = now_local.hour
+            for window in profiles:
+                if window.start_hour <= window.end_hour:
+                    if window.start_hour <= current_hour < window.end_hour:
+                        base = window.min_soc_pct
+                        break
+                else:
+                    # Wrapping window (e.g., 22 to 6)
+                    if current_hour >= window.start_hour or current_hour < window.end_hour:
+                        base = window.min_soc_pct
+                        break
 
-        current_hour = now_local.hour
-        for window in profiles:
-            if window.start_hour <= window.end_hour:
-                if window.start_hour <= current_hour < window.end_hour:
-                    return window.min_soc_pct
-            else:
-                # Wrapping window (e.g., 22 to 6)
-                if current_hour >= window.start_hour or current_hour < window.end_hour:
-                    return window.min_soc_pct
+        # Seasonal boost (SCO-03)
+        if now_local.month in self._sys_config.winter_months:
+            base = min(base + self._sys_config.winter_min_soc_boost_pct, 100.0)
 
-        return static
+        return base
 
     # ------------------------------------------------------------------
     # Hysteresis (CTRL-03, D-06)
@@ -1105,6 +1147,8 @@ class Coordinator:
         # Determine control state string (backward-compat)
         if h_cmd.role == BatteryRole.GRID_CHARGE or v_cmd.role == BatteryRole.GRID_CHARGE:
             control_state = "GRID_CHARGE"
+        elif h_cmd.role == BatteryRole.EXPORTING or v_cmd.role == BatteryRole.EXPORTING:
+            control_state = "EXPORTING"
         elif h_cmd.evcc_hold:
             control_state = "DISCHARGE_LOCKED"
         elif h_cmd.role in (BatteryRole.PRIMARY_DISCHARGE, BatteryRole.SECONDARY_DISCHARGE):

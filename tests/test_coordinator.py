@@ -1226,3 +1226,149 @@ class TestWinterConfig:
         )
         assert req.winter_months == [11, 12, 1, 2]
         assert req.winter_min_soc_boost_pct == 10
+
+
+# ===========================================================================
+# Export integration (SCO-03) — coordinator export role + seasonal boost
+# ===========================================================================
+
+
+class TestExportIntegration:
+    """SCO-03: Export role assignment, seasonal min-SoC boost, EXPORTING state."""
+
+    async def test_export_role_assigned_both_full(self):
+        """When advisor says EXPORT and both batteries >= 95%, higher-SoC exports."""
+        coord, h_ctrl, v_ctrl = _make_coordinator(
+            orch_config=OrchestratorConfig(debounce_cycles=1),
+        )
+        coord._prev_export_decision = "EXPORT"
+        h_ctrl.poll = AsyncMock(return_value=_snap(soc=98.0, grid_power_w=None))
+        v_ctrl.poll = AsyncMock(return_value=_snap(soc=96.0, grid_power_w=-2000.0))
+
+        await coord._run_cycle()
+
+        h_cmd = h_ctrl.execute.call_args[0][0]
+        v_cmd = v_ctrl.execute.call_args[0][0]
+        assert h_cmd.role == BatteryRole.EXPORTING
+        assert v_cmd.role == BatteryRole.HOLDING
+        assert h_cmd.target_watts == 0.0
+        assert v_cmd.target_watts == 0.0
+
+    async def test_export_higher_soc_huawei(self):
+        """When huawei SoC (98%) > victron SoC (96%), huawei gets EXPORTING."""
+        coord, h_ctrl, v_ctrl = _make_coordinator(
+            orch_config=OrchestratorConfig(debounce_cycles=1),
+        )
+        coord._prev_export_decision = "EXPORT"
+        h_ctrl.poll = AsyncMock(return_value=_snap(soc=98.0, grid_power_w=None))
+        v_ctrl.poll = AsyncMock(return_value=_snap(soc=96.0, grid_power_w=-3000.0))
+
+        await coord._run_cycle()
+
+        h_cmd = h_ctrl.execute.call_args[0][0]
+        v_cmd = v_ctrl.execute.call_args[0][0]
+        assert h_cmd.role == BatteryRole.EXPORTING
+        assert v_cmd.role == BatteryRole.HOLDING
+
+    async def test_export_higher_soc_victron(self):
+        """When victron SoC (98%) > huawei SoC (96%), victron gets EXPORTING."""
+        coord, h_ctrl, v_ctrl = _make_coordinator(
+            orch_config=OrchestratorConfig(debounce_cycles=1),
+        )
+        coord._prev_export_decision = "EXPORT"
+        h_ctrl.poll = AsyncMock(return_value=_snap(soc=96.0, grid_power_w=None))
+        v_ctrl.poll = AsyncMock(return_value=_snap(soc=98.0, grid_power_w=-2000.0))
+
+        await coord._run_cycle()
+
+        h_cmd = h_ctrl.execute.call_args[0][0]
+        v_cmd = v_ctrl.execute.call_args[0][0]
+        assert h_cmd.role == BatteryRole.HOLDING
+        assert v_cmd.role == BatteryRole.EXPORTING
+
+    async def test_no_export_when_store(self):
+        """When advisor says STORE, normal charge routing (no EXPORTING)."""
+        coord, h_ctrl, v_ctrl = _make_coordinator()
+        coord._prev_export_decision = "STORE"
+        h_ctrl.poll = AsyncMock(return_value=_snap(soc=98.0, grid_power_w=None))
+        v_ctrl.poll = AsyncMock(return_value=_snap(soc=96.0, grid_power_w=-2000.0))
+
+        await coord._run_cycle()
+
+        h_cmd = h_ctrl.execute.call_args[0][0]
+        v_cmd = v_ctrl.execute.call_args[0][0]
+        assert h_cmd.role != BatteryRole.EXPORTING
+        assert v_cmd.role != BatteryRole.EXPORTING
+
+    async def test_no_export_below_full(self):
+        """When advisor says EXPORT but one battery at 80%, no EXPORTING."""
+        coord, h_ctrl, v_ctrl = _make_coordinator()
+        coord._prev_export_decision = "EXPORT"
+        h_ctrl.poll = AsyncMock(return_value=_snap(soc=80.0, grid_power_w=None))
+        v_ctrl.poll = AsyncMock(return_value=_snap(soc=96.0, grid_power_w=-2000.0))
+
+        await coord._run_cycle()
+
+        h_cmd = h_ctrl.execute.call_args[0][0]
+        v_cmd = v_ctrl.execute.call_args[0][0]
+        assert h_cmd.role != BatteryRole.EXPORTING
+        assert v_cmd.role != BatteryRole.EXPORTING
+
+    async def test_build_state_exporting(self):
+        """_build_state returns control_state='EXPORTING' when a role is EXPORTING."""
+        coord, _, _ = _make_coordinator()
+        h_snap = _snap(soc=98.0)
+        v_snap = _snap(soc=96.0)
+        h_cmd = ControllerCommand(role=BatteryRole.EXPORTING, target_watts=0.0)
+        v_cmd = ControllerCommand(role=BatteryRole.HOLDING, target_watts=0.0)
+
+        state = coord._build_state(h_snap, v_snap, h_cmd, v_cmd)
+        assert state.control_state == "EXPORTING"
+
+    def test_winter_min_soc_boost(self):
+        """In January, _get_effective_min_soc adds winter boost to base."""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        coord, _, _ = _make_coordinator(
+            sys_config=SystemConfig(
+                huawei_min_soc_pct=10.0,
+                winter_min_soc_boost_pct=10,
+                winter_months=[11, 12, 1, 2],
+            ),
+        )
+        now = datetime(2026, 1, 15, 12, 0, tzinfo=ZoneInfo("Europe/Berlin"))
+        result = coord._get_effective_min_soc("huawei", now)
+        assert result == 20.0  # 10% base + 10% boost
+
+    def test_summer_no_boost(self):
+        """In July, _get_effective_min_soc returns unmodified base."""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        coord, _, _ = _make_coordinator(
+            sys_config=SystemConfig(
+                huawei_min_soc_pct=10.0,
+                winter_min_soc_boost_pct=10,
+                winter_months=[11, 12, 1, 2],
+            ),
+        )
+        now = datetime(2026, 7, 15, 12, 0, tzinfo=ZoneInfo("Europe/Berlin"))
+        result = coord._get_effective_min_soc("huawei", now)
+        assert result == 10.0  # no boost in summer
+
+    def test_winter_boost_clamps_100(self):
+        """When base is 95% and boost is 10%, result clamps to 100.0."""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        coord, _, _ = _make_coordinator(
+            sys_config=SystemConfig(
+                huawei_min_soc_pct=95.0,
+                winter_min_soc_boost_pct=10,
+                winter_months=[11, 12, 1, 2],
+            ),
+        )
+        now = datetime(2026, 1, 15, 12, 0, tzinfo=ZoneInfo("Europe/Berlin"))
+        result = coord._get_effective_min_soc("huawei", now)
+        assert result == 100.0  # clamped
