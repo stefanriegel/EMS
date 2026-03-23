@@ -21,7 +21,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 - [ ] **MDS-03**: Confidence-weighted forecast discounting — Day 1 at full weight, Day 2 at ~80%, Day 3 at ~60%
 - [ ] **MDS-04**: Intra-day re-planning — re-run schedule approximately every 6 hours when forecast deviates significantly from plan
 - [ ] **MDS-05**: DayPlan model evolution — ChargeSchedule extended with per-day containers and day index for multi-day slot management
-- [ ] **MDS-06**: ConsumptionForecaster extended to predict hourly demand for a 72-hour horizon
+- [x] **MDS-06**: ConsumptionForecaster extended to predict hourly demand for a 72-hour horizon
 - [ ] **MDS-07**: Conservative charge ceiling — grid charge targets leave headroom proportional to forecast uncertainty so unexpected PV surplus can still be absorbed
 
 ### Dashboard
@@ -69,7 +69,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | MDS-03 | Phase 10 | Pending |
 | MDS-04 | Phase 10 | Pending |
 | MDS-05 | Phase 10 | Pending |
-| MDS-06 | Phase 9 | Pending |
+| MDS-06 | Phase 9 | Complete |
 | MDS-07 | Phase 10 | Pending |
 | DSH-01 | Phase 11 | Pending |
 | DSH-02 | Phase 11 | Pending |

@@ -75,7 +75,7 @@ Plans:
 **Plans:** 2 plans
 Plans:
 - [ ] 09-01-PLAN.md — OpenMeteoClient + cascading solar forecast provider + lifespan wiring
-- [ ] 09-02-PLAN.md — ConsumptionForecaster 72h hourly prediction extension
+- [x] 09-02-PLAN.md — ConsumptionForecaster 72h hourly prediction extension
 
 ### Phase 10: Multi-Day Scheduling
 **Goal**: Nightly charge scheduling uses multi-day weather and consumption outlook to set smarter grid charge targets
