@@ -17,6 +17,11 @@ ports:
 ports_description:
   "8000/tcp": EMS web interface and REST API
 webui: http://[HOST]:[PORT:8000]
+ingress: true
+ingress_port: 8000
+ingress_entry: /
+panel_icon: mdi:battery-charging
+panel_title: EMS
 watchdog: http://[HOST]:[PORT:8000]/api/health
 host_network: true
 hassio_api: true
