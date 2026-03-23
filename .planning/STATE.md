@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: milestone
-status: Ready to plan
-stopped_at: Completed 16-03-PLAN.md
-last_updated: "2026-03-23T22:51:05.059Z"
+status: Ready to execute
+stopped_at: Completed 17-01-PLAN.md
+last_updated: "2026-03-23T23:27:30.041Z"
 progress:
   total_phases: 4
   completed_phases: 1
-  total_plans: 3
-  completed_plans: 3
+  total_plans: 5
+  completed_plans: 4
 ---
 
 # Project State
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-23)
 
 **Core value:** Both battery systems operate independently with zero oscillation to maximize PV self-consumption
-**Current focus:** Phase 16 — ML Infrastructure
+**Current focus:** Phase 17 — Consumption Forecaster Upgrade
 
 ## Current Position
 
-Phase: 17
-Plan: Not started
+Phase: 17 (Consumption Forecaster Upgrade) — EXECUTING
+Plan: 2 of 2
 
 ## Performance Metrics
 
@@ -57,6 +57,7 @@ Plan: Not started
 | Phase 16 P02 | 2min | 1 tasks | 2 files |
 | Phase 16 P01 | 3min | 1 tasks | 3 files |
 | Phase 16 P03 | 5min | 2 tasks | 5 files |
+| Phase 17 P01 | 8min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -74,6 +75,9 @@ Recent decisions affecting current work:
 - [Phase 16]: sklearn version mismatch triggers silent discard and retrain, not error
 - [Phase 16]: Used anyio.to_thread.run_sync for executor offloading matching existing codebase pattern
 - [Phase 16]: ModelStore save calls fire-and-forget with try/except to avoid blocking training on persistence failures
+- [Phase 17]: Used params= instead of fit_params= for cross_val_score (sklearn 1.8+ API)
+- [Phase 17]: HistGBR with native NaN handling for lag features; no imputation needed
+- [Phase 17]: Last outdoor temp from training stored as prediction fallback
 
 ### Pending Todos
 
@@ -86,6 +90,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-23T22:43:49.771Z
-Stopped at: Completed 16-03-PLAN.md
+Last session: 2026-03-23T23:27:30.038Z
+Stopped at: Completed 17-01-PLAN.md
 Resume file: None

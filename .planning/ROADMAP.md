@@ -54,7 +54,7 @@ Plans:
   5. Training uses expanding-window time-series cross-validation with recency weighting, not random splits
 **Plans**: 2 plans
 Plans:
-- [ ] 17-01-PLAN.md — HistGBR migration, weather/lag/calendar features, recency weighting, time-series CV
+- [x] 17-01-PLAN.md — HistGBR migration, weather/lag/calendar features, recency weighting, time-series CV
 - [ ] 17-02-PLAN.md — MAPE tracking, get_ml_status(), /api/ml/status endpoint, main.py wiring
 
 ### Phase 18: Anomaly Detection
@@ -89,6 +89,6 @@ Phases execute in numeric order: 16 -> 17 -> 18 -> 19
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 16. ML Infrastructure | 2/3 | Complete    | 2026-03-23 |
-| 17. Consumption Forecaster Upgrade | 0/2 | Not started | - |
+| 17. Consumption Forecaster Upgrade | 1/2 | In Progress|  |
 | 18. Anomaly Detection | 0/? | Not started | - |
 | 19. Self-Tuning Control | 0/? | Not started | - |

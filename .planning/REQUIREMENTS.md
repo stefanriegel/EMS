@@ -11,19 +11,19 @@ Requirements for Intelligent Self-Tuning milestone.
 
 - [x] **INFRA-01**: ModelStore persists trained models with joblib, tracks sklearn version, discards on version mismatch
 - [x] **INFRA-02**: FeaturePipeline extracts training features from InfluxDB and HA statistics in a single cached read
-- [ ] **INFRA-03**: All sklearn .fit() calls wrapped in run_in_executor to avoid blocking the event loop
-- [ ] **INFRA-04**: OMP_NUM_THREADS=2 set in Dockerfile/run.sh for aarch64 thread safety
+- [x] **INFRA-03**: All sklearn .fit() calls wrapped in run_in_executor to avoid blocking the event loop
+- [x] **INFRA-04**: OMP_NUM_THREADS=2 set in Dockerfile/run.sh for aarch64 thread safety
 - [x] **INFRA-05**: Model directory at /config/ems_models/ with JSON metadata sidecars for each model
 
 ### Consumption Forecasting
 
-- [ ] **FCST-01**: Weather features integrated — outdoor temp from HA + Open-Meteo forecast temps as model inputs
-- [ ] **FCST-02**: Lagged consumption features — 24h and 168h (1 week) ago as predictors
-- [ ] **FCST-03**: Calendar features — day-of-week encoding, optional holiday detection
-- [ ] **FCST-04**: Migrate to HistGradientBoostingRegressor with native NaN handling and early stopping
+- [x] **FCST-01**: Weather features integrated — outdoor temp from HA + Open-Meteo forecast temps as model inputs
+- [x] **FCST-02**: Lagged consumption features — 24h and 168h (1 week) ago as predictors
+- [x] **FCST-03**: Calendar features — day-of-week encoding, optional holiday detection
+- [x] **FCST-04**: Migrate to HistGradientBoostingRegressor with native NaN handling and early stopping
 - [ ] **FCST-05**: MAPE tracking — compute and log forecast accuracy after each day, expose via API
-- [ ] **FCST-06**: Recency-weighted training — recent data weighted higher than old data
-- [ ] **FCST-07**: Time-series cross-validation — expanding window CV instead of random split
+- [x] **FCST-06**: Recency-weighted training — recent data weighted higher than old data
+- [x] **FCST-07**: Time-series cross-validation — expanding window CV instead of random split
 
 ### Self-Tuning Control
 
@@ -72,16 +72,16 @@ Requirements for Intelligent Self-Tuning milestone.
 |-------------|-------|--------|
 | INFRA-01 | Phase 16 | Complete |
 | INFRA-02 | Phase 16 | Complete |
-| INFRA-03 | Phase 16 | Pending |
-| INFRA-04 | Phase 16 | Pending |
+| INFRA-03 | Phase 16 | Complete |
+| INFRA-04 | Phase 16 | Complete |
 | INFRA-05 | Phase 16 | Complete |
-| FCST-01 | Phase 17 | Pending |
-| FCST-02 | Phase 17 | Pending |
-| FCST-03 | Phase 17 | Pending |
-| FCST-04 | Phase 17 | Pending |
+| FCST-01 | Phase 17 | Complete |
+| FCST-02 | Phase 17 | Complete |
+| FCST-03 | Phase 17 | Complete |
+| FCST-04 | Phase 17 | Complete |
 | FCST-05 | Phase 17 | Pending |
-| FCST-06 | Phase 17 | Pending |
-| FCST-07 | Phase 17 | Pending |
+| FCST-06 | Phase 17 | Complete |
+| FCST-07 | Phase 17 | Complete |
 | ANOM-01 | Phase 18 | Pending |
 | ANOM-02 | Phase 18 | Pending |
 | ANOM-03 | Phase 18 | Pending |
