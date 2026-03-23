@@ -21,6 +21,9 @@ from backend.ha_mqtt_client import (
     EntityDefinition,
     SENSOR_ENTITIES,
     BINARY_SENSOR_ENTITIES,
+    NUMBER_ENTITIES,
+    SELECT_ENTITIES,
+    BUTTON_ENTITIES,
 )
 from backend.unified_model import ControlState, UnifiedPoolState
 
@@ -1079,3 +1082,279 @@ class TestSensorEntitiesNoOnline:
     def test_victron_online_not_in_sensors(self):
         ids = [e.entity_id for e in SENSOR_ENTITIES]
         assert "victron_online" not in ids
+
+
+# ---------------------------------------------------------------------------
+# Controllable entity definitions (Phase 14, Plan 01)
+# ---------------------------------------------------------------------------
+
+
+class TestNumberEntities:
+    """Tests for NUMBER_ENTITIES list."""
+
+    def test_number_entities_count(self):
+        """NUMBER_ENTITIES contains exactly 5 entries."""
+        assert len(NUMBER_ENTITIES) == 5
+
+    def test_number_entity_ids(self):
+        """All 5 expected number entity_ids are present."""
+        ids = {e.entity_id for e in NUMBER_ENTITIES}
+        assert ids == {
+            "min_soc_huawei", "min_soc_victron",
+            "deadband_huawei", "deadband_victron", "ramp_rate",
+        }
+
+    def test_min_soc_huawei(self):
+        e = next(e for e in NUMBER_ENTITIES if e.entity_id == "min_soc_huawei")
+        assert e.min_val == 10
+        assert e.max_val == 100
+        assert e.step == 5
+        assert e.mode == "slider"
+        assert e.device_group == "huawei"
+        assert e.entity_category == "config"
+        assert e.platform == "number"
+
+    def test_min_soc_victron(self):
+        e = next(e for e in NUMBER_ENTITIES if e.entity_id == "min_soc_victron")
+        assert e.min_val == 10
+        assert e.max_val == 100
+        assert e.step == 5
+        assert e.mode == "slider"
+        assert e.device_group == "victron"
+        assert e.entity_category == "config"
+
+    def test_deadband_huawei(self):
+        e = next(e for e in NUMBER_ENTITIES if e.entity_id == "deadband_huawei")
+        assert e.min_val == 50
+        assert e.max_val == 1000
+        assert e.step == 50
+        assert e.mode == "box"
+        assert e.device_group == "huawei"
+        assert e.entity_category == "config"
+
+    def test_deadband_victron(self):
+        e = next(e for e in NUMBER_ENTITIES if e.entity_id == "deadband_victron")
+        assert e.min_val == 50
+        assert e.max_val == 500
+        assert e.step == 50
+        assert e.mode == "box"
+        assert e.device_group == "victron"
+        assert e.entity_category == "config"
+
+    def test_ramp_rate(self):
+        e = next(e for e in NUMBER_ENTITIES if e.entity_id == "ramp_rate")
+        assert e.min_val == 100
+        assert e.max_val == 2000
+        assert e.step == 100
+        assert e.mode == "box"
+        assert e.device_group == "system"
+        assert e.entity_category == "config"
+
+    def test_all_are_entity_definitions(self):
+        for e in NUMBER_ENTITIES:
+            assert isinstance(e, EntityDefinition)
+
+    def test_all_have_command_topic(self):
+        for e in NUMBER_ENTITIES:
+            assert e.command_topic is not None
+            assert e.command_topic == f"homeassistant/number/ems/{e.entity_id}/set"
+
+
+class TestSelectEntities:
+    """Tests for SELECT_ENTITIES list."""
+
+    def test_select_entities_count(self):
+        assert len(SELECT_ENTITIES) == 1
+
+    def test_control_mode(self):
+        e = SELECT_ENTITIES[0]
+        assert e.entity_id == "control_mode"
+        assert e.platform == "select"
+        assert e.device_group == "system"
+        assert e.entity_category == "config"
+        assert e.options == ["AUTO", "HOLD", "GRID_CHARGE", "DISCHARGE_LOCKED"]
+        assert e.command_topic == "homeassistant/select/ems/control_mode/set"
+        assert e.value_key == "control_mode_override"
+
+
+class TestButtonEntities:
+    """Tests for BUTTON_ENTITIES list."""
+
+    def test_button_entities_count(self):
+        assert len(BUTTON_ENTITIES) == 2
+
+    def test_button_entity_ids(self):
+        ids = {e.entity_id for e in BUTTON_ENTITIES}
+        assert ids == {"force_grid_charge", "reset_to_auto"}
+
+    def test_force_grid_charge(self):
+        e = next(e for e in BUTTON_ENTITIES if e.entity_id == "force_grid_charge")
+        assert e.platform == "button"
+        assert e.device_group == "system"
+        assert e.payload_press == "PRESS"
+        assert e.command_topic == "homeassistant/button/ems/force_grid_charge/set"
+
+    def test_reset_to_auto(self):
+        e = next(e for e in BUTTON_ENTITIES if e.entity_id == "reset_to_auto")
+        assert e.platform == "button"
+        assert e.device_group == "system"
+        assert e.device_class == "restart"
+        assert e.payload_press == "PRESS"
+        assert e.command_topic == "homeassistant/button/ems/reset_to_auto/set"
+
+
+class TestControllableDiscoveryPayloads:
+    """Discovery payloads for number, select, button entities."""
+
+    def test_number_discovery_has_command_topic(self):
+        client = _make_connected_client(device_id="ems")
+        e = next(e for e in NUMBER_ENTITIES if e.entity_id == "min_soc_huawei")
+        payload = json.loads(client._discovery_payload(e))
+        assert "command_topic" in payload
+        assert payload["command_topic"] == "homeassistant/number/ems/min_soc_huawei/set"
+
+    def test_number_discovery_has_min_max_step_mode(self):
+        client = _make_connected_client(device_id="ems")
+        e = next(e for e in NUMBER_ENTITIES if e.entity_id == "min_soc_huawei")
+        payload = json.loads(client._discovery_payload(e))
+        assert payload["min"] == 10
+        assert payload["max"] == 100
+        assert payload["step"] == 5
+        assert payload["mode"] == "slider"
+
+    def test_select_discovery_has_command_topic_and_options(self):
+        client = _make_connected_client(device_id="ems")
+        e = SELECT_ENTITIES[0]
+        payload = json.loads(client._discovery_payload(e))
+        assert "command_topic" in payload
+        assert payload["command_topic"] == "homeassistant/select/ems/control_mode/set"
+        assert payload["options"] == ["AUTO", "HOLD", "GRID_CHARGE", "DISCHARGE_LOCKED"]
+
+    def test_button_discovery_has_command_topic_and_payload_press(self):
+        client = _make_connected_client(device_id="ems")
+        e = next(e for e in BUTTON_ENTITIES if e.entity_id == "force_grid_charge")
+        payload = json.loads(client._discovery_payload(e))
+        assert "command_topic" in payload
+        assert payload["payload_press"] == "PRESS"
+
+    def test_button_discovery_no_state_topic(self):
+        """Buttons are stateless -- no state_topic or value_template."""
+        client = _make_connected_client(device_id="ems")
+        for e in BUTTON_ENTITIES:
+            payload = json.loads(client._discovery_payload(e))
+            assert "state_topic" not in payload
+            assert "value_template" not in payload
+
+
+class TestMqttSubscribeInfrastructure:
+    """Subscribe path: _on_connect subscribes, _on_message dispatches."""
+
+    def test_on_connect_subscribes_to_command_topics(self):
+        """_on_connect subscribes to all command topics with QoS 1."""
+        client = _make_client()
+        mock_paho = MagicMock()
+        client._client = mock_paho
+        client._loop = MagicMock()
+
+        client._on_connect(mock_paho, None, None, 0, None)
+
+        all_entities = list(NUMBER_ENTITIES) + list(SELECT_ENTITIES) + list(BUTTON_ENTITIES)
+        for e in all_entities:
+            mock_paho.subscribe.assert_any_call(e.command_topic, qos=1)
+
+    def test_on_message_dispatches_via_threadsafe(self):
+        """_on_message calls _command_callback via call_soon_threadsafe."""
+        client = _make_client()
+        mock_loop = MagicMock()
+        client._loop = mock_loop
+        callback = MagicMock()
+        client.set_command_callback(callback)
+
+        # Simulate incoming message
+        msg = MagicMock()
+        msg.topic = "homeassistant/number/ems/min_soc_huawei/set"
+        msg.payload = b"42"
+
+        client._on_message(MagicMock(), None, msg)
+
+        mock_loop.call_soon_threadsafe.assert_called_once_with(
+            callback, "min_soc_huawei", "42",
+        )
+
+    def test_on_message_no_callback_is_noop(self):
+        """_on_message with no callback set does not crash."""
+        client = _make_client()
+        client._loop = MagicMock()
+        # No callback set
+
+        msg = MagicMock()
+        msg.topic = "homeassistant/number/ems/min_soc_huawei/set"
+        msg.payload = b"42"
+
+        # Should not raise
+        client._on_message(MagicMock(), None, msg)
+
+    def test_set_command_callback(self):
+        """set_command_callback stores the callback."""
+        client = _make_client()
+        callback = MagicMock()
+        client.set_command_callback(callback)
+        assert client._command_callback is callback
+
+    def test_subscribe_broken_pipe_does_not_crash(self):
+        """Subscribe wrapped in try/except for BrokenPipeError."""
+        client = _make_client()
+        mock_paho = MagicMock()
+        mock_paho.subscribe.side_effect = BrokenPipeError("broken")
+        client._client = mock_paho
+        client._loop = MagicMock()
+
+        # Should not raise
+        client._on_connect(mock_paho, None, None, 0, None)
+
+
+class TestHealthCheck:
+    """check_health detects stale publish and triggers reconnect."""
+
+    def test_health_check_true_when_connected_and_recent(self):
+        client = _make_connected_client()
+        client._last_publish_time = time.monotonic()
+        assert client.check_health() is True
+
+    def test_health_check_false_when_stale(self):
+        client = _make_connected_client()
+        client._last_publish_time = time.monotonic() - 120
+        mock_paho = MagicMock()
+        client._client = mock_paho
+        assert client.check_health(max_stale_s=60.0) is False
+        mock_paho.reconnect.assert_called_once()
+
+    def test_health_check_false_when_not_connected(self):
+        client = _make_client()  # _connected = False
+        assert client.check_health() is False
+
+
+class TestEnsureDiscoveryControllable:
+    """_ensure_discovery publishes discovery for controllable entities too."""
+
+    def test_discovery_includes_controllable_entities(self):
+        """_ensure_discovery publishes for number, select, button entities."""
+        client = _make_connected_client(device_id="ems")
+        mock_paho = MagicMock()
+        client._client = mock_paho
+
+        client._ensure_discovery()
+
+        topics = [c.args[0] for c in mock_paho.publish.call_args_list]
+        # Check number entities
+        for e in NUMBER_ENTITIES:
+            expected_topic = f"homeassistant/number/ems/{e.entity_id}/config"
+            assert expected_topic in topics, f"Missing discovery for {e.entity_id}"
+        # Check select entities
+        for e in SELECT_ENTITIES:
+            expected_topic = f"homeassistant/select/ems/{e.entity_id}/config"
+            assert expected_topic in topics, f"Missing discovery for {e.entity_id}"
+        # Check button entities
+        for e in BUTTON_ENTITIES:
+            expected_topic = f"homeassistant/button/ems/{e.entity_id}/config"
+            assert expected_topic in topics, f"Missing discovery for {e.entity_id}"
