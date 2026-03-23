@@ -168,6 +168,24 @@ class SolarForecast:
 
 
 @dataclass
+class SolarForecastMultiDay:
+    """Multi-day solar forecast with hourly resolution and source attribution.
+
+    Attributes:
+        hourly_wh:       72 hourly energy values in Wh (3 days x 24 hours).
+        daily_energy_wh: Per-day total energy in Wh: [today, tomorrow, day_after].
+        source:          Data source identifier: ``"evcc"``, ``"open_meteo"``,
+                         or ``"seasonal"``.
+        fetched_at:      UTC timestamp when this forecast was obtained.
+    """
+
+    hourly_wh: list[float]
+    daily_energy_wh: list[float]
+    source: str
+    fetched_at: datetime
+
+
+@dataclass
 class GridPriceSeries:
     """Grid import and feed-in price timeseries from EVCC.
 
