@@ -123,6 +123,90 @@ class TestProbeEndpoint:
         assert isinstance(body["error"], str)
         assert len(body["error"]) > 0
 
+    def test_probe_victron_modbus_success(self, monkeypatch):
+        """POST /api/setup/probe/victron_modbus with successful register read."""
+        mock_client_cls = MagicMock()
+        mock_instance = MagicMock()
+        mock_client_cls.return_value = mock_instance
+        mock_instance.connect.return_value = True
+        mock_result = MagicMock()
+        mock_result.isError.return_value = False
+        mock_instance.read_holding_registers.return_value = mock_result
+
+        monkeypatch.setattr(
+            "backend.setup_api._probe_victron_modbus.__module__",
+            "backend.setup_api",
+        )
+
+        with patch("backend.setup_api.ModbusTcpClient", mock_client_cls, create=True):
+            # We need to patch at the import inside the function
+            with patch("pymodbus.client.ModbusTcpClient", mock_client_cls):
+                config_path = "/tmp/nonexistent_ems.json"
+                app = _make_setup_app(config_path)
+                with TestClient(app) as client:
+                    resp = client.post(
+                        "/api/setup/probe/victron_modbus",
+                        json={"host": "192.168.0.20", "port": 502, "unit_id": 100},
+                    )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert "warning" not in body
+
+    def test_probe_victron_modbus_tcp_only(self, monkeypatch):
+        """POST /api/setup/probe/victron_modbus - TCP connects but register read fails."""
+        mock_client_cls = MagicMock()
+        mock_instance = MagicMock()
+        mock_client_cls.return_value = mock_instance
+        mock_instance.connect.return_value = True
+        mock_result = MagicMock()
+        mock_result.isError.return_value = True
+        mock_instance.read_holding_registers.return_value = mock_result
+
+        with patch("pymodbus.client.ModbusTcpClient", mock_client_cls):
+            config_path = "/tmp/nonexistent_ems.json"
+            app = _make_setup_app(config_path)
+            with TestClient(app) as client:
+                resp = client.post(
+                    "/api/setup/probe/victron_modbus",
+                    json={"host": "192.168.0.20", "port": 502, "unit_id": 100},
+                )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert "warning" in body
+
+    def test_probe_victron_modbus_refused(self, monkeypatch):
+        """POST /api/setup/probe/victron_modbus - TCP connection refused."""
+        mock_client_cls = MagicMock()
+        mock_instance = MagicMock()
+        mock_client_cls.return_value = mock_instance
+        mock_instance.connect.return_value = False
+
+        with patch("pymodbus.client.ModbusTcpClient", mock_client_cls):
+            config_path = "/tmp/nonexistent_ems.json"
+            app = _make_setup_app(config_path)
+            with TestClient(app) as client:
+                resp = client.post(
+                    "/api/setup/probe/victron_modbus",
+                    json={"host": "192.168.0.20", "port": 502, "unit_id": 100},
+                )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is False
+        assert "error" in body
+
+    def test_probe_victron_mqtt_invalid(self):
+        """POST /api/setup/probe/victron_mqtt returns 422 (not a valid device)."""
+        config_path = "/tmp/nonexistent_ems.json"
+        app = _make_setup_app(config_path)
+        with TestClient(app) as client:
+            resp = client.post(
+                "/api/setup/probe/victron_mqtt",
+                json={"host": "192.168.0.20", "port": 1883},
+            )
+        assert resp.status_code == 422
+
     def test_probe_ha_rest_sensor_none(self, monkeypatch):
         """POST /api/setup/probe/ha_rest with monkeypatched sensor returning None → {ok: false}."""
         monkeypatch.setattr(
@@ -196,7 +280,10 @@ def _full_wizard_payload() -> dict:
         "huawei_host": "10.0.0.1",
         "huawei_port": 502,
         "victron_host": "10.0.0.2",
-        "victron_port": 1883,
+        "victron_port": 502,
+        "victron_system_unit_id": 100,
+        "victron_battery_unit_id": 225,
+        "victron_vebus_unit_id": 227,
         "evcc_host": "10.0.0.3",
         "evcc_port": 7070,
         "evcc_mqtt_host": "10.0.0.3",

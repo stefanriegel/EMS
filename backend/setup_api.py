@@ -13,13 +13,12 @@ setup-only mode (i.e. before HUAWEI_HOST / VICTRON_HOST are configured).
 Probe design
 ------------
 Each probe is a short-lived connectivity test — no persistent state is
-created.  Blocking operations (raw TCP, paho-mqtt) are wrapped in
+created.  Blocking operations (raw TCP, pymodbus) are wrapped in
 ``asyncio.to_thread()`` to avoid stalling the event loop.
 
-The paho-mqtt probe uses ``paho.mqtt.client.Client`` with ``loop_start()``
-and a ``threading.Event`` to detect CONNACK before the 5-second timeout.
-paho-mqtt 2.x requires ``CallbackAPIVersion.VERSION1`` to suppress the
-deprecation warning when using legacy callback signatures.
+The Victron Modbus probe uses ``pymodbus.client.ModbusTcpClient`` to
+attempt a real register read (system SoC register 843).  If TCP connects
+but the register read fails, a partial success with a warning is returned.
 
 Observability
 -------------
@@ -33,11 +32,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import socket
-import threading
 from typing import Literal
 
 import httpx
-import paho.mqtt.client as mqtt
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
@@ -88,6 +85,7 @@ class ProbeRequest(BaseModel):
     # Modbus
     host: str = ""
     port: int = 502
+    unit_id: int = 100
 
     # HA REST (overrides port for HA which uses 8123 by default)
     url: str = ""
@@ -110,35 +108,34 @@ def _probe_modbus(host: str, port: int) -> bool:
     return True
 
 
-def _probe_mqtt(host: str, port: int) -> bool:
-    """Attempt a paho-mqtt CONNECT handshake and wait for CONNACK.
+def _probe_victron_modbus(host: str, port: int, unit_id: int) -> dict:
+    """Modbus TCP register read probe for Victron Venus OS.
 
-    Uses ``loop_start()`` (background thread) and a ``threading.Event`` set
-    by the ``on_connect`` callback.  Returns ``True`` if CONNACK is received
-    within 5 seconds, ``False`` on timeout.
+    Attempts to read the system SoC register (843) at the given unit ID.
+    If the register read fails but TCP connected, returns a partial success
+    with a warning. If TCP connection itself fails, raises.
 
-    Raises ``OSError`` / ``ConnectionRefusedError`` if the TCP connection
-    itself fails — callers treat any exception as a probe failure.
+    Returns
+    -------
+    dict
+        ``{"ok": True}`` on full success.
+        ``{"ok": True, "warning": "..."}`` on TCP-only success (register read failed).
     """
-    connected_event = threading.Event()
+    from pymodbus.client import ModbusTcpClient
 
-    def on_connect(client: mqtt.Client, userdata: object, flags: dict, rc: int) -> None:  # noqa: ARG001
-        if rc == 0:
-            connected_event.set()
-
-    # paho-mqtt 2.x: pass CallbackAPIVersion.VERSION1 to suppress deprecation.
-    client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION1)
-    client.on_connect = on_connect  # type: ignore[assignment]
-    client.connect(host, port, keepalive=10)
-    client.loop_start()
-
+    client = ModbusTcpClient(host, port=port, timeout=5)
+    if not client.connect():
+        raise ConnectionError(f"TCP connection to {host}:{port} refused")
     try:
-        ok = connected_event.wait(timeout=5)
+        result = client.read_holding_registers(843, count=1, slave=unit_id)
+        if result.isError():
+            return {
+                "ok": True,
+                "warning": "TCP connected, Modbus register read failed. Check unit IDs.",
+            }
+        return {"ok": True}
     finally:
-        client.disconnect()
-        client.loop_stop()
-
-    return ok
+        client.close()
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +145,7 @@ def _probe_mqtt(host: str, port: int) -> bool:
 
 @setup_router.post("/probe/{device}")
 async def probe_device(
-    device: Literal["modbus", "victron_mqtt", "evcc", "ha_rest"],
+    device: Literal["modbus", "victron_modbus", "evcc", "ha_rest"],
     body: ProbeRequest,
 ) -> dict:
     """Run a point-in-time connectivity probe for *device*.
@@ -165,10 +162,11 @@ async def probe_device(
         if device == "modbus":
             await asyncio.to_thread(_probe_modbus, body.host, body.port)
 
-        elif device == "victron_mqtt":
-            ok = await asyncio.to_thread(_probe_mqtt, body.host, body.port)
-            if not ok:
-                return {"ok": False, "error": "MQTT CONNACK not received within 5 s (timeout)"}
+        elif device == "victron_modbus":
+            result = await asyncio.to_thread(
+                _probe_victron_modbus, body.host, body.port, body.unit_id
+            )
+            return result
 
         elif device == "evcc":
             async with httpx.AsyncClient(timeout=5) as client:
@@ -199,9 +197,12 @@ class SetupCompleteRequest(BaseModel):
     huawei_host: str = ""
     huawei_port: int = 502
 
-    # --- Victron MQTT ---
+    # --- Victron Modbus TCP ---
     victron_host: str = ""
-    victron_port: int = 1883
+    victron_port: int = 502
+    victron_system_unit_id: int = 100
+    victron_battery_unit_id: int = 225
+    victron_vebus_unit_id: int = 227
 
     # --- EVCC HTTP ---
     evcc_host: str = "192.168.0.10"
@@ -221,6 +222,14 @@ class SetupCompleteRequest(BaseModel):
     octopus_off_peak_end_min: int = 330
     octopus_off_peak_rate_eur_kwh: float = 0.08
     octopus_peak_rate_eur_kwh: float = 0.28
+
+    # --- Modul3 grid-fee tariff ---
+    modul3_surplus_start_min: int = 0
+    modul3_surplus_end_min: int = 0
+    modul3_deficit_start_min: int = 0
+    modul3_deficit_end_min: int = 0
+    modul3_surplus_rate_eur_kwh: float = 0.0
+    modul3_deficit_rate_eur_kwh: float = 0.0
 
     # --- SoC limits ---
     huawei_min_soc_pct: float = 10.0

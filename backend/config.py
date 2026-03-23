@@ -81,12 +81,15 @@ class VictronConfig:
             on connected devices.
         system_unit_id: Modbus unit ID for system-level registers such as
             battery SoC and total power (default 100).
+        battery_unit_id: Modbus unit ID for battery-level registers such as
+            voltage and current (default 225).
 
     Environment variables:
-        ``VICTRON_HOST``           — hostname or IP (required).
-        ``VICTRON_PORT``           — TCP port (optional, default 502).
-        ``VICTRON_VEBUS_UNIT_ID``  — VE.Bus inverter unit ID (optional, default 227).
-        ``VICTRON_SYSTEM_UNIT_ID`` — system-level unit ID (optional, default 100).
+        ``VICTRON_HOST``              — hostname or IP (required).
+        ``VICTRON_PORT``              — TCP port (optional, default 502).
+        ``VICTRON_VEBUS_UNIT_ID``     — VE.Bus inverter unit ID (optional, default 227).
+        ``VICTRON_SYSTEM_UNIT_ID``    — system-level unit ID (optional, default 100).
+        ``VICTRON_BATTERY_UNIT_ID``   — battery-level unit ID (optional, default 225).
     """
 
     host: str
@@ -94,6 +97,7 @@ class VictronConfig:
     timeout_s: float = 5.0
     vebus_unit_id: int = 227
     system_unit_id: int = 100
+    battery_unit_id: int = 225
 
     @classmethod
     def from_env(cls) -> "VictronConfig":
@@ -103,9 +107,10 @@ class VictronConfig:
             ``VICTRON_HOST`` — hostname or IP of the Venus OS GX device.
 
         Optional (with defaults):
-            ``VICTRON_PORT``           — TCP port (default 502).
-            ``VICTRON_VEBUS_UNIT_ID``  — VE.Bus unit ID (default 227).
-            ``VICTRON_SYSTEM_UNIT_ID`` — system-level unit ID (default 100).
+            ``VICTRON_PORT``              — TCP port (default 502).
+            ``VICTRON_VEBUS_UNIT_ID``     — VE.Bus unit ID (default 227).
+            ``VICTRON_SYSTEM_UNIT_ID``    — system-level unit ID (default 100).
+            ``VICTRON_BATTERY_UNIT_ID``   — battery-level unit ID (default 225).
 
         Raises:
             KeyError: if ``VICTRON_HOST`` is not set.
@@ -115,6 +120,7 @@ class VictronConfig:
             port=int(os.environ.get("VICTRON_PORT", "502")),
             vebus_unit_id=int(os.environ.get("VICTRON_VEBUS_UNIT_ID", "227")),
             system_unit_id=int(os.environ.get("VICTRON_SYSTEM_UNIT_ID", "100")),
+            battery_unit_id=int(os.environ.get("VICTRON_BATTERY_UNIT_ID", "225")),
         )
 
 
