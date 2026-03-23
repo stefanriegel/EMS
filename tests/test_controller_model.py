@@ -10,10 +10,10 @@ import pytest
 class TestBatteryRole:
     """BatteryRole enum has exactly 5 members and is JSON-serializable."""
 
-    def test_has_five_members(self):
+    def test_has_six_members(self):
         from backend.controller_model import BatteryRole
 
-        assert len(BatteryRole) == 5
+        assert len(BatteryRole) == 6
 
     def test_member_names(self):
         from backend.controller_model import BatteryRole
@@ -24,6 +24,7 @@ class TestBatteryRole:
             "CHARGING",
             "HOLDING",
             "GRID_CHARGE",
+            "EXPORTING",
         }
         assert {m.name for m in BatteryRole} == expected
 
