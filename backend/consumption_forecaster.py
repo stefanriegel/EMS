@@ -1,12 +1,17 @@
 """ConsumptionForecaster — ML-based household consumption forecast.
 
-Trains three ``GradientBoostingRegressor`` models (heat pump, DHW, base load)
-on Home Assistant long-term statistics and predicts next-24h consumption in
-kWh, broken down by load type.
+Trains three ``HistGradientBoostingRegressor`` models (heat pump, DHW, base
+load) on Home Assistant long-term statistics and predicts next-24h consumption
+in kWh, broken down by load type.
 
 The class implements the same ``query_consumption_history()`` protocol as
 ``InfluxMetricsReader`` so it can be injected into the ``Scheduler`` as a
 drop-in replacement without modifying any call sites.
+
+Feature set (8 columns)
+-----------------------
+``outdoor_temp_c``, ``ewm_temp_3d``, ``day_of_week``, ``hour_of_day``,
+``month``, ``is_weekend``, ``lag_24h``, ``lag_168h``.
 
 Cold-start / failure degradation
 ---------------------------------
@@ -19,20 +24,18 @@ Observability
 -------------
 - Logger name: ``ems.consumption_forecaster``
 - INFO ``"ConsumptionForecaster: trained heat_pump model on N samples,
-  dhw on M samples, base on K samples"`` — after each retrain
+  dhw on M samples, base on K samples"`` -- after each retrain
 - INFO ``"ConsumptionForecaster: ML forecast heat_pump=X.X dhw=X.X
-  base=X.X total=Y.Y kWh (days_of_history=N)"`` — on each predict
-- WARNING ``"ConsumptionForecaster: cold-start fallback (days_of_history=N
-  < min_training_days=14)"`` — insufficient history
-- WARNING ``"ConsumptionForecaster: entity <id> not found in HA statistics
-  — skipping"`` — emitted by the reader per missing entity
+  base=X.X total=Y.Y kWh (days_of_history=N)"`` -- on each predict
+- INFO ``"CV scores (neg_MAPE): mean=...% std=...%"`` -- per-model CV
+- WARNING ``"ConsumptionForecaster: cold-start fallback ..."`` -- insufficient
+  history
 """
 from __future__ import annotations
 
 import logging
 import math
 from datetime import date, datetime, timedelta, timezone
-from functools import partial
 from typing import TYPE_CHECKING, Optional
 
 import anyio.to_thread
@@ -44,14 +47,36 @@ from backend.schedule_models import ConsumptionForecast, HourlyConsumptionForeca
 
 if TYPE_CHECKING:
     from backend.config import HaStatisticsConfig
+    from backend.feature_pipeline import FeaturePipeline
     from backend.ha_statistics_reader import HaStatisticsReader
     from backend.model_store import ModelMetadata, ModelStore
+    from backend.weather_client import OpenMeteoClient
 
 logger = logging.getLogger("ems.consumption_forecaster")
 
-# Base load placeholder (W) — replaced in S02 when a real consumption entity
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+# Base load placeholder (W) -- replaced in S02 when a real consumption entity
 # is available in HA statistics.
 _BASE_LOAD_W: float = 300.0
+
+FEATURE_NAMES: list[str] = [
+    "outdoor_temp_c",
+    "ewm_temp_3d",
+    "day_of_week",
+    "hour_of_day",
+    "month",
+    "is_weekend",
+    "lag_24h",
+    "lag_168h",
+]
+
+
+# ---------------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------------
 
 
 def _compute_ewm(values: list[float], span_days: int = 3) -> list[float]:
@@ -81,28 +106,119 @@ def _compute_ewm(values: list[float], span_days: int = 3) -> list[float]:
     return ewm
 
 
+def _build_lag_features(
+    timestamps: list[datetime],
+    consumption_map: dict[datetime, float],
+) -> tuple[list[float], list[float]]:
+    """Build 24h and 168h (1-week) lag features from a consumption map.
+
+    Parameters
+    ----------
+    timestamps:
+        Sorted list of hourly timestamps to compute lag features for.
+    consumption_map:
+        Mapping from hour-truncated UTC datetime to consumption value.
+
+    Returns
+    -------
+    tuple[list[float], list[float]]
+        ``(lag_24h, lag_168h)`` lists aligned with *timestamps*.  Uses
+        ``float("nan")`` when the lagged timestamp is not available in the
+        map (HistGradientBoostingRegressor handles NaN natively).
+    """
+    lag_24h: list[float] = []
+    lag_168h: list[float] = []
+    for ts in timestamps:
+        ts_24 = ts - timedelta(hours=24)
+        ts_168 = ts - timedelta(hours=168)
+        lag_24h.append(consumption_map.get(ts_24, float("nan")))
+        lag_168h.append(consumption_map.get(ts_168, float("nan")))
+    return lag_24h, lag_168h
+
+
+def _compute_recency_weights(
+    timestamps: list[datetime],
+    half_life_days: float = 30.0,
+) -> numpy.ndarray:
+    """Compute exponential decay recency weights for training samples.
+
+    Parameters
+    ----------
+    timestamps:
+        Sorted hourly timestamps (oldest first).
+    half_life_days:
+        Number of days after which a sample's weight drops to 0.5.
+
+    Returns
+    -------
+    numpy.ndarray
+        Array of weights (newest sample ~ 1.0, 30-day-old sample ~ 0.5).
+    """
+    if not timestamps:
+        return numpy.array([], dtype=numpy.float64)
+    newest = timestamps[-1]
+    decay = math.log(2) / (half_life_days * 24)
+    weights = numpy.array(
+        [
+            math.exp(-decay * (newest - ts).total_seconds() / 3600)
+            for ts in timestamps
+        ],
+        dtype=numpy.float64,
+    )
+    return weights
+
+
 def _build_features(
     timestamps: list[datetime],
     outdoor_temps: list[float],
     ewm_temps: list[float],
+    consumption_map: dict[datetime, float] | None = None,
 ) -> list[list[float]]:
     """Build a feature matrix row for each hourly observation.
 
-    Features: [outdoor_temp_c, ewm_temp_3d, day_of_week, hour_of_day, month]
+    Features (8 columns):
+    ``[outdoor_temp_c, ewm_temp_3d, day_of_week, hour_of_day, month,
+    is_weekend, lag_24h, lag_168h]``
+
+    Parameters
+    ----------
+    timestamps:
+        Sorted hourly timestamps.
+    outdoor_temps:
+        Outdoor temperature values aligned with *timestamps*.
+    ewm_temps:
+        EWM-smoothed temperature values aligned with *timestamps*.
+    consumption_map:
+        Optional mapping from hour-truncated UTC datetime to consumption
+        value for computing lag features.  When ``None``, lag columns are
+        filled with ``float("nan")``.
     """
+    if consumption_map is not None:
+        lag_24h, lag_168h = _build_lag_features(timestamps, consumption_map)
+    else:
+        lag_24h = [float("nan")] * len(timestamps)
+        lag_168h = [float("nan")] * len(timestamps)
+
     rows: list[list[float]] = []
-    for ts, ot, ewm in zip(timestamps, outdoor_temps, ewm_temps):
+    for i, (ts, ot, ewm) in enumerate(
+        zip(timestamps, outdoor_temps, ewm_temps)
+    ):
         rows.append([
             ot,
             ewm,
             float(ts.weekday()),
             float(ts.hour),
             float(ts.month),
+            1.0 if ts.weekday() >= 5 else 0.0,
+            lag_24h[i],
+            lag_168h[i],
         ])
     return rows
 
 
-def _seasonal_hourly_fallback(horizon_hours: int = 72) -> HourlyConsumptionForecast:
+def _seasonal_hourly_fallback(
+    horizon_hours: int = 72,
+) -> HourlyConsumptionForecast:
     """Return a seasonal hourly consumption forecast with hour-of-day variation.
 
     Uses ``_seasonal_fallback_kwh()`` for the daily total and distributes it
@@ -119,7 +235,7 @@ def _seasonal_hourly_fallback(horizon_hours: int = 72) -> HourlyConsumptionForec
     HourlyConsumptionForecast
         With ``source="seasonal"`` and ``fallback_used=True``.
     """
-    # Hour-of-day weights — sum to ~24.0 so daily total is preserved
+    # Hour-of-day weights -- sum to ~24.0 so daily total is preserved
     _HOUR_WEIGHTS: dict[int, float] = {}
     for h in range(24):
         if h in (0, 1, 2, 3, 4, 5, 23):
@@ -150,6 +266,11 @@ def _seasonal_hourly_fallback(horizon_hours: int = 72) -> HourlyConsumptionForec
     )
 
 
+# ---------------------------------------------------------------------------
+# ConsumptionForecaster
+# ---------------------------------------------------------------------------
+
+
 class ConsumptionForecaster:
     """ML-based household consumption forecaster backed by HA statistics.
 
@@ -161,6 +282,16 @@ class ConsumptionForecaster:
     config:
         :class:`~backend.config.HaStatisticsConfig` with entity IDs and
         training thresholds.
+    model_store:
+        Optional :class:`~backend.model_store.ModelStore` for persisting
+        trained models to disk.
+    feature_pipeline:
+        Optional :class:`~backend.feature_pipeline.FeaturePipeline` for
+        centralised raw data extraction.  When provided, replaces inline
+        ``self._reader.read_entity_hourly()`` calls in ``train()``.
+    weather_client:
+        Optional :class:`~backend.weather_client.OpenMeteoClient` for
+        fetching real temperature forecasts in ``predict_hourly()``.
     """
 
     def __init__(
@@ -169,12 +300,16 @@ class ConsumptionForecaster:
         config: "HaStatisticsConfig",
         *,
         model_store: "ModelStore | None" = None,
+        feature_pipeline: "FeaturePipeline | None" = None,
+        weather_client: "OpenMeteoClient | None" = None,
     ) -> None:
         self._reader = reader
         self._config = config
         self._model_store = model_store
+        self._feature_pipeline = feature_pipeline
+        self._weather_client = weather_client
 
-        self._heat_pump_model = None  # GradientBoostingRegressor or None
+        self._heat_pump_model = None  # HistGradientBoostingRegressor or None
         self._dhw_model = None
         self._base_model = None
 
@@ -185,9 +320,12 @@ class ConsumptionForecaster:
         # Cached training data size for cold-start guard
         self._total_samples: int = 0
 
-        # Last ML prediction memory — populated on ML success path only
+        # Last ML prediction memory -- populated on ML success path only
         self._last_prediction_kwh: float | None = None
         self._last_prediction_date: date | None = None
+
+        # Last known outdoor temp from training data (fallback for predict)
+        self._last_outdoor_temp: float = 10.0
 
         # Attempt to restore previously trained models from disk
         self._try_load_models()
@@ -196,24 +334,60 @@ class ConsumptionForecaster:
         """Try to load persisted models from ModelStore.
 
         Returns ``True`` if at least the heat_pump model was restored.
+        Discards models that were trained with a different feature count
+        (e.g. old 5-feature models before the upgrade to 8 features).
         """
         if self._model_store is None:
             return False
         try:
             hp_result = self._model_store.load("heat_pump")
             if hp_result is not None:
-                self._heat_pump_model, _ = hp_result
-                logger.info("Restored heat_pump model from ModelStore")
+                model, meta = hp_result
+                if len(meta.feature_names) != len(FEATURE_NAMES):
+                    logger.warning(
+                        "Discarding heat_pump model: feature count %d"
+                        " != expected %d",
+                        len(meta.feature_names),
+                        len(FEATURE_NAMES),
+                    )
+                    hp_result = None
+                else:
+                    self._heat_pump_model = model
+                    logger.info(
+                        "Restored heat_pump model from ModelStore"
+                    )
 
             dhw_result = self._model_store.load("dhw")
             if dhw_result is not None:
-                self._dhw_model, _ = dhw_result
-                logger.info("Restored dhw model from ModelStore")
+                model, meta = dhw_result
+                if len(meta.feature_names) != len(FEATURE_NAMES):
+                    logger.warning(
+                        "Discarding dhw model: feature count %d"
+                        " != expected %d",
+                        len(meta.feature_names),
+                        len(FEATURE_NAMES),
+                    )
+                    dhw_result = None
+                else:
+                    self._dhw_model = model
+                    logger.info("Restored dhw model from ModelStore")
 
             base_result = self._model_store.load("base_load")
             if base_result is not None:
-                self._base_model, _ = base_result
-                logger.info("Restored base_load model from ModelStore")
+                model, meta = base_result
+                if len(meta.feature_names) != len(FEATURE_NAMES):
+                    logger.warning(
+                        "Discarding base_load model: feature count %d"
+                        " != expected %d",
+                        len(meta.feature_names),
+                        len(FEATURE_NAMES),
+                    )
+                    base_result = None
+                else:
+                    self._base_model = model
+                    logger.info(
+                        "Restored base_load model from ModelStore"
+                    )
 
             return hp_result is not None
         except Exception as exc:  # noqa: BLE001
@@ -221,7 +395,7 @@ class ConsumptionForecaster:
             return False
 
     # ------------------------------------------------------------------
-    # Public interface — matches InfluxMetricsReader protocol
+    # Public interface -- matches InfluxMetricsReader protocol
     # ------------------------------------------------------------------
 
     @property
@@ -230,23 +404,24 @@ class ConsumptionForecaster:
         return self._reasoning_text
 
     async def train(self) -> None:
-        """Read HA statistics and retrain all three GBR models.
+        """Read data and retrain all three HistGBR models.
 
-        Reads 90 days of data for outdoor temp, heat pump, and DHW entities.
-        A model is only trained when its entity has ≥ ``min_training_days * 24``
-        hourly samples.  Models for entities with insufficient data remain
-        ``None`` (the forecaster falls back to seasonal constant for those).
-
-        After training, logs per-model sample counts and train RMSE.
+        Uses FeaturePipeline for raw data extraction when available,
+        otherwise falls back to direct reader access.  Applies recency
+        weighting and time-series cross-validation before final fit.
         """
-        # Import here so the module is importable even without scikit-learn
-        # installed (the cold-start fallback path never calls train()).
         try:
-            from sklearn.ensemble import GradientBoostingRegressor  # noqa: PLC0415
+            from sklearn.ensemble import (  # noqa: PLC0415
+                HistGradientBoostingRegressor,
+            )
             from sklearn.metrics import mean_squared_error  # noqa: PLC0415
+            from sklearn.model_selection import (  # noqa: PLC0415
+                TimeSeriesSplit,
+                cross_val_score,
+            )
         except ImportError as exc:
             logger.warning(
-                "ConsumptionForecaster: scikit-learn not available — "
+                "ConsumptionForecaster: scikit-learn not available -- "
                 "falling back to seasonal constant: %s",
                 exc,
             )
@@ -255,22 +430,37 @@ class ConsumptionForecaster:
         min_samples = self._config.min_training_days * 24
 
         # ------------------------------------------------------------------
-        # 1. Fetch data
+        # 1. Fetch data (FeaturePipeline or direct reader fallback)
         # ------------------------------------------------------------------
-        temp_data = await self._reader.read_entity_hourly(
-            self._config.outdoor_temp_entity, days=90
-        )
-        hp_data = await self._reader.read_entity_hourly(
-            self._config.heat_pump_entity, days=90
-        )
-        dhw_data = await self._reader.read_entity_hourly(
-            self._config.dhw_entity, days=90
-        )
+        if self._feature_pipeline is not None:
+            feature_set = await self._feature_pipeline.extract(
+                force_refresh=True, days=90
+            )
+            if feature_set is None:
+                logger.warning(
+                    "FeaturePipeline returned None -- no data sources"
+                )
+                return
+            temp_data = feature_set.outdoor_temp
+            hp_data = feature_set.heat_pump
+            dhw_data = feature_set.dhw
+        else:
+            temp_data = await self._reader.read_entity_hourly(
+                self._config.outdoor_temp_entity, days=90
+            )
+            hp_data = await self._reader.read_entity_hourly(
+                self._config.heat_pump_entity, days=90
+            )
+            dhw_data = await self._reader.read_entity_hourly(
+                self._config.dhw_entity, days=90
+            )
 
         # ------------------------------------------------------------------
-        # 2. Align timestamps — inner-join on hour-truncated UTC timestamp
+        # 2. Align timestamps -- inner-join on hour-truncated UTC timestamp
         # ------------------------------------------------------------------
-        def _to_map(series: list[tuple[datetime, float]]) -> dict[datetime, float]:
+        def _to_map(
+            series: list[tuple[datetime, float]],
+        ) -> dict[datetime, float]:
             """Map each row to its hour-truncated UTC timestamp."""
             result: dict[datetime, float] = {}
             for ts, val in series:
@@ -304,38 +494,84 @@ class ConsumptionForecaster:
         timestamps = common_ts
         outdoor_temps = [temp_map[ts] for ts in timestamps]
         ewm_temps = _compute_ewm(outdoor_temps)
-        X = _build_features(timestamps, outdoor_temps, ewm_temps)
+
+        # Store last outdoor temp for predict fallback
+        if outdoor_temps:
+            self._last_outdoor_temp = outdoor_temps[-1]
+
+        # Consumption map for lag features (heat pump as proxy)
+        consumption_map = hp_map
+
+        X = _build_features(
+            timestamps, outdoor_temps, ewm_temps, consumption_map
+        )
+
+        # Recency weights
+        weights = _compute_recency_weights(timestamps)
 
         # ------------------------------------------------------------------
         # 4. Train heat pump model
         # ------------------------------------------------------------------
         y_hp = [hp_map[ts] for ts in timestamps]
-        hp_model = GradientBoostingRegressor(
-            n_estimators=100, max_depth=3, random_state=42
-        )
-        await anyio.to_thread.run_sync(partial(hp_model.fit, X, y_hp))
+
+        def _train_hp() -> None:
+            pass  # placeholder, actual work in closure below
+
+        def _cv_and_fit_hp():
+            hp_model = HistGradientBoostingRegressor(
+                max_iter=100,
+                max_depth=3,
+                random_state=42,
+                early_stopping=True,
+                n_iter_no_change=10,
+                validation_fraction=0.1,
+            )
+            scores = cross_val_score(
+                hp_model,
+                X,
+                y_hp,
+                cv=TimeSeriesSplit(n_splits=5),
+                scoring="neg_mean_absolute_percentage_error",
+                fit_params={"sample_weight": weights},
+            )
+            logger.info(
+                "CV scores heat_pump (neg_MAPE): mean=%.1f%% std=%.1f%%",
+                -scores.mean() * 100,
+                scores.std() * 100,
+            )
+            hp_model.fit(X, y_hp, sample_weight=weights)
+            return hp_model
+
+        hp_model = await anyio.to_thread.run_sync(_cv_and_fit_hp)
         hp_preds = hp_model.predict(X)
-        hp_rmse = math.sqrt(
-            mean_squared_error(y_hp, hp_preds)
-        )
+        hp_rmse = math.sqrt(mean_squared_error(y_hp, hp_preds))
         self._heat_pump_model = hp_model
         hp_n = len(y_hp)
 
         if self._model_store is not None:
             try:
                 from backend.model_store import ModelMetadata  # noqa: PLC0415
-                self._model_store.save("heat_pump", hp_model, ModelMetadata(
-                    sklearn_version=sklearn.__version__,
-                    numpy_version=numpy.__version__,
-                    trained_at=datetime.now(tz=timezone.utc).isoformat(),
-                    sample_count=hp_n,
-                    feature_names=["outdoor_temp_c", "ewm_temp_3d", "day_of_week", "hour_of_day", "month"],
-                ))
+
+                self._model_store.save(
+                    "heat_pump",
+                    hp_model,
+                    ModelMetadata(
+                        sklearn_version=sklearn.__version__,
+                        numpy_version=numpy.__version__,
+                        trained_at=datetime.now(
+                            tz=timezone.utc
+                        ).isoformat(),
+                        sample_count=hp_n,
+                        feature_names=FEATURE_NAMES,
+                    ),
+                )
             except Exception as exc:  # noqa: BLE001
-                logger.warning("ModelStore save failed for heat_pump: %s", exc)
+                logger.warning(
+                    "ModelStore save failed for heat_pump: %s", exc
+                )
 
         # ------------------------------------------------------------------
-        # 5. Train DHW model (optional — skip if entity absent)
+        # 5. Train DHW model (optional -- skip if entity absent)
         # ------------------------------------------------------------------
         dhw_n = 0
         dhw_rmse = float("nan")
@@ -344,12 +580,38 @@ class ConsumptionForecaster:
             ts_dhw = common_dhw
             ot_dhw = [temp_map[ts] for ts in ts_dhw]
             ewm_dhw = _compute_ewm(ot_dhw)
-            X_dhw = _build_features(ts_dhw, ot_dhw, ewm_dhw)
-            y_dhw = [dhw_map[ts] for ts in ts_dhw]
-            dhw_model = GradientBoostingRegressor(
-                n_estimators=100, max_depth=3, random_state=42
+            X_dhw = _build_features(
+                ts_dhw, ot_dhw, ewm_dhw, consumption_map
             )
-            await anyio.to_thread.run_sync(partial(dhw_model.fit, X_dhw, y_dhw))
+            y_dhw = [dhw_map[ts] for ts in ts_dhw]
+            dhw_weights = _compute_recency_weights(ts_dhw)
+
+            def _cv_and_fit_dhw():
+                dhw_model = HistGradientBoostingRegressor(
+                    max_iter=100,
+                    max_depth=3,
+                    random_state=42,
+                    early_stopping=True,
+                    n_iter_no_change=10,
+                    validation_fraction=0.1,
+                )
+                scores = cross_val_score(
+                    dhw_model,
+                    X_dhw,
+                    y_dhw,
+                    cv=TimeSeriesSplit(n_splits=5),
+                    scoring="neg_mean_absolute_percentage_error",
+                    fit_params={"sample_weight": dhw_weights},
+                )
+                logger.info(
+                    "CV scores dhw (neg_MAPE): mean=%.1f%% std=%.1f%%",
+                    -scores.mean() * 100,
+                    scores.std() * 100,
+                )
+                dhw_model.fit(X_dhw, y_dhw, sample_weight=dhw_weights)
+                return dhw_model
+
+            dhw_model = await anyio.to_thread.run_sync(_cv_and_fit_dhw)
             dhw_preds = dhw_model.predict(X_dhw)
             dhw_rmse = math.sqrt(mean_squared_error(y_dhw, dhw_preds))
             self._dhw_model = dhw_model
@@ -357,16 +619,27 @@ class ConsumptionForecaster:
 
             if self._model_store is not None:
                 try:
-                    from backend.model_store import ModelMetadata  # noqa: PLC0415
-                    self._model_store.save("dhw", dhw_model, ModelMetadata(
-                        sklearn_version=sklearn.__version__,
-                        numpy_version=numpy.__version__,
-                        trained_at=datetime.now(tz=timezone.utc).isoformat(),
-                        sample_count=dhw_n,
-                        feature_names=["outdoor_temp_c", "ewm_temp_3d", "day_of_week", "hour_of_day", "month"],
-                    ))
+                    from backend.model_store import (  # noqa: PLC0415
+                        ModelMetadata,
+                    )
+
+                    self._model_store.save(
+                        "dhw",
+                        dhw_model,
+                        ModelMetadata(
+                            sklearn_version=sklearn.__version__,
+                            numpy_version=numpy.__version__,
+                            trained_at=datetime.now(
+                                tz=timezone.utc
+                            ).isoformat(),
+                            sample_count=dhw_n,
+                            feature_names=FEATURE_NAMES,
+                        ),
+                    )
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning("ModelStore save failed for dhw: %s", exc)
+                    logger.warning(
+                        "ModelStore save failed for dhw: %s", exc
+                    )
         else:
             self._dhw_model = None
 
@@ -374,10 +647,33 @@ class ConsumptionForecaster:
         # 6. Train base load model (constant 300 W placeholder)
         # ------------------------------------------------------------------
         y_base = [_BASE_LOAD_W] * len(timestamps)
-        base_model = GradientBoostingRegressor(
-            n_estimators=100, max_depth=3, random_state=42
-        )
-        await anyio.to_thread.run_sync(partial(base_model.fit, X, y_base))
+
+        def _cv_and_fit_base():
+            base_model = HistGradientBoostingRegressor(
+                max_iter=100,
+                max_depth=3,
+                random_state=42,
+                early_stopping=True,
+                n_iter_no_change=10,
+                validation_fraction=0.1,
+            )
+            scores = cross_val_score(
+                base_model,
+                X,
+                y_base,
+                cv=TimeSeriesSplit(n_splits=5),
+                scoring="neg_mean_absolute_percentage_error",
+                fit_params={"sample_weight": weights},
+            )
+            logger.info(
+                "CV scores base_load (neg_MAPE): mean=%.1f%% std=%.1f%%",
+                -scores.mean() * 100,
+                scores.std() * 100,
+            )
+            base_model.fit(X, y_base, sample_weight=weights)
+            return base_model
+
+        base_model = await anyio.to_thread.run_sync(_cv_and_fit_base)
         base_preds = base_model.predict(X)
         base_rmse = math.sqrt(mean_squared_error(y_base, base_preds))
         self._base_model = base_model
@@ -386,15 +682,24 @@ class ConsumptionForecaster:
         if self._model_store is not None:
             try:
                 from backend.model_store import ModelMetadata  # noqa: PLC0415
-                self._model_store.save("base_load", base_model, ModelMetadata(
-                    sklearn_version=sklearn.__version__,
-                    numpy_version=numpy.__version__,
-                    trained_at=datetime.now(tz=timezone.utc).isoformat(),
-                    sample_count=base_n,
-                    feature_names=["outdoor_temp_c", "ewm_temp_3d", "day_of_week", "hour_of_day", "month"],
-                ))
+
+                self._model_store.save(
+                    "base_load",
+                    base_model,
+                    ModelMetadata(
+                        sklearn_version=sklearn.__version__,
+                        numpy_version=numpy.__version__,
+                        trained_at=datetime.now(
+                            tz=timezone.utc
+                        ).isoformat(),
+                        sample_count=base_n,
+                        feature_names=FEATURE_NAMES,
+                    ),
+                )
             except Exception as exc:  # noqa: BLE001
-                logger.warning("ModelStore save failed for base_load: %s", exc)
+                logger.warning(
+                    "ModelStore save failed for base_load: %s", exc
+                )
 
         self._last_trained_at = datetime.now(tz=timezone.utc)
 
@@ -419,7 +724,7 @@ class ConsumptionForecaster:
         Returns
         -------
         ConsumptionForecast
-            Always returns a result — never raises.
+            Always returns a result -- never raises.
         """
         today = date.today()
         min_samples = self._config.min_training_days * 24
@@ -446,10 +751,9 @@ class ConsumptionForecaster:
         # ------------------------------------------------------------------
         # Predict next 24 hours
         # ------------------------------------------------------------------
-        # We don't have outdoor temp forecast; use a neutral 10 °C placeholder.
-        # S02 / future slices can inject a real temp forecast.
-        neutral_temp = 10.0
-        ewm_placeholder = neutral_temp  # EWM = same neutral value for all hours
+        # Use real temperature forecast if available
+        temps = await self._get_temperature_forecast(24)
+        ewm_temps = _compute_ewm(temps)
 
         hp_total_w = 0.0
         dhw_total_w = 0.0
@@ -459,11 +763,14 @@ class ConsumptionForecaster:
         for h in range(24):
             ts = now_utc + timedelta(hours=h)
             features = [[
-                neutral_temp,
-                ewm_placeholder,
+                temps[h],
+                ewm_temps[h],
                 float(ts.weekday()),
                 float(ts.hour),
                 float(ts.month),
+                1.0 if ts.weekday() >= 5 else 0.0,
+                float("nan"),  # lag_24h not available for future
+                float("nan"),  # lag_168h not available for future
             ]]
             hp_pred = float(self._heat_pump_model.predict(features)[0])
             hp_total_w += max(0.0, hp_pred)
@@ -478,7 +785,7 @@ class ConsumptionForecaster:
             else:
                 base_total_w += _BASE_LOAD_W
 
-        # Convert W·h → kWh (each hour contributes 1 h)
+        # Convert Wh -> kWh (each hour contributes 1 h)
         hp_kwh = hp_total_w / 1000.0
         dhw_kwh = dhw_total_w / 1000.0
         base_kwh = base_total_w / 1000.0
@@ -527,7 +834,7 @@ class ConsumptionForecaster:
         Returns
         -------
         HourlyConsumptionForecast
-            Always returns a result — never raises.
+            Always returns a result -- never raises.
         """
         min_samples = self._config.min_training_days * 24
 
@@ -544,9 +851,9 @@ class ConsumptionForecaster:
             )
             return _seasonal_hourly_fallback(horizon_hours)
 
-        # ML prediction path
-        neutral_temp = 10.0
-        ewm_placeholder = neutral_temp
+        # ML prediction path -- get real temperature forecast
+        temps = await self._get_temperature_forecast(horizon_hours)
+        ewm_temps = _compute_ewm(temps)
 
         now_utc = datetime.now(tz=timezone.utc)
         hourly_kwh: list[float] = []
@@ -554,25 +861,36 @@ class ConsumptionForecaster:
         for h in range(horizon_hours):
             ts = now_utc + timedelta(hours=h)
             features = [[
-                neutral_temp,
-                ewm_placeholder,
+                temps[h],
+                ewm_temps[h],
                 float(ts.weekday()),
                 float(ts.hour),
                 float(ts.month),
+                1.0 if ts.weekday() >= 5 else 0.0,
+                float("nan"),  # lag_24h not available for future
+                float("nan"),  # lag_168h not available for future
             ]]
 
-            hp_pred = max(0.0, float(self._heat_pump_model.predict(features)[0]))
+            hp_pred = max(
+                0.0, float(self._heat_pump_model.predict(features)[0])
+            )
 
             dhw_pred = 0.0
             if self._dhw_model is not None:
-                dhw_pred = max(0.0, float(self._dhw_model.predict(features)[0]))
+                dhw_pred = max(
+                    0.0, float(self._dhw_model.predict(features)[0])
+                )
 
             if self._base_model is not None:
-                base_pred = max(0.0, float(self._base_model.predict(features)[0]))
+                base_pred = max(
+                    0.0, float(self._base_model.predict(features)[0])
+                )
             else:
                 base_pred = _BASE_LOAD_W
 
-            hourly_kwh.append(max(0.0, (hp_pred + dhw_pred + base_pred) / 1000.0))
+            hourly_kwh.append(
+                max(0.0, (hp_pred + dhw_pred + base_pred) / 1000.0)
+            )
 
         total_kwh = sum(hourly_kwh)
 
@@ -612,13 +930,16 @@ class ConsumptionForecaster:
         age = datetime.now(tz=timezone.utc) - self._last_trained_at
         if age.total_seconds() > stale_hours * 3600:
             logger.info(
-                "ConsumptionForecaster: models are %.1f h old (> %d h) — retraining",
+                "ConsumptionForecaster: models are %.1f h old"
+                " (> %d h) -- retraining",
                 age.total_seconds() / 3600,
                 stale_hours,
             )
             await self.train()
 
-    def get_forecast_comparison(self, actual_kwh: float) -> dict[str, float] | None:
+    def get_forecast_comparison(
+        self, actual_kwh: float
+    ) -> dict[str, float] | None:
         """Compare the last ML prediction to an actual consumption value.
 
         Returns ``None`` if no ML prediction has been made yet (cold-start or
@@ -647,3 +968,40 @@ class ConsumptionForecaster:
             "actual_kwh": round(actual_kwh, 2),
             "error_pct": round(error_pct, 1),
         }
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    async def _get_temperature_forecast(
+        self, hours: int
+    ) -> list[float]:
+        """Get temperature forecast, falling back gracefully.
+
+        Tries weather client first, then falls back to last known outdoor
+        temp from training, then to 10.0 C as final fallback.
+        """
+        if self._weather_client is not None:
+            try:
+                forecast = (
+                    await self._weather_client.get_temperature_forecast(
+                        hours=hours
+                    )
+                )
+                if forecast is not None and len(forecast) >= hours:
+                    return forecast[:hours]
+                if forecast is not None and len(forecast) > 0:
+                    # Pad with last value if shorter than needed
+                    padded = list(forecast)
+                    while len(padded) < hours:
+                        padded.append(padded[-1])
+                    return padded
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Temperature forecast failed, using fallback: %s",
+                    exc,
+                )
+
+        # Fallback: constant temperature
+        fallback_temp = self._last_outdoor_temp
+        return [fallback_temp] * hours

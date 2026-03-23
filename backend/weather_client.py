@@ -131,6 +131,44 @@ class OpenMeteoClient:
             logger.warning("open-meteo get_solar_forecast failed: %s", exc)
             return None
 
+    async def get_temperature_forecast(
+        self, hours: int = 72
+    ) -> list[float] | None:
+        """Fetch hourly temperature forecast from Open-Meteo.
+
+        Parameters
+        ----------
+        hours:
+            Number of hourly temperature values to return (default 72).
+
+        Returns
+        -------
+        list[float] | None
+            Hourly ``temperature_2m`` values in Celsius, or ``None`` on
+            any HTTP or parse error (the error is logged as a WARNING).
+        """
+        params = {
+            "latitude": self._config.latitude,
+            "longitude": self._config.longitude,
+            "hourly": "temperature_2m",
+            "forecast_days": (hours + 23) // 24,
+            "timezone": "UTC",
+        }
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._config.timeout_s
+            ) as client:
+                resp = await client.get(self._base_url, params=params)
+                resp.raise_for_status()
+                data = resp.json()
+            temps = data["hourly"]["temperature_2m"][:hours]
+            return temps
+        except (httpx.HTTPError, KeyError, ValueError, TypeError) as exc:
+            logger.warning(
+                "open-meteo get_temperature_forecast failed: %s", exc
+            )
+            return None
+
 
 # ---------------------------------------------------------------------------
 # EVCC solar forecast converter
