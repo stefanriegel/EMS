@@ -102,4 +102,4 @@ Phases execute in numeric order: 12 -> 13 -> 14 -> 15
 | 12. Wizard Removal | v1.2 | 2/2 | Complete    | 2026-03-23 |
 | 13. MQTT Discovery Overhaul | v1.2 | 3/3 | Complete    | 2026-03-23 |
 | 14. Controllable Entities | v1.2 | 2/2 | Complete    | 2026-03-23 |
-| 15. HA Ingress Support | v1.2 | 2/2 | Complete   | 2026-03-23 |
+| 15. HA Ingress Support | v1.2 | 2/2 | Complete    | 2026-03-23 |
