@@ -32,7 +32,7 @@ Phase 6: Deployment & Hardening - 3 plans, complete
 - [ ] **Phase 7: Export Foundation** - Feed-in rate config and ExportAdvisor with export-vs-store decision logic
 - [ ] **Phase 8: Coordinator Export Integration** - EXPORTING battery role, seasonal strategy, and coordinator wiring
 - [ ] **Phase 9: Weather & Forecast Data** - Multi-day solar forecast client and 72-hour consumption forecaster extension
-- [ ] **Phase 10: Multi-Day Scheduling** - DayPlan model, WeatherScheduler, confidence weighting, and intra-day re-planning
+- [x] **Phase 10: Multi-Day Scheduling** - DayPlan model, WeatherScheduler, confidence weighting, and intra-day re-planning (completed 2026-03-23)
 - [ ] **Phase 11: Dashboard & API** - Export indicator, multi-day forecast visualization, and multi-day schedule view
 
 ## Phase Details
@@ -87,10 +87,10 @@ Plans:
   3. Forecast confidence is weighted by day — Day 1 at full weight, Day 2 at ~80%, Day 3 at ~60%
   4. Schedule re-runs approximately every 6 hours when actual conditions deviate significantly from the plan
   5. Grid charge targets leave headroom proportional to forecast uncertainty so unexpected PV surplus can still be absorbed
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 Plans:
 - [x] 10-01-PLAN.md — DayPlan model + WeatherScheduler core algorithm + tests
-- [ ] 10-02-PLAN.md — Intra-day re-planning + lifespan wiring
+- [x] 10-02-PLAN.md — Intra-day re-planning + lifespan wiring
 
 ### Phase 11: Dashboard & API
 **Goal**: Users can see export activity, multi-day solar forecasts, and multi-day charge plans in the dashboard
@@ -114,5 +114,5 @@ Note: Phase 8 depends on Phase 7. Phase 9 is independent of Phases 7-8 and could
 | 7. Export Foundation | v1.1 | 0/2 | Planned | - |
 | 8. Coordinator Export Integration | v1.1 | 0/2 | Planned | - |
 | 9. Weather & Forecast Data | v1.1 | 0/2 | Planned | - |
-| 10. Multi-Day Scheduling | v1.1 | 1/2 | In Progress|  |
+| 10. Multi-Day Scheduling | v1.1 | 2/2 | Complete   | 2026-03-23 |
 | 11. Dashboard & API | v1.1 | 0/0 | Not started | - |
