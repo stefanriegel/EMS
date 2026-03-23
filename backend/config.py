@@ -181,6 +181,9 @@ class SystemConfig:
     victron_min_soc_profile: list[MinSocWindow] | None = None
     """Time-of-day min-SoC profile for Victron. None = use static victron_min_soc_pct."""
 
+    feed_in_rate_eur_kwh: float = 0.074
+    """Fixed feed-in tariff rate in EUR/kWh (default 7.4 ct/kWh)."""
+
 
 @dataclass
 class OrchestratorConfig:

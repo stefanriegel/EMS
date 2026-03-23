@@ -193,18 +193,21 @@ class TestExportAdvisorEconomicDecision:
 
     def test_store_when_future_import_expensive(self) -> None:
         """When upcoming hours are expensive, store to avoid buyback trap."""
-        # High consumption + very expensive upcoming rates
-        rates = [0.10] * 12 + [0.50] * 12  # afternoon is expensive
+        # Very high consumption + all upcoming hours expensive
+        # At 90% SoC: available = 84.6 kWh
+        # Forward reserve: 6 expensive hours * (600/24) kWh/h = 150 kWh
+        # surplus = 84.6 - 150 = -65.4 => STORE
+        rates = [0.50] * 24  # all hours expensive (above feed-in 0.074)
         advisor = _make_advisor(
-            cached_forecast=_make_forecast(today_kwh=60.0),
+            cached_forecast=_make_forecast(today_kwh=600.0),
             schedule_rates=rates,
-            effective_price=0.10,
+            effective_price=0.50,
         )
         now = datetime(2026, 3, 23, 10, 0, tzinfo=_TZ)
         advice = advisor.advise(
-            combined_soc_pct=92.0,
-            huawei_soc_pct=92.0,
-            victron_soc_pct=92.0,
+            combined_soc_pct=90.0,
+            huawei_soc_pct=90.0,
+            victron_soc_pct=90.0,
             now=now,
         )
         assert advice.decision == ExportDecision.STORE
