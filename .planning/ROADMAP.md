@@ -44,7 +44,7 @@ See MILESTONES.md for details.
 **Plans**: 2 plans
 Plans:
 - [ ] 12-01-PLAN.md — Backend wizard removal (delete setup_api.py, setup_config.py, clean main.py lifespan)
-- [ ] 12-02-PLAN.md — Frontend wizard removal (delete SetupWizard.tsx, clean App.tsx routing)
+- [x] 12-02-PLAN.md — Frontend wizard removal (delete SetupWizard.tsx, clean App.tsx routing)
 
 ### Phase 13: MQTT Discovery Overhaul
 **Goal**: All HA entities follow best practices -- availability, origin metadata, proper naming, correct platforms, and entity categories
@@ -89,7 +89,7 @@ Phases execute in numeric order: 12 -> 13 -> 14 -> 15
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 12. Wizard Removal | v1.2 | 0/2 | Not started | - |
+| 12. Wizard Removal | v1.2 | 1/2 | In Progress|  |
 | 13. MQTT Discovery Overhaul | v1.2 | 0/TBD | Not started | - |
 | 14. Controllable Entities | v1.2 | 0/TBD | Not started | - |
 | 15. HA Ingress Support | v1.2 | 0/TBD | Not started | - |

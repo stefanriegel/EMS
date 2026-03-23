@@ -11,7 +11,7 @@ Requirements for Home Assistant Best Practice Alignment milestone.
 
 - [ ] **CFG-01**: Setup wizard code is removed (backend routes, frontend pages, setup_config.py)
 - [ ] **CFG-02**: Add-on options page is the sole configuration surface — no ems_config.json layer
-- [ ] **CFG-03**: Frontend `/setup` route removed; direct access shows dashboard or Add-on config redirect
+- [x] **CFG-03**: Frontend `/setup` route removed; direct access shows dashboard or Add-on config redirect
 
 ### MQTT Discovery
 
@@ -77,7 +77,7 @@ Requirements for Home Assistant Best Practice Alignment milestone.
 |-------------|-------|--------|
 | CFG-01 | Phase 12 | Pending |
 | CFG-02 | Phase 12 | Pending |
-| CFG-03 | Phase 12 | Pending |
+| CFG-03 | Phase 12 | Complete |
 | DISC-01 | Phase 13 | Pending |
 | DISC-02 | Phase 13 | Pending |
 | DISC-03 | Phase 13 | Pending |
