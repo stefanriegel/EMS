@@ -54,24 +54,14 @@ Both battery systems operate independently with zero oscillation — coordinated
 - ✓ Multi-day solar forecast (EVCC + Open-Meteo fallback) and 72h consumption prediction — Phase 9
 - ✓ WeatherScheduler with DayPlan model, confidence weighting, intra-day re-planning — Phase 10
 - ✓ Dashboard export indicator, solar forecast card, multi-day charge schedule view — Phase 11
+- ✓ Setup wizard removed — Add-on options page sole config surface — Phase 12
+- ✓ MQTT discovery overhaul: EntityDefinition model, 3 HA devices, LWT availability, origin metadata, binary sensors, translations — Phase 13
+- ✓ Controllable entities: 5 number + 1 select + 2 button entities with MQTT subscribe, mode override, auto-timeout — Phase 14
+- ✓ HA Ingress support: ASGI middleware, auth bypass, relative frontend paths, dynamic WebSocket URL — Phase 15
 
 ### Active
 
-See REQUIREMENTS.md for v1.2 milestone requirements.
-
-## Current Milestone: v1.2 Home Assistant Best Practice Alignment
-
-**Goal:** Make EMS a first-class HA citizen — proper entity model, controllable via services, accessible via Ingress, and runtime-tunable through HA entities.
-
-**Target features:**
-- Remove setup wizard — Add-on options page is the sole config surface
-- MQTT discovery overhaul — availability topics, expire_after, origin metadata, entity categories, proper naming
-- Binary sensors for system states (online/offline, grid charge active, export active)
-- HA Services — set control mode, force grid charge, set discharge setpoint (callable from automations)
-- Number/Select entities — runtime-tunable min-SoC, dead-bands, ramp rates, charge windows
-- Ingress support — dashboard accessible in HA sidebar with proper path/header handling
-- Add-on translations (en.yaml) for config option descriptions
-- Entity naming alignment with HA standards
+(All v1.2 requirements validated — see Validated section above. Next milestone requirements TBD.)
 
 ### Out of Scope
 
@@ -83,7 +73,7 @@ See REQUIREMENTS.md for v1.2 milestone requirements.
 
 ## Current State
 
-**v1.2 complete.** All 4 phases shipped: wizard removal, MQTT discovery overhaul, controllable entities, HA Ingress support.
+**v1.2 shipped 2026-03-23.** Home Assistant best practice alignment: wizard removed, MQTT discovery overhauled (3 devices, LWT, binary sensors, entity naming), 8 controllable entities (number/select/button), HA Ingress sidebar integration.
 
 **Codebase:**
 - Backend: ~11,200 LOC Python (FastAPI, pymodbus, paho-mqtt)
@@ -124,6 +114,10 @@ See REQUIREMENTS.md for v1.2 milestone requirements.
 | Predictive pre-charging with solar forecast | Skip grid charge when solar covers demand (1.2x threshold) | ✓ Validated Phase 3 |
 | Independent controllers with coordinator pattern | Prevents oscillation while allowing optimization; each system is autonomous | ✓ Validated Phase 2 |
 | Add-on options as sole config surface | Setup wizard adds complexity; HA users expect Add-on config page | ✓ Validated Phase 12 |
+| MQTT discovery with EntityDefinition dataclass | Typed entity registry enables clean extension for controllable entities | ✓ Validated Phase 13+14 |
+| Three HA devices (Huawei/Victron/System) | Matches physical hardware reality; cleaner entity grouping | ✓ Validated Phase 13 |
+| Bidirectional MQTT control via number/select/button | Enables HA automation control without custom integration | ✓ Validated Phase 14 |
+| HA Ingress with ASGI middleware | Raw ASGI handles both HTTP and WebSocket; simpler than BaseHTTPMiddleware | ✓ Validated Phase 15 |
 
 ## Evolution
 
@@ -144,4 +138,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 ---
-*Last updated: 2026-03-23 after Phase 15 completion (v1.2 milestone complete)*
+*Last updated: 2026-03-23 after v1.2 milestone*

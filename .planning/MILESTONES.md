@@ -1,5 +1,23 @@
 # Milestones
 
+## v1.2 Home Assistant Best Practice Alignment (Shipped: 2026-03-23)
+
+**Phases completed:** 4 phases, 9 plans, 13 tasks
+
+**Key accomplishments:**
+
+- Deleted setup wizard backend (setup_api.py, setup_config.py) and simplified main.py lifespan to use env vars exclusively
+- Deleted SetupWizard.tsx (618 LOC) and /setup route; App.tsx now serves only dashboard and login routes with auth-only redirect
+- Typed EntityDefinition dataclass with three-device grouping, LWT availability, origin metadata, expire_after, and HA best-practice discovery fields
+- Binary sensors for connectivity (huawei/victron online) and running states (grid charge, export) with one-time sensor-to-binary_sensor migration cleanup
+- Verified en.yaml covers all 40 config.yaml option and schema keys with human-readable names and descriptions
+- MQTT subscribe path with 8 controllable entities (5 number, 1 select, 2 button), BrokenPipeError-guarded subscriptions, and stale-publish health check
+- Bidirectional MQTT control flow with 8-entity command handler, mode override in control loop, 60min force-grid-charge timeout, state echo, and Supervisor persistence
+- Raw ASGI IngressMiddleware sets root_path from X-Ingress-Path header, with JWT auth bypass for Supervisor-authenticated Ingress requests
+- Vite relative base config and dynamic WS/fetch URL construction for HA Ingress compatibility
+
+---
+
 ## v1.1 Advanced Optimization (Shipped: 2026-03-23)
 
 **Phases completed:** 5 phases, 10 plans, 17 tasks
