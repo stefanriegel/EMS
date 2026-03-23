@@ -19,7 +19,7 @@ Replace manual tuning with data-driven ML models that learn from real usage patt
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 16: ML Infrastructure** - Foundation layer for model persistence, feature extraction, and safe sklearn execution
+- [x] **Phase 16: ML Infrastructure** - Foundation layer for model persistence, feature extraction, and safe sklearn execution (completed 2026-03-23)
 - [ ] **Phase 17: Consumption Forecaster Upgrade** - Weather-aware forecasting with accuracy tracking and proper validation
 - [ ] **Phase 18: Anomaly Detection** - Nightly anomaly model training with lightweight per-cycle checks and tiered alerts
 - [ ] **Phase 19: Self-Tuning Control** - Data-driven parameter adjustment with shadow mode, bounded changes, and automatic rollback
@@ -85,7 +85,7 @@ Phases execute in numeric order: 16 -> 17 -> 18 -> 19
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 16. ML Infrastructure | 2/3 | In Progress|  |
+| 16. ML Infrastructure | 2/3 | Complete    | 2026-03-23 |
 | 17. Consumption Forecaster Upgrade | 0/? | Not started | - |
 | 18. Anomaly Detection | 0/? | Not started | - |
 | 19. Self-Tuning Control | 0/? | Not started | - |
