@@ -46,7 +46,10 @@ Phase 6: Deployment & Hardening - 3 plans, complete
   2. System never commands a battery to discharge energy to the grid — export occurs only from direct PV surplus when batteries are full
   3. ExportAdvisor produces STORE/EXPORT decisions with structured reasoning that accounts for forward-looking consumption (no export-then-buyback)
   4. Export and self-consumption decisions appear in /api/decisions with human-readable reasoning
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 07-01-PLAN.md — ExportAdvisor module + config pipeline + tests
+- [ ] 07-02-PLAN.md — Coordinator wiring + decision logging
 
 ### Phase 8: Coordinator Export Integration
 **Goal**: Coordinator executes export decisions in real time with seasonal awareness, adding the EXPORTING battery role to the control loop
@@ -99,7 +102,7 @@ Note: Phase 8 depends on Phase 7. Phase 9 is independent of Phases 7-8 and could
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 7. Export Foundation | v1.1 | 0/0 | Not started | - |
+| 7. Export Foundation | v1.1 | 0/2 | Planned | - |
 | 8. Coordinator Export Integration | v1.1 | 0/0 | Not started | - |
 | 9. Weather & Forecast Data | v1.1 | 0/0 | Not started | - |
 | 10. Multi-Day Scheduling | v1.1 | 0/0 | Not started | - |
