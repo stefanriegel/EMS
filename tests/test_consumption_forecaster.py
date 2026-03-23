@@ -452,6 +452,33 @@ def test_get_forecast_comparison_zero_actual_no_division(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Tests: executor offloading — .fit() via anyio.to_thread.run_sync
+# ---------------------------------------------------------------------------
+
+@pytest.mark.anyio
+async def test_train_uses_executor(tmp_path):
+    """Verify that model.fit() is offloaded via anyio.to_thread.run_sync."""
+    db_path = str(tmp_path / "ha.db")
+    _populate_db(db_path, days=30)
+
+    config = _build_config(db_path)
+    reader = HaStatisticsReader(db_path)
+    forecaster = ConsumptionForecaster(reader, config)
+
+    with patch(
+        "backend.consumption_forecaster.anyio.to_thread.run_sync",
+        new_callable=AsyncMock,
+    ) as mock_run:
+        # Make run_sync actually call the function so training completes
+        mock_run.side_effect = lambda fn, *a, **kw: fn()
+        await forecaster.train()
+        # At least 2 calls: heat_pump.fit and base.fit (dhw may or may not have data)
+        assert mock_run.call_count >= 2, (
+            f"Expected >= 2 run_sync calls, got {mock_run.call_count}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Tests: predict_hourly() — 72h hourly consumption predictions
 # ---------------------------------------------------------------------------
 

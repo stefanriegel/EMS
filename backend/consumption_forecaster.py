@@ -32,7 +32,12 @@ from __future__ import annotations
 import logging
 import math
 from datetime import date, datetime, timedelta, timezone
+from functools import partial
 from typing import TYPE_CHECKING, Optional
+
+import anyio.to_thread
+import numpy
+import sklearn
 
 from backend.influx_reader import _seasonal_fallback_kwh
 from backend.schedule_models import ConsumptionForecast, HourlyConsumptionForecast
@@ -40,6 +45,7 @@ from backend.schedule_models import ConsumptionForecast, HourlyConsumptionForeca
 if TYPE_CHECKING:
     from backend.config import HaStatisticsConfig
     from backend.ha_statistics_reader import HaStatisticsReader
+    from backend.model_store import ModelMetadata, ModelStore
 
 logger = logging.getLogger("ems.consumption_forecaster")
 
@@ -161,9 +167,12 @@ class ConsumptionForecaster:
         self,
         reader: "HaStatisticsReader",
         config: "HaStatisticsConfig",
+        *,
+        model_store: "ModelStore | None" = None,
     ) -> None:
         self._reader = reader
         self._config = config
+        self._model_store = model_store
 
         self._heat_pump_model = None  # GradientBoostingRegressor or None
         self._dhw_model = None
@@ -179,6 +188,37 @@ class ConsumptionForecaster:
         # Last ML prediction memory — populated on ML success path only
         self._last_prediction_kwh: float | None = None
         self._last_prediction_date: date | None = None
+
+        # Attempt to restore previously trained models from disk
+        self._try_load_models()
+
+    def _try_load_models(self) -> bool:
+        """Try to load persisted models from ModelStore.
+
+        Returns ``True`` if at least the heat_pump model was restored.
+        """
+        if self._model_store is None:
+            return False
+        try:
+            hp_result = self._model_store.load("heat_pump")
+            if hp_result is not None:
+                self._heat_pump_model, _ = hp_result
+                logger.info("Restored heat_pump model from ModelStore")
+
+            dhw_result = self._model_store.load("dhw")
+            if dhw_result is not None:
+                self._dhw_model, _ = dhw_result
+                logger.info("Restored dhw model from ModelStore")
+
+            base_result = self._model_store.load("base_load")
+            if base_result is not None:
+                self._base_model, _ = base_result
+                logger.info("Restored base_load model from ModelStore")
+
+            return hp_result is not None
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("ModelStore load failed: %s", exc)
+            return False
 
     # ------------------------------------------------------------------
     # Public interface — matches InfluxMetricsReader protocol
@@ -273,13 +313,26 @@ class ConsumptionForecaster:
         hp_model = GradientBoostingRegressor(
             n_estimators=100, max_depth=3, random_state=42
         )
-        hp_model.fit(X, y_hp)
+        await anyio.to_thread.run_sync(partial(hp_model.fit, X, y_hp))
         hp_preds = hp_model.predict(X)
         hp_rmse = math.sqrt(
             mean_squared_error(y_hp, hp_preds)
         )
         self._heat_pump_model = hp_model
         hp_n = len(y_hp)
+
+        if self._model_store is not None:
+            try:
+                from backend.model_store import ModelMetadata  # noqa: PLC0415
+                self._model_store.save("heat_pump", hp_model, ModelMetadata(
+                    sklearn_version=sklearn.__version__,
+                    numpy_version=numpy.__version__,
+                    trained_at=datetime.now(tz=timezone.utc).isoformat(),
+                    sample_count=hp_n,
+                    feature_names=["outdoor_temp_c", "ewm_temp_3d", "day_of_week", "hour_of_day", "month"],
+                ))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("ModelStore save failed for heat_pump: %s", exc)
 
         # ------------------------------------------------------------------
         # 5. Train DHW model (optional — skip if entity absent)
@@ -296,11 +349,24 @@ class ConsumptionForecaster:
             dhw_model = GradientBoostingRegressor(
                 n_estimators=100, max_depth=3, random_state=42
             )
-            dhw_model.fit(X_dhw, y_dhw)
+            await anyio.to_thread.run_sync(partial(dhw_model.fit, X_dhw, y_dhw))
             dhw_preds = dhw_model.predict(X_dhw)
             dhw_rmse = math.sqrt(mean_squared_error(y_dhw, dhw_preds))
             self._dhw_model = dhw_model
             dhw_n = len(y_dhw)
+
+            if self._model_store is not None:
+                try:
+                    from backend.model_store import ModelMetadata  # noqa: PLC0415
+                    self._model_store.save("dhw", dhw_model, ModelMetadata(
+                        sklearn_version=sklearn.__version__,
+                        numpy_version=numpy.__version__,
+                        trained_at=datetime.now(tz=timezone.utc).isoformat(),
+                        sample_count=dhw_n,
+                        feature_names=["outdoor_temp_c", "ewm_temp_3d", "day_of_week", "hour_of_day", "month"],
+                    ))
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("ModelStore save failed for dhw: %s", exc)
         else:
             self._dhw_model = None
 
@@ -311,11 +377,24 @@ class ConsumptionForecaster:
         base_model = GradientBoostingRegressor(
             n_estimators=100, max_depth=3, random_state=42
         )
-        base_model.fit(X, y_base)
+        await anyio.to_thread.run_sync(partial(base_model.fit, X, y_base))
         base_preds = base_model.predict(X)
         base_rmse = math.sqrt(mean_squared_error(y_base, base_preds))
         self._base_model = base_model
         base_n = len(y_base)
+
+        if self._model_store is not None:
+            try:
+                from backend.model_store import ModelMetadata  # noqa: PLC0415
+                self._model_store.save("base_load", base_model, ModelMetadata(
+                    sklearn_version=sklearn.__version__,
+                    numpy_version=numpy.__version__,
+                    trained_at=datetime.now(tz=timezone.utc).isoformat(),
+                    sample_count=base_n,
+                    feature_names=["outdoor_temp_c", "ewm_temp_3d", "day_of_week", "hour_of_day", "month"],
+                ))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("ModelStore save failed for base_load: %s", exc)
 
         self._last_trained_at = datetime.now(tz=timezone.utc)
 

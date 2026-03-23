@@ -18,6 +18,11 @@ WORKDIR /app
 # System deps: build-base + libffi-dev for bcrypt, gfortran + openblas-dev for sklearn, jq for run.sh
 RUN apk add --no-cache build-base libffi-dev gfortran openblas-dev jq
 
+# Limit OpenMP/BLAS threads to avoid oversubscription in Docker containers
+# (sklearn/numpy default to nproc which sees host CPUs, not cgroup limits)
+ENV OMP_NUM_THREADS=2
+ENV OPENBLAS_NUM_THREADS=2
+
 # Python dependencies
 COPY pyproject.toml .
 RUN pip install --no-cache-dir .

@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -e
 
+# Limit OpenMP/BLAS threads for sklearn/numpy — prevents oversubscription
+# on aarch64 (RPi4) where containers see all host cores.
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-2}"
+export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-2}"
+
 # Read options from /data/options.json (written by HA Supervisor).
 # Optional fields (schema type "str?") may be absent — // "" converts null/absent
 # to empty string so backend env vars are always set (empty = disabled).
