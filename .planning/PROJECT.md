@@ -61,7 +61,16 @@ Both battery systems operate independently with zero oscillation — coordinated
 
 ### Active
 
-(All v1.2 requirements validated — see Validated section above. Next milestone requirements TBD.)
+See REQUIREMENTS.md for v1.3 milestone requirements.
+
+## Current Milestone: v1.3 Intelligent Self-Tuning
+
+**Goal:** Replace manual tuning with data-driven ML models that learn from real usage patterns — better consumption forecasts, self-optimizing control parameters, and early anomaly detection.
+
+**Target features:**
+- Better consumption forecasting with weather, day-of-week, and seasonal features
+- Self-tuning control parameters (dead-bands, ramp rates, min-SoC profiles) from actual usage data
+- Anomaly detection for hardware faults, unusual consumption, and driver behavior drift
 
 ### Out of Scope
 
@@ -138,4 +147,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 ---
-*Last updated: 2026-03-23 after v1.2 milestone*
+*Last updated: 2026-03-23 after v1.3 milestone start*

@@ -1,15 +1,15 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.2
-milestone_name: Home Assistant Best Practice Alignment
-status: v1.2 milestone complete
-stopped_at: Completed 15-01-PLAN.md
-last_updated: "2026-03-23T21:53:47.682Z"
+milestone: v1.3
+milestone_name: Intelligent Self-Tuning
+status: Defining requirements
+stopped_at: null
+last_updated: "2026-03-23T22:00:00.000Z"
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 9
-  completed_plans: 9
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
 ---
 
 # Project State
@@ -19,12 +19,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-23)
 
 **Core value:** Both battery systems operate independently with zero oscillation to maximize PV self-consumption
-**Current focus:** Phase 15 — ha-ingress-support
+**Current focus:** Defining v1.3 requirements
 
 ## Current Position
 
-Phase: 15
-Plan: Not started
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-03-23 — Milestone v1.3 started
 
 ## Performance Metrics
 
