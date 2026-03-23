@@ -1490,8 +1490,20 @@ class TestHaCommandHandler:
             huawei_charge_headroom_w=0, victron_charge_headroom_w=0.0,
             timestamp=time.monotonic(),
         )
-        coord._handle_ha_command("min_soc_huawei", "25")
+        # Run within an event loop so _trigger_state_echo can create_task
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(self._run_command_in_loop(coord))
+        finally:
+            loop.close()
         mock_mqtt.publish.assert_called_once()
+
+    @staticmethod
+    async def _run_command_in_loop(coord):
+        """Helper to run command handler within running event loop."""
+        coord._handle_ha_command("min_soc_huawei", "25")
+        # Allow the created task to execute
+        await asyncio.sleep(0)
 
     def test_ha_command_supervisor_persistence_called(self):
         """Supervisor options persistence called for number entity changes."""

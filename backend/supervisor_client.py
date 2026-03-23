@@ -189,6 +189,46 @@ class SupervisorClient:
         )
         return info
 
+    async def get_addon_options(self) -> dict | None:
+        """Read the current add-on options via the Supervisor API.
+
+        Returns the ``options`` dict, or ``None`` on error.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT) as http:
+                r = await http.get(
+                    f"{_SUPERVISOR_BASE}/addons/self/options",
+                    headers=self._headers,
+                )
+                r.raise_for_status()
+                return r.json().get("data", {}).get("options", {})
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Supervisor: get_addon_options failed — %s", exc)
+            return None
+
+    async def set_addon_options(self, options: dict) -> bool:
+        """Write add-on options via the Supervisor API (read-merge-write).
+
+        Parameters
+        ----------
+        options:
+            Full options dict to write (replaces all options, not partial).
+
+        Returns ``True`` on success, ``False`` on error.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT) as http:
+                r = await http.post(
+                    f"{_SUPERVISOR_BASE}/addons/self/options",
+                    headers=self._headers,
+                    json={"options": options},
+                )
+                r.raise_for_status()
+                return True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Supervisor: set_addon_options failed — %s", exc)
+            return False
+
     async def get_evcc_info(self) -> EvccAddonInfo | None:
         """Discover a running EVCC add-on by scanning installed add-ons.
 
