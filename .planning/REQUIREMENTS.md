@@ -60,26 +60,26 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SCO-01 | - | Pending |
-| SCO-02 | - | Pending |
-| SCO-03 | - | Pending |
-| SCO-04 | - | Pending |
-| MDS-01 | - | Pending |
-| MDS-02 | - | Pending |
-| MDS-03 | - | Pending |
-| MDS-04 | - | Pending |
-| MDS-05 | - | Pending |
-| MDS-06 | - | Pending |
-| MDS-07 | - | Pending |
-| DSH-01 | - | Pending |
-| DSH-02 | - | Pending |
-| DSH-03 | - | Pending |
+| SCO-01 | Phase 7 | Pending |
+| SCO-02 | Phase 7 | Pending |
+| SCO-03 | Phase 8 | Pending |
+| SCO-04 | Phase 7 | Pending |
+| MDS-01 | Phase 9 | Pending |
+| MDS-02 | Phase 10 | Pending |
+| MDS-03 | Phase 10 | Pending |
+| MDS-04 | Phase 10 | Pending |
+| MDS-05 | Phase 10 | Pending |
+| MDS-06 | Phase 9 | Pending |
+| MDS-07 | Phase 10 | Pending |
+| DSH-01 | Phase 11 | Pending |
+| DSH-02 | Phase 11 | Pending |
+| DSH-03 | Phase 11 | Pending |
 
 **Coverage:**
 - v1.1 requirements: 14 total
-- Mapped to phases: 0
-- Unmapped: 14
+- Mapped to phases: 14
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-23*
-*Last updated: 2026-03-23 after initial definition*
+*Last updated: 2026-03-23 after roadmap creation*
