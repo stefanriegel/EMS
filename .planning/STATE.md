@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: milestone
-status: Ready to execute
-stopped_at: Completed 17-01-PLAN.md
-last_updated: "2026-03-23T23:27:30.041Z"
+status: Phase complete — ready for verification
+stopped_at: Completed 17-02-PLAN.md
+last_updated: "2026-03-23T23:39:29.764Z"
 progress:
   total_phases: 4
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 5
-  completed_plans: 4
+  completed_plans: 5
 ---
 
 # Project State
@@ -58,6 +58,7 @@ Plan: 2 of 2
 | Phase 16 P01 | 3min | 1 tasks | 3 files |
 | Phase 16 P03 | 5min | 2 tasks | 5 files |
 | Phase 17 P01 | 8min | 2 tasks | 3 files |
+| Phase 17 P02 | 8min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -78,6 +79,8 @@ Recent decisions affecting current work:
 - [Phase 17]: Used params= instead of fit_params= for cross_val_score (sklearn 1.8+ API)
 - [Phase 17]: HistGBR with native NaN handling for lag features; no imputation needed
 - [Phase 17]: Last outdoor temp from training stored as prediction fallback
+- [Phase 17]: MAPE filters hours where actual < 0.1 kWh to avoid explosion on near-zero values
+- [Phase 17]: MAPE computed fire-and-forget in retrain_if_stale; retrain always proceeds even if MAPE fails
 
 ### Pending Todos
 
@@ -90,6 +93,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-23T23:27:30.038Z
-Stopped at: Completed 17-01-PLAN.md
+Last session: 2026-03-23T23:39:29.761Z
+Stopped at: Completed 17-02-PLAN.md
 Resume file: None

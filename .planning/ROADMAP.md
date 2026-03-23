@@ -20,7 +20,7 @@ Replace manual tuning with data-driven ML models that learn from real usage patt
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 16: ML Infrastructure** - Foundation layer for model persistence, feature extraction, and safe sklearn execution (completed 2026-03-23)
-- [ ] **Phase 17: Consumption Forecaster Upgrade** - Weather-aware forecasting with accuracy tracking and proper validation
+- [x] **Phase 17: Consumption Forecaster Upgrade** - Weather-aware forecasting with accuracy tracking and proper validation (completed 2026-03-23)
 - [ ] **Phase 18: Anomaly Detection** - Nightly anomaly model training with lightweight per-cycle checks and tiered alerts
 - [ ] **Phase 19: Self-Tuning Control** - Data-driven parameter adjustment with shadow mode, bounded changes, and automatic rollback
 
@@ -55,7 +55,7 @@ Plans:
 **Plans**: 2 plans
 Plans:
 - [x] 17-01-PLAN.md — HistGBR migration, weather/lag/calendar features, recency weighting, time-series CV
-- [ ] 17-02-PLAN.md — MAPE tracking, get_ml_status(), /api/ml/status endpoint, main.py wiring
+- [x] 17-02-PLAN.md — MAPE tracking, get_ml_status(), /api/ml/status endpoint, main.py wiring
 
 ### Phase 18: Anomaly Detection
 **Goal**: The system detects unusual consumption patterns, communication failures, and battery behavior drift -- alerting the user without generating false-positive fatigue
@@ -89,6 +89,6 @@ Phases execute in numeric order: 16 -> 17 -> 18 -> 19
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 16. ML Infrastructure | 2/3 | Complete    | 2026-03-23 |
-| 17. Consumption Forecaster Upgrade | 1/2 | In Progress|  |
+| 17. Consumption Forecaster Upgrade | 2/2 | Complete   | 2026-03-23 |
 | 18. Anomaly Detection | 0/? | Not started | - |
 | 19. Self-Tuning Control | 0/? | Not started | - |

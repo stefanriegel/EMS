@@ -21,7 +21,7 @@ Requirements for Intelligent Self-Tuning milestone.
 - [x] **FCST-02**: Lagged consumption features — 24h and 168h (1 week) ago as predictors
 - [x] **FCST-03**: Calendar features — day-of-week encoding, optional holiday detection
 - [x] **FCST-04**: Migrate to HistGradientBoostingRegressor with native NaN handling and early stopping
-- [ ] **FCST-05**: MAPE tracking — compute and log forecast accuracy after each day, expose via API
+- [x] **FCST-05**: MAPE tracking — compute and log forecast accuracy after each day, expose via API
 - [x] **FCST-06**: Recency-weighted training — recent data weighted higher than old data
 - [x] **FCST-07**: Time-series cross-validation — expanding window CV instead of random split
 
@@ -79,7 +79,7 @@ Requirements for Intelligent Self-Tuning milestone.
 | FCST-02 | Phase 17 | Complete |
 | FCST-03 | Phase 17 | Complete |
 | FCST-04 | Phase 17 | Complete |
-| FCST-05 | Phase 17 | Pending |
+| FCST-05 | Phase 17 | Complete |
 | FCST-06 | Phase 17 | Complete |
 | FCST-07 | Phase 17 | Complete |
 | ANOM-01 | Phase 18 | Pending |
