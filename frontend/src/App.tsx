@@ -11,9 +11,8 @@
  *      the "⚠ Disconnected" banner when the WS is down.
  *
  * Routing:
- *   - On first run (GET /api/setup/status → setup_complete: false), the app
- *     auto-redirects to /setup.
- *   - /setup renders SetupWizard; / renders the main dashboard.
+ *   - /login renders the Login page; / renders the main dashboard.
+ *   - If the backend returns 401, the app redirects to /login.
  */
 import React, { useState, useEffect } from "react";
 import { Route, Switch, useLocation } from "wouter";
@@ -30,7 +29,6 @@ import { LoadsCard } from "./components/LoadsCard";
 import { useDecisions } from "./hooks/useDecisions";
 import { useForecast } from "./hooks/useForecast";
 import { ForecastCard } from "./components/ForecastCard";
-import { SetupWizard } from "./pages/SetupWizard";
 import { Login } from "./pages/Login";
 import type { PoolState, DevicesPayload } from "./types";
 
@@ -137,38 +135,27 @@ function DashboardLayout() {
 }
 
 /**
- * App — SPA root. Handles auto-redirect to /setup on first run, then
- * delegates to route-matched components.
+ * App — SPA root. Redirects to /login on 401, otherwise renders dashboard.
  */
 export default function App() {
   const [, setLocation] = useLocation();
 
-  // On mount: check setup status. If not complete, redirect to /setup.
+  // On mount: check auth status. If 401, redirect to /login.
   // Silently ignore errors (no backend in preview/test environment).
   useEffect(() => {
-    fetch("/api/setup/status")
+    fetch("/api/state")
       .then((r) => {
         if (r.status === 401) {
           setLocation("/login");
-          return null;
-        }
-        return r.json();
-      })
-      .then((data: { setup_complete: boolean } | null) => {
-        if (data && !data.setup_complete) {
-          setLocation("/setup");
         }
       })
       .catch(() => {
-        // No backend available (preview/test environment) — stay on current route.
+        // No backend available (preview/test environment)
       });
   }, [setLocation]);
 
   return (
     <Switch>
-      <Route path="/setup">
-        <SetupWizard />
-      </Route>
       <Route path="/login">
         <Login />
       </Route>
