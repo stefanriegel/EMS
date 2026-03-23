@@ -60,7 +60,7 @@ Plans:
 Plans:
 - [ ] 13-01-PLAN.md — Entity model refactor with best-practice discovery payloads (LWT, origin, three devices, naming)
 - [ ] 13-02-PLAN.md — Binary sensor entities and platform migration cleanup
-- [ ] 13-03-PLAN.md — Add-on translations audit and completion
+- [x] 13-03-PLAN.md — Add-on translations audit and completion
 
 ### Phase 14: Controllable Entities
 **Goal**: Users can control EMS parameters and modes directly from HA UI, automations, and scripts
@@ -94,6 +94,6 @@ Phases execute in numeric order: 12 -> 13 -> 14 -> 15
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 12. Wizard Removal | v1.2 | 2/2 | Complete    | 2026-03-23 |
-| 13. MQTT Discovery Overhaul | v1.2 | 0/3 | Not started | - |
+| 13. MQTT Discovery Overhaul | v1.2 | 1/3 | In Progress|  |
 | 14. Controllable Entities | v1.2 | 0/TBD | Not started | - |
 | 15. HA Ingress Support | v1.2 | 0/TBD | Not started | - |

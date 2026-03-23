@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Home Assistant Best Practice Alignment
-status: Ready to plan
-stopped_at: Completed 12-01-PLAN.md
-last_updated: "2026-03-23T17:09:50.173Z"
+status: Ready to execute
+stopped_at: Completed 13-03-PLAN.md
+last_updated: "2026-03-23T17:58:12.550Z"
 progress:
   total_phases: 4
   completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
+  total_plans: 5
+  completed_plans: 3
 ---
 
 # Project State
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-23)
 
 **Core value:** Both battery systems operate independently with zero oscillation to maximize PV self-consumption
-**Current focus:** Phase 12 — wizard-removal
+**Current focus:** Phase 13 — mqtt-discovery-overhaul
 
 ## Current Position
 
-Phase: 13
-Plan: Not started
+Phase: 13 (mqtt-discovery-overhaul) — EXECUTING
+Plan: 2 of 3
 
 ## Performance Metrics
 
@@ -55,6 +55,7 @@ Plan: Not started
 | Phase 07-11 | 10 | 3.3 min |
 | Phase 12 P02 | 1min | 1 tasks | 2 files |
 | Phase 12 P01 | 3 | 2 tasks | 6 files |
+| Phase 13 P03 | 1min | 1 tasks | 0 files |
 
 ## Accumulated Context
 
@@ -71,6 +72,7 @@ Recent decisions affecting current work:
 - [Phase 12]: Auth check moved from /api/setup/status to /api/state for frontend redirect
 - [Phase 12]: Kept EMS_CONFIG_PATH in run.sh for JWT secret directory resolution
 - [Phase 12]: Env-var-only config: no ems_config.json fallback, Add-on options are sole config surface
+- [Phase 13]: en.yaml already covered all 40 config and schema keys -- no changes needed
 
 ### Pending Todos
 
@@ -84,6 +86,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-23T17:06:23.967Z
-Stopped at: Completed 12-01-PLAN.md
+Last session: 2026-03-23T17:58:12.547Z
+Stopped at: Completed 13-03-PLAN.md
 Resume file: None

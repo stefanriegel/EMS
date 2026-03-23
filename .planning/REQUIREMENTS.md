@@ -27,7 +27,7 @@ Requirements for Home Assistant Best Practice Alignment milestone.
 - [ ] **DISC-10**: Three HA devices — EMS Huawei, EMS Victron, EMS System — with entities grouped by physical device
 - [ ] **DISC-11**: Platform migration cleanup — empty retained payloads to old sensor topics before new binary_sensor publication
 - [ ] **DISC-12**: Existing `unique_id` values preserved — no breaking changes for existing HA dashboards/automations
-- [ ] **DISC-13**: Add-on `translations/en.yaml` with human-readable names and descriptions for all config options
+- [x] **DISC-13**: Add-on `translations/en.yaml` with human-readable names and descriptions for all config options
 
 ### Controllable Entities
 
@@ -90,7 +90,7 @@ Requirements for Home Assistant Best Practice Alignment milestone.
 | DISC-10 | Phase 13 | Pending |
 | DISC-11 | Phase 13 | Pending |
 | DISC-12 | Phase 13 | Pending |
-| DISC-13 | Phase 13 | Pending |
+| DISC-13 | Phase 13 | Complete |
 | CTRL-01 | Phase 14 | Pending |
 | CTRL-02 | Phase 14 | Pending |
 | CTRL-03 | Phase 14 | Pending |
