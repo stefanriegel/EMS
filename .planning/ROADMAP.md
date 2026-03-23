@@ -52,7 +52,10 @@ Plans:
   3. After each day, the system computes and logs MAPE (mean absolute percentage error) comparing predicted vs actual consumption, visible via /api/ml/status
   4. The model uses HistGradientBoostingRegressor with native NaN handling so missing weather or lag data does not crash training
   5. Training uses expanding-window time-series cross-validation with recency weighting, not random splits
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [ ] 17-01-PLAN.md — HistGBR migration, weather/lag/calendar features, recency weighting, time-series CV
+- [ ] 17-02-PLAN.md — MAPE tracking, get_ml_status(), /api/ml/status endpoint, main.py wiring
 
 ### Phase 18: Anomaly Detection
 **Goal**: The system detects unusual consumption patterns, communication failures, and battery behavior drift -- alerting the user without generating false-positive fatigue
@@ -86,6 +89,6 @@ Phases execute in numeric order: 16 -> 17 -> 18 -> 19
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 16. ML Infrastructure | 2/3 | Complete    | 2026-03-23 |
-| 17. Consumption Forecaster Upgrade | 0/? | Not started | - |
+| 17. Consumption Forecaster Upgrade | 0/2 | Not started | - |
 | 18. Anomaly Detection | 0/? | Not started | - |
 | 19. Self-Tuning Control | 0/? | Not started | - |
