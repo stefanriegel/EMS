@@ -89,6 +89,6 @@ Phases execute in numeric order: 16 -> 17 -> 18 -> 19
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 16. ML Infrastructure | 2/3 | Complete    | 2026-03-23 |
-| 17. Consumption Forecaster Upgrade | 2/2 | Complete   | 2026-03-23 |
+| 17. Consumption Forecaster Upgrade | 2/2 | Complete    | 2026-03-23 |
 | 18. Anomaly Detection | 0/? | Not started | - |
 | 19. Self-Tuning Control | 0/? | Not started | - |
