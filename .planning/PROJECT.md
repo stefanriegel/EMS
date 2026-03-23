@@ -83,7 +83,7 @@ See REQUIREMENTS.md for v1.2 milestone requirements.
 
 ## Current State
 
-**v1.2 in progress.** Phase 13 (MQTT Discovery Overhaul) complete — EntityDefinition model, 3 HA devices, LWT availability, binary sensors, origin metadata, translations.
+**v1.2 in progress.** Phase 14 (Controllable Entities) complete — MQTT subscribe infrastructure, 5 number + 1 select + 2 button entities, coordinator command handler with mode override and auto-timeout.
 
 **Codebase:**
 - Backend: ~11,200 LOC Python (FastAPI, pymodbus, paho-mqtt)
@@ -144,4 +144,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 ---
-*Last updated: 2026-03-23 after Phase 13 completion*
+*Last updated: 2026-03-23 after Phase 14 completion*
