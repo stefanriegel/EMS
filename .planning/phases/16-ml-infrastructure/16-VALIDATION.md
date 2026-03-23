@@ -2,8 +2,8 @@
 phase: 16
 slug: ml-infrastructure
 status: draft
-nyquist_compliant: false
-wave_0_complete: false
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-03-23
 ---
 
@@ -41,8 +41,8 @@ created: 2026-03-23
 | 16-01-01 | 01 | 1 | INFRA-01 | unit | `python -m pytest tests/test_model_store.py -q` | ❌ W0 | ⬜ pending |
 | 16-01-02 | 01 | 1 | INFRA-02 | unit | `python -m pytest tests/test_model_store.py -q -k version` | ❌ W0 | ⬜ pending |
 | 16-02-01 | 02 | 1 | INFRA-03 | unit | `python -m pytest tests/test_feature_pipeline.py -q` | ❌ W0 | ⬜ pending |
-| 16-03-01 | 03 | 1 | INFRA-04 | unit | `python -m pytest tests/test_training_executor.py -q` | ❌ W0 | ⬜ pending |
-| 16-04-01 | 04 | 2 | INFRA-05 | integration | `grep OMP_NUM_THREADS Dockerfile` | ✅ | ⬜ pending |
+| 16-03-01 | 03 | 2 | INFRA-03 | integration | `grep -n "OMP_NUM_THREADS" Dockerfile ha-addon/run.sh` | ✅ | ⬜ pending |
+| 16-03-02 | 03 | 2 | INFRA-04 | unit | `python -m pytest tests/test_consumption_forecaster.py -q` | ✅ | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -52,7 +52,7 @@ created: 2026-03-23
 
 - [ ] `tests/test_model_store.py` — stubs for INFRA-01, INFRA-02
 - [ ] `tests/test_feature_pipeline.py` — stubs for INFRA-03
-- [ ] `tests/test_training_executor.py` — stubs for INFRA-04
+- [ ] `tests/test_consumption_forecaster.py` — extended with executor tests for INFRA-04 (file exists)
 
 *Existing pytest infrastructure covers framework requirements.*
 
