@@ -49,11 +49,15 @@ Both battery systems operate independently with zero oscillation — coordinated
 - ✓ HA Add-on config schema with Victron unit IDs, coordinator tuning, and Modul3 tariff fields — Phase 6
 - ✓ Setup wizard backend migrated from Victron MQTT to Modbus TCP with pymodbus probe — Phase 6
 - ✓ Setup wizard frontend with Advanced unit ID toggle and Modul3 tariff fields — Phase 6
+- ✓ ExportAdvisor with forward-looking consumption reserve and feed-in rate config — Phase 7
+- ✓ EXPORTING battery role with seasonal min-SoC boost (winter priority) — Phase 8
+- ✓ Multi-day solar forecast (EVCC + Open-Meteo fallback) and 72h consumption prediction — Phase 9
+- ✓ WeatherScheduler with DayPlan model, confidence weighting, intra-day re-planning — Phase 10
+- ✓ Dashboard export indicator, solar forecast card, multi-day charge schedule view — Phase 11
 
 ### Active
 
-- [ ] Grid export optimization with fixed feed-in tariff arbitrage
-- [ ] Multi-day weather-aware charge scheduling (2-3 day horizon)
+(All v1.1 requirements validated — see Validated section above. Next milestone requirements TBD.)
 
 ### Out of Scope
 
@@ -63,19 +67,9 @@ Both battery systems operate independently with zero oscillation — coordinated
 - Third-party battery brands — Huawei + Victron only for v1
 - Victron MQTT control — replaced by Modbus TCP
 
-## Current Milestone: v1.1 Advanced Optimization
-
-**Goal:** Maximize economic value through grid export arbitrage against a fixed feed-in tariff and multi-day weather-aware scheduling
-
-**Target features:**
-- Grid export optimization — compare fixed feed-in rate against current/upcoming import rate to decide export vs. store; actively export when batteries full and PV producing; factor in upcoming consumption to avoid export-then-buyback
-- Multi-day scheduling — extend nightly scheduler to 2-3 day weather horizon; charge more before cloudy stretches, defer grid charge when sunny days ahead
-
-**Key context:** Fixed feed-in rate (single EUR/kWh, not time-varying). Builds on existing tariff engine, consumption forecaster, and scheduler.
-
 ## Current State
 
-**v1.0 shipped 2026-03-23.** Complete rewrite from unified orchestrator to independent dual-battery controllers.
+**v1.1 shipped 2026-03-23.** Advanced optimization with grid export management and multi-day weather-aware scheduling.
 
 **Codebase:**
 - Backend: ~11,200 LOC Python (FastAPI, pymodbus, paho-mqtt)
@@ -135,4 +129,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 ---
-*Last updated: 2026-03-23 after v1.1 milestone start*
+*Last updated: 2026-03-23 after v1.1 milestone*
