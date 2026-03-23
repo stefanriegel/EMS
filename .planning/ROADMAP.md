@@ -74,7 +74,7 @@ Plans:
   5. MQTT subscribe infrastructure survives paho reconnects without silent thread crash
 **Plans**: 2 plans
 Plans:
-- [ ] 14-01-PLAN.md — MQTT subscribe infrastructure, entity definitions, and defensive paho threading
+- [x] 14-01-PLAN.md — MQTT subscribe infrastructure, entity definitions, and defensive paho threading
 - [ ] 14-02-PLAN.md — Coordinator command handler, mode override, Supervisor persistence, and main.py wiring
 
 ### Phase 15: HA Ingress Support
@@ -98,5 +98,5 @@ Phases execute in numeric order: 12 -> 13 -> 14 -> 15
 |-------|-----------|----------------|--------|-----------|
 | 12. Wizard Removal | v1.2 | 2/2 | Complete    | 2026-03-23 |
 | 13. MQTT Discovery Overhaul | v1.2 | 3/3 | Complete    | 2026-03-23 |
-| 14. Controllable Entities | v1.2 | 0/2 | Not started | - |
+| 14. Controllable Entities | v1.2 | 1/2 | In Progress|  |
 | 15. HA Ingress Support | v1.2 | 0/TBD | Not started | - |

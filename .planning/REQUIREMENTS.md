@@ -31,17 +31,17 @@ Requirements for Home Assistant Best Practice Alignment milestone.
 
 ### Controllable Entities
 
-- [ ] **CTRL-01**: MQTT subscribe infrastructure — EMS listens on command topics for bidirectional control
-- [ ] **CTRL-02**: Number entity for Huawei min-SoC (10-100%, step 5, slider mode)
-- [ ] **CTRL-03**: Number entity for Victron min-SoC (10-100%, step 5, slider mode)
-- [ ] **CTRL-04**: Number entity for Huawei dead-band (50-1000W, step 50, box mode)
-- [ ] **CTRL-05**: Number entity for Victron dead-band (50-500W, step 50, box mode)
-- [ ] **CTRL-06**: Number entity for ramp rate (100-2000W, step 100, box mode)
-- [ ] **CTRL-07**: Select entity for control mode (AUTO, HOLD, GRID_CHARGE, DISCHARGE_LOCKED)
-- [ ] **CTRL-08**: Button entity for Force Grid Charge with auto-timeout
-- [ ] **CTRL-09**: Button entity for Reset to Auto
+- [x] **CTRL-01**: MQTT subscribe infrastructure — EMS listens on command topics for bidirectional control
+- [x] **CTRL-02**: Number entity for Huawei min-SoC (10-100%, step 5, slider mode)
+- [x] **CTRL-03**: Number entity for Victron min-SoC (10-100%, step 5, slider mode)
+- [x] **CTRL-04**: Number entity for Huawei dead-band (50-1000W, step 50, box mode)
+- [x] **CTRL-05**: Number entity for Victron dead-band (50-500W, step 50, box mode)
+- [x] **CTRL-06**: Number entity for ramp rate (100-2000W, step 100, box mode)
+- [x] **CTRL-07**: Select entity for control mode (AUTO, HOLD, GRID_CHARGE, DISCHARGE_LOCKED)
+- [x] **CTRL-08**: Button entity for Force Grid Charge with auto-timeout
+- [x] **CTRL-09**: Button entity for Reset to Auto
 - [ ] **CTRL-10**: State echo — after processing a command, publish updated state on state_topic
-- [ ] **CTRL-11**: Defensive paho threading — wrap subscribe in try/except, periodic health check for silent thread crash
+- [x] **CTRL-11**: Defensive paho threading — wrap subscribe in try/except, periodic health check for silent thread crash
 
 ### Ingress
 
@@ -91,17 +91,17 @@ Requirements for Home Assistant Best Practice Alignment milestone.
 | DISC-11 | Phase 13 | Complete |
 | DISC-12 | Phase 13 | Complete |
 | DISC-13 | Phase 13 | Complete |
-| CTRL-01 | Phase 14 | Pending |
-| CTRL-02 | Phase 14 | Pending |
-| CTRL-03 | Phase 14 | Pending |
-| CTRL-04 | Phase 14 | Pending |
-| CTRL-05 | Phase 14 | Pending |
-| CTRL-06 | Phase 14 | Pending |
-| CTRL-07 | Phase 14 | Pending |
-| CTRL-08 | Phase 14 | Pending |
-| CTRL-09 | Phase 14 | Pending |
+| CTRL-01 | Phase 14 | Complete |
+| CTRL-02 | Phase 14 | Complete |
+| CTRL-03 | Phase 14 | Complete |
+| CTRL-04 | Phase 14 | Complete |
+| CTRL-05 | Phase 14 | Complete |
+| CTRL-06 | Phase 14 | Complete |
+| CTRL-07 | Phase 14 | Complete |
+| CTRL-08 | Phase 14 | Complete |
+| CTRL-09 | Phase 14 | Complete |
 | CTRL-10 | Phase 14 | Pending |
-| CTRL-11 | Phase 14 | Pending |
+| CTRL-11 | Phase 14 | Complete |
 | INGR-01 | Phase 15 | Pending |
 | INGR-02 | Phase 15 | Pending |
 | INGR-03 | Phase 15 | Pending |

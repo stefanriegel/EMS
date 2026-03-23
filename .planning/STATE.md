@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Home Assistant Best Practice Alignment
-status: Ready to plan
-stopped_at: Completed 13-02-PLAN.md
-last_updated: "2026-03-23T18:13:20.844Z"
+status: Ready to execute
+stopped_at: Completed 14-01-PLAN.md
+last_updated: "2026-03-23T20:56:59.301Z"
 progress:
   total_phases: 4
   completed_phases: 2
-  total_plans: 5
-  completed_plans: 5
+  total_plans: 7
+  completed_plans: 6
 ---
 
 # Project State
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-23)
 
 **Core value:** Both battery systems operate independently with zero oscillation to maximize PV self-consumption
-**Current focus:** Phase 13 — mqtt-discovery-overhaul
+**Current focus:** Phase 14 — controllable-entities
 
 ## Current Position
 
-Phase: 14
-Plan: Not started
+Phase: 14 (controllable-entities) — EXECUTING
+Plan: 2 of 2
 
 ## Performance Metrics
 
@@ -58,6 +58,7 @@ Plan: Not started
 | Phase 13 P03 | 1min | 1 tasks | 0 files |
 | Phase 13 P01 | 5min | 1 tasks | 2 files |
 | Phase 13 P02 | 5min | 1 tasks | 4 files |
+| Phase 14 P01 | 4min | 1 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -78,6 +79,7 @@ Recent decisions affecting current work:
 - [Phase 13]: Replaced device_name with configuration_url constructor param for HA device info
 - [Phase 13]: Used get_running_loop() instead of get_event_loop() for trio compatibility
 - [Phase 13]: Derived export_active from control_state == EXPORTING (no ExportAdvisor.should_export() method)
+- [Phase 14]: Extended EntityDefinition with optional fields for controllable entities (backward compatible)
 
 ### Pending Todos
 
@@ -91,6 +93,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-23T18:10:07.687Z
-Stopped at: Completed 13-02-PLAN.md
+Last session: 2026-03-23T20:56:59.298Z
+Stopped at: Completed 14-01-PLAN.md
 Resume file: None
