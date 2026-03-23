@@ -447,6 +447,33 @@ def get_metrics_reader(request: Request) -> InfluxMetricsReader | None:
 
 
 # ---------------------------------------------------------------------------
+# ML forecaster dependency
+# ---------------------------------------------------------------------------
+
+
+def get_forecaster(request: Request):
+    """FastAPI dependency that returns the running :class:`ConsumptionForecaster`.
+
+    Reads ``request.app.state.consumption_forecaster`` via :func:`getattr` so
+    it gracefully returns ``None`` if the attribute was never set (e.g. in
+    tests that don't wire up the forecaster).  Tests override this via::
+
+        app.dependency_overrides[get_forecaster] = lambda: mock_forecaster
+    """
+    return getattr(request.app.state, "consumption_forecaster", None)
+
+
+@api_router.get("/ml/status")
+async def get_ml_status(
+    forecaster=Depends(get_forecaster),
+) -> dict[str, Any]:
+    """Return ML model status, training info, and MAPE history."""
+    if forecaster is None:
+        raise HTTPException(status_code=503, detail="ML forecaster not available")
+    return forecaster.get_ml_status()
+
+
+# ---------------------------------------------------------------------------
 # Scheduler dependency
 # ---------------------------------------------------------------------------
 
