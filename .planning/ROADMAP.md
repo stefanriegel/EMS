@@ -89,7 +89,7 @@ Plans:
 **Plans**: 2 plans
 Plans:
 - [ ] 15-01-PLAN.md — Backend Ingress: config.yaml fields, IngressMiddleware, auth bypass
-- [ ] 15-02-PLAN.md — Frontend Ingress: Vite relative base, dynamic WS URL, relative fetch paths
+- [x] 15-02-PLAN.md — Frontend Ingress: Vite relative base, dynamic WS URL, relative fetch paths
 **UI hint**: yes
 
 ## Progress
@@ -102,4 +102,4 @@ Phases execute in numeric order: 12 -> 13 -> 14 -> 15
 | 12. Wizard Removal | v1.2 | 2/2 | Complete    | 2026-03-23 |
 | 13. MQTT Discovery Overhaul | v1.2 | 3/3 | Complete    | 2026-03-23 |
 | 14. Controllable Entities | v1.2 | 2/2 | Complete    | 2026-03-23 |
-| 15. HA Ingress Support | v1.2 | 0/2 | Not started | - |
+| 15. HA Ingress Support | v1.2 | 1/2 | In Progress|  |

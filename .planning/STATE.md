@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Home Assistant Best Practice Alignment
-status: Ready to plan
-stopped_at: Completed 14-02-PLAN.md
-last_updated: "2026-03-23T21:06:53.867Z"
+status: Ready to execute
+stopped_at: Completed 15-02-PLAN.md
+last_updated: "2026-03-23T21:31:56.526Z"
 progress:
   total_phases: 4
   completed_phases: 3
-  total_plans: 7
-  completed_plans: 7
+  total_plans: 9
+  completed_plans: 8
 ---
 
 # Project State
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-23)
 
 **Core value:** Both battery systems operate independently with zero oscillation to maximize PV self-consumption
-**Current focus:** Phase 14 — controllable-entities
+**Current focus:** Phase 15 — ha-ingress-support
 
 ## Current Position
 
-Phase: 15
-Plan: Not started
+Phase: 15 (ha-ingress-support) — EXECUTING
+Plan: 2 of 2
 
 ## Performance Metrics
 
@@ -60,6 +60,7 @@ Plan: Not started
 | Phase 13 P02 | 5min | 1 tasks | 4 files |
 | Phase 14 P01 | 4min | 1 tasks | 2 files |
 | Phase 14 P02 | 4min | 2 tasks | 4 files |
+| Phase 15 P02 | 1min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -83,6 +84,7 @@ Recent decisions affecting current work:
 - [Phase 14]: Extended EntityDefinition with optional fields for controllable entities (backward compatible)
 - [Phase 14]: Mode override checked after EVCC hold but before grid charge slot detection in control loop
 - [Phase 14]: Supervisor persistence is fire-and-forget to never block command handling
+- [Phase 15]: Used new URL('./api/ws/state', location.href) for dynamic WS URL under Ingress
 
 ### Pending Todos
 
@@ -96,6 +98,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-23T21:03:40.635Z
-Stopped at: Completed 14-02-PLAN.md
+Last session: 2026-03-23T21:31:56.524Z
+Stopped at: Completed 15-02-PLAN.md
 Resume file: None
