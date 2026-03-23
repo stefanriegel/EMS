@@ -9,7 +9,7 @@
  * Renders "No schedule available" when optimization is null (scheduler not
  * yet started, or no active schedule computed).
  */
-import type { OptimizationPayload } from "../types";
+import type { OptimizationPayload, DayPlanPayload } from "../types";
 
 interface Props {
   optimization: OptimizationPayload | null;
@@ -124,6 +124,54 @@ export function OptimizationCard({ optimization }: Props) {
                 Error {optimization.forecast_comparison.error_pct.toFixed(1)}%
               </span>
             </div>
+          )}
+
+          {optimization.day_plans && optimization.day_plans.length > 0 && (
+            <details className="opt-day-plans">
+              <summary>Multi-Day Outlook</summary>
+              {optimization.day_plans.map((dp: DayPlanPayload) => {
+                const dayLabel =
+                  dp.day_index === 0
+                    ? "Today"
+                    : dp.day_index === 1
+                    ? "Tomorrow"
+                    : new Date(dp.date + "T12:00:00").toLocaleDateString([], {
+                        weekday: "short",
+                      });
+                const isPositive = dp.net_kwh >= 0;
+                return (
+                  <div key={dp.date} className="opt-dayplan-row">
+                    <span className="opt-dayplan-label">{dayLabel}</span>
+                    <span className="opt-dayplan-metric">
+                      {dp.solar_kwh.toFixed(1)} kWh
+                    </span>
+                    <span className="opt-dayplan-metric">
+                      {dp.consumption_kwh.toFixed(1)} kWh
+                    </span>
+                    <span
+                      className={`opt-dayplan-metric ${
+                        isPositive
+                          ? "forecast-net--surplus"
+                          : "forecast-net--deficit"
+                      }`}
+                    >
+                      {dp.net_kwh.toFixed(1)} kWh
+                    </span>
+                    {dp.charge_target_kwh > 0 && (
+                      <span className="opt-dayplan-metric">
+                        {dp.charge_target_kwh.toFixed(1)} kWh
+                      </span>
+                    )}
+                    {dp.advisory && (
+                      <span className="opt-dayplan-advisory">Advisory</span>
+                    )}
+                    <span className="forecast-confidence">
+                      {(dp.confidence * 100).toFixed(0)}%
+                    </span>
+                  </div>
+                );
+              })}
+            </details>
           )}
         </>
       )}

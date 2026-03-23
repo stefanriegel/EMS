@@ -28,6 +28,8 @@ import { OptimizationCard } from "./components/OptimizationCard";
 import { EvccCard } from "./components/EvccCard";
 import { LoadsCard } from "./components/LoadsCard";
 import { useDecisions } from "./hooks/useDecisions";
+import { useForecast } from "./hooks/useForecast";
+import { ForecastCard } from "./components/ForecastCard";
 import { SetupWizard } from "./pages/SetupWizard";
 import { Login } from "./pages/Login";
 import type { PoolState, DevicesPayload } from "./types";
@@ -70,6 +72,7 @@ function DashboardLayout() {
   const ws = useEmsSocket(WS_URL);
   const useFallback = !ws.connected && ws.retryCount > 0;
   const decisions = useDecisions(20, 30_000);
+  const forecast = useForecast(60_000);
 
   const [fbPool, setFbPool] = useState<PoolState | null>(null);
   const [fbDevices, setFbDevices] = useState<DevicesPayload | null>(null);
@@ -114,6 +117,7 @@ function DashboardLayout() {
           <BatteryStatus pool={pool} devices={devices} connected={ws.connected} />
           <DecisionLog decisions={decisions} />
           <OptimizationCard optimization={optimization} />
+          <ForecastCard forecast={forecast} />
           <TariffCard tariff={tariff} />
           <LoadsCard loads={loads} />
           <EvccCard

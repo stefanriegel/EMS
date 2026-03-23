@@ -1133,3 +1133,48 @@ html, body {
   opacity: 0.6;
 }
 
+/* ── Optimization day plans ───────────────────────────────────────────── */
+
+.opt-day-plans {
+  margin-top: 0.75rem;
+}
+
+.opt-day-plans summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.opt-dayplan-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+  font-size: 0.78rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.opt-dayplan-row:last-child {
+  border-bottom: none;
+}
+
+.opt-dayplan-label {
+  min-width: 70px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.opt-dayplan-metric {
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+}
+
+.opt-dayplan-advisory {
+  font-size: 0.65rem;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(139, 92, 246, 0.15);
+  color: var(--color-victron);
+}
+
