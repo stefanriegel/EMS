@@ -86,7 +86,10 @@ Plans:
   2. WebSocket state updates work through both Ingress and direct port access simultaneously
   3. Ingress requests bypass JWT authentication (trusted by HA session), while direct port access still requires login
   4. All frontend routes, API calls, and static assets work with relative paths under both access methods
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [ ] 15-01-PLAN.md — Backend Ingress: config.yaml fields, IngressMiddleware, auth bypass
+- [ ] 15-02-PLAN.md — Frontend Ingress: Vite relative base, dynamic WS URL, relative fetch paths
 **UI hint**: yes
 
 ## Progress
@@ -99,4 +102,4 @@ Phases execute in numeric order: 12 -> 13 -> 14 -> 15
 | 12. Wizard Removal | v1.2 | 2/2 | Complete    | 2026-03-23 |
 | 13. MQTT Discovery Overhaul | v1.2 | 3/3 | Complete    | 2026-03-23 |
 | 14. Controllable Entities | v1.2 | 2/2 | Complete    | 2026-03-23 |
-| 15. HA Ingress Support | v1.2 | 0/TBD | Not started | - |
+| 15. HA Ingress Support | v1.2 | 0/2 | Not started | - |
