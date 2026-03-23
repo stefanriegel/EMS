@@ -532,7 +532,7 @@ class ConsumptionForecaster:
                 y_hp,
                 cv=TimeSeriesSplit(n_splits=5),
                 scoring="neg_mean_absolute_percentage_error",
-                fit_params={"sample_weight": weights},
+                params={"sample_weight": weights},
             )
             logger.info(
                 "CV scores heat_pump (neg_MAPE): mean=%.1f%% std=%.1f%%",
@@ -601,7 +601,7 @@ class ConsumptionForecaster:
                     y_dhw,
                     cv=TimeSeriesSplit(n_splits=5),
                     scoring="neg_mean_absolute_percentage_error",
-                    fit_params={"sample_weight": dhw_weights},
+                    params={"sample_weight": dhw_weights},
                 )
                 logger.info(
                     "CV scores dhw (neg_MAPE): mean=%.1f%% std=%.1f%%",
@@ -663,7 +663,7 @@ class ConsumptionForecaster:
                 y_base,
                 cv=TimeSeriesSplit(n_splits=5),
                 scoring="neg_mean_absolute_percentage_error",
-                fit_params={"sample_weight": weights},
+                params={"sample_weight": weights},
             )
             logger.info(
                 "CV scores base_load (neg_MAPE): mean=%.1f%% std=%.1f%%",
