@@ -7,7 +7,7 @@ environment set.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 def _require_env(key: str) -> str:
@@ -183,6 +183,12 @@ class SystemConfig:
 
     feed_in_rate_eur_kwh: float = 0.074
     """Fixed feed-in tariff rate in EUR/kWh (default 7.4 ct/kWh)."""
+
+    winter_months: list[int] = field(default_factory=lambda: [11, 12, 1, 2])
+    """Months considered winter for seasonal strategy (1=Jan, 12=Dec)."""
+
+    winter_min_soc_boost_pct: int = 10
+    """Additional min-SoC percentage added during winter months."""
 
 
 @dataclass

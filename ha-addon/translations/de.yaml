@@ -187,6 +187,14 @@ configuration:
     name: Einspeiseverguetung (EUR/kWh)
     description: Feste Einspeiseverguetung. Standard 0,074 (7,4 ct/kWh, EEG-Verguetung).
 
+  # --- Saisonale Strategie ---
+  winter_months:
+    name: Wintermonate
+    description: Kommagetrennte Monatsnummern fuer Wintersaison (1=Jan, 12=Dez). Standard "11,12,1,2".
+  winter_min_soc_boost_pct:
+    name: Winter Min-SoC Erhoehung (%)
+    description: Zusaetzlicher Min-SoC-Prozentsatz waehrend der Wintermonate fuer hoehere Batteriereserve. Standard 10.
+
   # --- Logging ---
   log_level:
     name: Log-Level

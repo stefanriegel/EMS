@@ -186,6 +186,14 @@ configuration:
     name: Feed-in Rate (EUR/kWh)
     description: Fixed grid feed-in tariff rate. Default 0.074 (7.4 ct/kWh, German EEG rate).
 
+  # --- Seasonal strategy ---
+  winter_months:
+    name: Winter Months
+    description: Comma-separated month numbers for winter season (1=Jan, 12=Dec). Default "11,12,1,2".
+  winter_min_soc_boost_pct:
+    name: Winter Min-SoC Boost (%)
+    description: Additional min-SoC percentage during winter months to prioritize battery reserves. Default 10.
+
   # --- Logging ---
   log_level:
     name: Log Level

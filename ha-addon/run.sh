@@ -113,6 +113,12 @@ _m3_dr=$(get_option 'modul3_deficit_rate_eur_kwh')
 _feed_in=$(get_option 'feed_in_rate_eur_kwh')
 [ -n "$_feed_in" ] && export FEED_IN_RATE_EUR_KWH="$_feed_in"
 
+# --- Seasonal strategy ---
+_winter_months=$(get_option 'winter_months')
+[ -n "$_winter_months" ] && export WINTER_MONTHS="$_winter_months"
+_winter_boost=$(get_option 'winter_min_soc_boost_pct')
+[ -n "$_winter_boost" ] && export WINTER_MIN_SOC_BOOST_PCT="$_winter_boost"
+
 # --- Logging ---
 export LOG_LEVEL=$(get_option 'log_level')
 

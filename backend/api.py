@@ -114,6 +114,14 @@ class SystemConfigRequest(BaseModel):
         default=0.074, ge=0.0,
         description="Fixed feed-in tariff rate in EUR/kWh.",
     )
+    winter_months: list[int] = Field(
+        default=[11, 12, 1, 2],
+        description="Months considered winter for seasonal strategy (1=Jan, 12=Dec).",
+    )
+    winter_min_soc_boost_pct: int = Field(
+        default=10, ge=0, le=50,
+        description="Additional min-SoC percentage added during winter months.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -290,6 +298,8 @@ async def post_config(
         huawei_feed_in_allowed=body.huawei_feed_in_allowed,
         victron_feed_in_allowed=body.victron_feed_in_allowed,
         feed_in_rate_eur_kwh=body.feed_in_rate_eur_kwh,
+        winter_months=body.winter_months,
+        winter_min_soc_boost_pct=body.winter_min_soc_boost_pct,
     )
     orchestrator.sys_config = new_cfg
     return _config_to_dict(new_cfg)

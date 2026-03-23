@@ -38,6 +38,9 @@ class BatteryRole(str, Enum):
     GRID_CHARGE = "GRID_CHARGE"
     """Battery is charging from the grid during a cheap-tariff window."""
 
+    EXPORTING = "EXPORTING"
+    """Battery system is allowing PV surplus to flow to grid (no active discharge)."""
+
 
 class PoolStatus(str, Enum):
     """Health status of the combined battery pool."""

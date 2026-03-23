@@ -51,6 +51,9 @@ interface FormValues {
   modul3_deficit_rate_eur_kwh: string;
   // Feed-in tariff
   feed_in_rate_eur_kwh: string;
+  // Seasonal strategy
+  winter_months: string;
+  winter_min_soc_boost_pct: string;
   // Step 6: SoC limits
   huawei_min_soc_pct: string;
   huawei_max_soc_pct: string;
@@ -84,6 +87,8 @@ const DEFAULT_VALUES: FormValues = {
   modul3_surplus_rate_eur_kwh: "",
   modul3_deficit_rate_eur_kwh: "",
   feed_in_rate_eur_kwh: "",
+  winter_months: "11,12,1,2",
+  winter_min_soc_boost_pct: "10",
   huawei_min_soc_pct: "10",
   huawei_max_soc_pct: "95",
   victron_min_soc_pct: "15",
@@ -339,6 +344,10 @@ function StepTariff({
       <hr style={{ borderColor: 'var(--bg-card-border)', margin: '16px 0' }} />
       <h3 className="setup-step-title" style={{ fontSize: '16px', marginTop: '16px' }}>Feed-in Tariff</h3>
       <Field label="Feed-in Rate (EUR/kWh)" name="feed_in_rate_eur_kwh" value={values.feed_in_rate_eur_kwh} onChange={onChange} placeholder="0.074" />
+      <hr style={{ borderColor: 'var(--bg-card-border)', margin: '16px 0' }} />
+      <h3 className="setup-step-title" style={{ fontSize: '16px', marginTop: '16px' }}>Seasonal Strategy</h3>
+      <Field label="Winter Months (comma-separated)" name="winter_months" value={values.winter_months} onChange={onChange} placeholder="11,12,1,2" />
+      <Field label="Winter Min-SoC Boost (%)" name="winter_min_soc_boost_pct" value={values.winter_min_soc_boost_pct} onChange={onChange} placeholder="10" />
     </div>
   );
 }
@@ -451,6 +460,8 @@ export function SetupWizard() {
         modul3_surplus_rate_eur_kwh: parseFloat(values.modul3_surplus_rate_eur_kwh) || 0.0,
         modul3_deficit_rate_eur_kwh: parseFloat(values.modul3_deficit_rate_eur_kwh) || 0.0,
         feed_in_rate_eur_kwh: parseFloat(values.feed_in_rate_eur_kwh) || 0.074,
+        winter_months: values.winter_months || "11,12,1,2",
+        winter_min_soc_boost_pct: parseInt(values.winter_min_soc_boost_pct, 10) || 10,
         huawei_min_soc_pct: parseInt(values.huawei_min_soc_pct, 10) || 10,
         huawei_max_soc_pct: parseInt(values.huawei_max_soc_pct, 10) || 95,
         victron_min_soc_pct: parseInt(values.victron_min_soc_pct, 10) || 15,

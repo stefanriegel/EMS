@@ -224,6 +224,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         os.environ.setdefault("HA_HEAT_PUMP_ENTITY_ID", setup_cfg.ha_heat_pump_entity_id)
         if setup_cfg.feed_in_rate_eur_kwh != 0.074:
             os.environ.setdefault("FEED_IN_RATE_EUR_KWH", str(setup_cfg.feed_in_rate_eur_kwh))
+        if setup_cfg.winter_months != "11,12,1,2":
+            os.environ.setdefault("WINTER_MONTHS", setup_cfg.winter_months)
+        if setup_cfg.winter_min_soc_boost_pct != 10:
+            os.environ.setdefault("WINTER_MIN_SOC_BOOST_PCT", str(setup_cfg.winter_min_soc_boost_pct))
 
     # --- Supervisor service discovery (HA add-on mode only, no-op otherwise) ---
     # Resolves MQTT broker credentials and EVCC add-on location automatically
@@ -276,7 +280,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         huawei_cfg = HuaweiConfig.from_env()
         victron_cfg = VictronConfig.from_env()
         _feed_in = float(os.environ.get("FEED_IN_RATE_EUR_KWH", "0.074"))
-        sys_cfg = SystemConfig(feed_in_rate_eur_kwh=_feed_in)
+        _winter_months_str = os.environ.get("WINTER_MONTHS", "11,12,1,2")
+        _winter_months = [int(m.strip()) for m in _winter_months_str.split(",") if m.strip()]
+        _winter_boost = int(os.environ.get("WINTER_MIN_SOC_BOOST_PCT", "10"))
+        sys_cfg = SystemConfig(
+            feed_in_rate_eur_kwh=_feed_in,
+            winter_months=_winter_months,
+            winter_min_soc_boost_pct=_winter_boost,
+        )
         orch_cfg = OrchestratorConfig()
 
         logger.info(

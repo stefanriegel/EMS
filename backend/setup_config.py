@@ -88,6 +88,10 @@ class EmsSetupConfig:
     # --- Feed-in tariff ---
     feed_in_rate_eur_kwh: float = 0.074
 
+    # --- Seasonal strategy ---
+    winter_months: str = "11,12,1,2"
+    winter_min_soc_boost_pct: int = 10
+
     # --- SoC limits ---
     huawei_min_soc_pct: float = 10.0
     huawei_max_soc_pct: float = 95.0
