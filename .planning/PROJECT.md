@@ -52,7 +52,8 @@ Both battery systems operate independently with zero oscillation — coordinated
 
 ### Active
 
-(All v1.0 requirements validated — see above. Next milestone requirements TBD via `/gsd:new-milestone`.)
+- [ ] Grid export optimization with fixed feed-in tariff arbitrage
+- [ ] Multi-day weather-aware charge scheduling (2-3 day horizon)
 
 ### Out of Scope
 
@@ -61,6 +62,16 @@ Both battery systems operate independently with zero oscillation — coordinated
 - Cloud connectivity — fully local operation
 - Third-party battery brands — Huawei + Victron only for v1
 - Victron MQTT control — replaced by Modbus TCP
+
+## Current Milestone: v1.1 Advanced Optimization
+
+**Goal:** Maximize economic value through grid export arbitrage against a fixed feed-in tariff and multi-day weather-aware scheduling
+
+**Target features:**
+- Grid export optimization — compare fixed feed-in rate against current/upcoming import rate to decide export vs. store; actively export when batteries full and PV producing; factor in upcoming consumption to avoid export-then-buyback
+- Multi-day scheduling — extend nightly scheduler to 2-3 day weather horizon; charge more before cloudy stretches, defer grid charge when sunny days ahead
+
+**Key context:** Fixed feed-in rate (single EUR/kWh, not time-varying). Builds on existing tariff engine, consumption forecaster, and scheduler.
 
 ## Current State
 
@@ -123,4 +134,5 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-23 after v1.0 milestone*
+---
+*Last updated: 2026-03-23 after v1.1 milestone start*
