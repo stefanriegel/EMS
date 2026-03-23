@@ -48,7 +48,7 @@ from starlette.staticfiles import StaticFiles
 
 from backend.api import api_router
 from backend.auth import AdminConfig, AuthMiddleware, auth_router, ensure_jwt_secret
-from backend.config import HuaweiConfig, InfluxConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig, EvccConfig, SchedulerConfig, EvccMqttConfig, HaMqttConfig, TelegramConfig, HaRestConfig, HaStatisticsConfig, MultiEntityHaConfig, LiveTariffConfig
+from backend.config import HuaweiConfig, InfluxConfig, ModelStoreConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig, EvccConfig, SchedulerConfig, EvccMqttConfig, HaMqttConfig, TelegramConfig, HaRestConfig, HaStatisticsConfig, MultiEntityHaConfig, LiveTariffConfig
 from backend.supervisor_client import SupervisorClient
 from backend.setup_config import load_setup_config, EMS_CONFIG_PATH
 from backend.setup_api import setup_router
@@ -335,6 +335,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 "InfluxDB disabled — set INFLUXDB_URL and INFLUXDB_TOKEN to enable metrics persistence"
             )
 
+        # --- ModelStore (optional — model persistence across restarts) ---
+        model_store_cfg = ModelStoreConfig.from_env()
+        model_store = None
+        if model_store_cfg.enabled:
+            try:
+                from backend.model_store import ModelStore  # noqa: PLC0415
+                model_store = ModelStore(model_store_cfg.model_dir)
+                logger.info("ModelStore configured — dir=%s", model_store_cfg.model_dir)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("ModelStore failed to initialize: %s", exc)
+                model_store = None
+
         # --- ML Consumption Forecaster (optional — requires HA SQLite DB) ---
         consumption_forecaster = None
         ha_stats_cfg = HaStatisticsConfig.from_env()
@@ -344,7 +356,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 from backend.consumption_forecaster import ConsumptionForecaster  # noqa: PLC0415
 
                 ha_stats_reader = HaStatisticsReader(ha_stats_cfg.db_path)
-                consumption_forecaster = ConsumptionForecaster(ha_stats_reader, ha_stats_cfg)
+                consumption_forecaster = ConsumptionForecaster(
+                    ha_stats_reader, ha_stats_cfg, model_store=model_store
+                )
                 await consumption_forecaster.train()
                 logger.info(
                     "ConsumptionForecaster trained — db_path=%s min_days=%d",
