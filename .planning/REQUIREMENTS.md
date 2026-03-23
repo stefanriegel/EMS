@@ -45,11 +45,11 @@ Requirements for Home Assistant Best Practice Alignment milestone.
 
 ### Ingress
 
-- [ ] **INGR-01**: `ingress: true` and `ingress_port` in Add-on config.yaml with panel_icon and panel_title
-- [ ] **INGR-02**: ASGI IngressMiddleware reading X-Ingress-Path header and setting root_path
+- [x] **INGR-01**: `ingress: true` and `ingress_port` in Add-on config.yaml with panel_icon and panel_title
+- [x] **INGR-02**: ASGI IngressMiddleware reading X-Ingress-Path header and setting root_path
 - [x] **INGR-03**: Frontend Vite `base: './'` for relative asset paths
 - [x] **INGR-04**: Dynamic WebSocket URL construction from window.location (works with both direct and Ingress access)
-- [ ] **INGR-05**: Auth bypass for Ingress requests — detect X-Ingress-Path header, skip JWT validation
+- [x] **INGR-05**: Auth bypass for Ingress requests — detect X-Ingress-Path header, skip JWT validation
 - [x] **INGR-06**: Dashboard accessible in HA sidebar and via direct port simultaneously
 
 ## Future Requirements
@@ -102,11 +102,11 @@ Requirements for Home Assistant Best Practice Alignment milestone.
 | CTRL-09 | Phase 14 | Complete |
 | CTRL-10 | Phase 14 | Complete |
 | CTRL-11 | Phase 14 | Complete |
-| INGR-01 | Phase 15 | Pending |
-| INGR-02 | Phase 15 | Pending |
+| INGR-01 | Phase 15 | Complete |
+| INGR-02 | Phase 15 | Complete |
 | INGR-03 | Phase 15 | Complete |
 | INGR-04 | Phase 15 | Complete |
-| INGR-05 | Phase 15 | Pending |
+| INGR-05 | Phase 15 | Complete |
 | INGR-06 | Phase 15 | Complete |
 
 **Coverage:**

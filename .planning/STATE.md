@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Home Assistant Best Practice Alignment
-status: Ready to execute
-stopped_at: Completed 15-02-PLAN.md
-last_updated: "2026-03-23T21:31:56.526Z"
+status: Phase complete — ready for verification
+stopped_at: Completed 15-01-PLAN.md
+last_updated: "2026-03-23T21:32:42.278Z"
 progress:
   total_phases: 4
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 9
-  completed_plans: 8
+  completed_plans: 9
 ---
 
 # Project State
@@ -61,6 +61,7 @@ Plan: 2 of 2
 | Phase 14 P01 | 4min | 1 tasks | 2 files |
 | Phase 14 P02 | 4min | 2 tasks | 4 files |
 | Phase 15 P02 | 1min | 2 tasks | 7 files |
+| Phase 15 P01 | 2min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -85,6 +86,8 @@ Recent decisions affecting current work:
 - [Phase 14]: Mode override checked after EVCC hold but before grid charge slot detection in control loop
 - [Phase 14]: Supervisor persistence is fire-and-forget to never block command handling
 - [Phase 15]: Used new URL('./api/ws/state', location.href) for dynamic WS URL under Ingress
+- [Phase 15]: Raw ASGI middleware for IngressMiddleware to support WebSocket scope types
+- [Phase 15]: ingress_port: 8000 matches uvicorn listen port (Supervisor connects to container internal port)
 
 ### Pending Todos
 
@@ -98,6 +101,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-23T21:31:56.524Z
-Stopped at: Completed 15-02-PLAN.md
+Last session: 2026-03-23T21:32:42.275Z
+Stopped at: Completed 15-01-PLAN.md
 Resume file: None
