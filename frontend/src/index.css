@@ -1062,3 +1062,74 @@ html, body {
   background: rgba(245, 158, 11, 0.1);
 }
 
+/* ── Forecast card ────────────────────────────────────────────────────── */
+
+.forecast-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.forecast-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.forecast-bar-label {
+  min-width: 50px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.forecast-bar-track {
+  flex: 1;
+  height: 18px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.forecast-bar-fill {
+  height: 100%;
+  background: var(--color-pv);
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+
+.forecast-bar-value {
+  min-width: 60px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-primary);
+}
+
+.forecast-summary {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.forecast-day-summary {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.forecast-net--surplus {
+  color: var(--accent-green);
+}
+
+.forecast-net--deficit {
+  color: var(--accent-red, #ef4444);
+}
+
+.forecast-confidence {
+  font-size: 0.7rem;
+  opacity: 0.6;
+}
+
