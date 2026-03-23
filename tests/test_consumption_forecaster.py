@@ -23,7 +23,7 @@ import pytest
 from backend.config import HaStatisticsConfig
 from backend.consumption_forecaster import ConsumptionForecaster
 from backend.ha_statistics_reader import HaStatisticsReader
-from backend.schedule_models import ConsumptionForecast
+from backend.schedule_models import ConsumptionForecast, HourlyConsumptionForecast
 
 
 # ---------------------------------------------------------------------------
@@ -449,3 +449,156 @@ def test_get_forecast_comparison_zero_actual_no_division(tmp_path):
     assert result["actual_kwh"] == pytest.approx(0.0)
     # error_pct = abs(5.0 - 0.0) / 0.001 * 100 = 500000 % — just ensure no raise
     assert result["error_pct"] > 0
+
+
+# ---------------------------------------------------------------------------
+# Tests: predict_hourly() — 72h hourly consumption predictions
+# ---------------------------------------------------------------------------
+
+@pytest.mark.anyio
+async def test_predict_hourly_returns_72_values_when_trained(tmp_path):
+    """predict_hourly() returns HourlyConsumptionForecast with 72 hourly_kwh values when trained on 30 days."""
+    db_path = str(tmp_path / "ha.db")
+    _populate_db(db_path, days=30, hp_val=2000.0, dhw_val=500.0)
+
+    config = _build_config(db_path)
+    reader = HaStatisticsReader(db_path)
+    forecaster = ConsumptionForecaster(reader, config)
+    await forecaster.train()
+
+    result = await forecaster.predict_hourly()
+    assert isinstance(result, HourlyConsumptionForecast)
+    assert len(result.hourly_kwh) == 72
+    assert result.horizon_hours == 72
+
+
+@pytest.mark.anyio
+async def test_predict_hourly_ml_source_when_trained(tmp_path):
+    """predict_hourly() returns fallback_used=False and source='ml' when models are trained."""
+    db_path = str(tmp_path / "ha.db")
+    _populate_db(db_path, days=30, hp_val=2000.0, dhw_val=500.0)
+
+    config = _build_config(db_path)
+    reader = HaStatisticsReader(db_path)
+    forecaster = ConsumptionForecaster(reader, config)
+    await forecaster.train()
+
+    result = await forecaster.predict_hourly()
+    assert result.fallback_used is False
+    assert result.source == "ml"
+
+
+@pytest.mark.anyio
+async def test_predict_hourly_total_equals_sum(tmp_path):
+    """predict_hourly() total_kwh equals sum of hourly_kwh values."""
+    db_path = str(tmp_path / "ha.db")
+    _populate_db(db_path, days=30, hp_val=2000.0, dhw_val=500.0)
+
+    config = _build_config(db_path)
+    reader = HaStatisticsReader(db_path)
+    forecaster = ConsumptionForecaster(reader, config)
+    await forecaster.train()
+
+    result = await forecaster.predict_hourly()
+    assert result.total_kwh == pytest.approx(sum(result.hourly_kwh), abs=0.001)
+
+
+@pytest.mark.anyio
+async def test_predict_hourly_cold_start_fallback(tmp_path):
+    """predict_hourly() cold-start returns fallback_used=True and source='seasonal' with 72 hourly values."""
+    db_path = str(tmp_path / "ha.db")
+    _populate_db(db_path, days=5)
+
+    config = _build_config(db_path, min_training_days=14)
+    reader = HaStatisticsReader(db_path)
+    forecaster = ConsumptionForecaster(reader, config)
+    await forecaster.train()
+
+    result = await forecaster.predict_hourly()
+    assert isinstance(result, HourlyConsumptionForecast)
+    assert result.fallback_used is True
+    assert result.source == "seasonal"
+    assert len(result.hourly_kwh) == 72
+    assert result.horizon_hours == 72
+
+
+@pytest.mark.anyio
+async def test_predict_hourly_cold_start_hour_variation(tmp_path):
+    """predict_hourly() cold-start hourly values have hour-of-day variation (daytime > nighttime average)."""
+    db_path = str(tmp_path / "ha.db")
+    _populate_db(db_path, days=5)
+
+    config = _build_config(db_path, min_training_days=14)
+    reader = HaStatisticsReader(db_path)
+    forecaster = ConsumptionForecaster(reader, config)
+    await forecaster.train()
+
+    result = await forecaster.predict_hourly()
+
+    # Group hourly values by hour-of-day to check variation
+    from datetime import datetime as dt, timedelta, timezone
+    now = dt.now(tz=timezone.utc)
+    night_vals = []
+    day_vals = []
+    for h, kwh in enumerate(result.hourly_kwh):
+        hour_of_day = (now + timedelta(hours=h)).hour
+        if hour_of_day in (0, 1, 2, 3, 4, 5):
+            night_vals.append(kwh)
+        elif hour_of_day in (10, 11, 12, 13, 14, 15, 16):
+            day_vals.append(kwh)
+
+    if night_vals and day_vals:
+        avg_night = sum(night_vals) / len(night_vals)
+        avg_day = sum(day_vals) / len(day_vals)
+        assert avg_day > avg_night, (
+            f"Expected daytime average ({avg_day:.4f}) > nighttime average ({avg_night:.4f})"
+        )
+
+
+@pytest.mark.anyio
+async def test_predict_hourly_custom_horizon(tmp_path):
+    """predict_hourly(horizon_hours=48) returns 48 values instead of 72."""
+    db_path = str(tmp_path / "ha.db")
+    _populate_db(db_path, days=30, hp_val=2000.0, dhw_val=500.0)
+
+    config = _build_config(db_path)
+    reader = HaStatisticsReader(db_path)
+    forecaster = ConsumptionForecaster(reader, config)
+    await forecaster.train()
+
+    result = await forecaster.predict_hourly(horizon_hours=48)
+    assert len(result.hourly_kwh) == 48
+    assert result.horizon_hours == 48
+
+
+@pytest.mark.anyio
+async def test_predict_hourly_all_values_non_negative(tmp_path):
+    """predict_hourly() all hourly values are non-negative (clamped to 0)."""
+    db_path = str(tmp_path / "ha.db")
+    _populate_db(db_path, days=30, hp_val=2000.0, dhw_val=500.0)
+
+    config = _build_config(db_path)
+    reader = HaStatisticsReader(db_path)
+    forecaster = ConsumptionForecaster(reader, config)
+    await forecaster.train()
+
+    result = await forecaster.predict_hourly()
+    for i, val in enumerate(result.hourly_kwh):
+        assert val >= 0, f"hourly_kwh[{i}] = {val} is negative"
+
+
+@pytest.mark.anyio
+async def test_existing_query_consumption_history_still_works(tmp_path):
+    """Existing query_consumption_history() tests still pass (no regression)."""
+    db_path = str(tmp_path / "ha.db")
+    _populate_db(db_path, days=30, hp_val=2000.0, dhw_val=500.0)
+
+    config = _build_config(db_path)
+    reader = HaStatisticsReader(db_path)
+    forecaster = ConsumptionForecaster(reader, config)
+    await forecaster.train()
+
+    result = await forecaster.query_consumption_history()
+    assert isinstance(result, ConsumptionForecast)
+    assert result.fallback_used is False
+    assert result.today_expected_kwh > 0

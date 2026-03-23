@@ -303,3 +303,26 @@ class ConsumptionForecast:
     today_expected_kwh: float
     days_of_history: int
     fallback_used: bool
+
+
+@dataclass
+class HourlyConsumptionForecast:
+    """Hourly household consumption forecast for a configurable horizon.
+
+    Produced by ``ConsumptionForecaster.predict_hourly()`` and consumed by
+    the multi-day weather-aware scheduler to plan charge/discharge windows.
+
+    Attributes:
+        hourly_kwh:    Per-hour predicted consumption in kWh.
+        total_kwh:     Sum of all hourly values.
+        horizon_hours: Number of hours in the prediction horizon.
+        source:        Origin of the forecast — ``"ml"`` or ``"seasonal"``.
+        fallback_used: ``True`` when ML models are unavailable and seasonal
+                       hour-of-day weights were used instead.
+    """
+
+    hourly_kwh: list[float]
+    total_kwh: float
+    horizon_hours: int
+    source: str
+    fallback_used: bool
