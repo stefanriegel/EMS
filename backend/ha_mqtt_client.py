@@ -18,6 +18,10 @@ Availability / discovery model
 ``_discovery_sent`` becomes ``True`` after all discovery payloads have been
 published.  Both are directly inspectable for debugging.
 
+LWT (Last Will and Testament) ensures that all entities show as unavailable
+in HA when EMS disconnects: ``will_set()`` is called before ``connect()``,
+and ``"online"`` is published on successful CONNACK.
+
 Connection lifecycle
 --------------------
 ``connect()`` initiates a non-blocking TCP connection and starts paho's
@@ -42,6 +46,7 @@ import asyncio
 import dataclasses
 import json
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import paho.mqtt.client as mqtt
@@ -53,32 +58,90 @@ logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Entity definitions
-# (entity_id, friendly_name, unit, device_class, state_class, value_key)
-# value_key must match a field name in UnifiedPoolState
 # ---------------------------------------------------------------------------
 
-_ENTITIES: list[tuple[str, str, str | None, str | None, str | None, str]] = [
-    # --- Existing 7 entities (unchanged) ---
-    ("huawei_soc",        "Huawei Battery SOC",        "%",  "battery", "measurement", "huawei_soc_pct"),
-    ("victron_soc",       "Victron Battery SOC",        "%",  "battery", "measurement", "victron_soc_pct"),
-    ("huawei_setpoint",   "Huawei Discharge Setpoint",  "W",  "power",   "measurement", "huawei_discharge_setpoint_w"),
-    ("victron_setpoint",  "Victron AC Setpoint",        "W",  "power",   "measurement", "victron_discharge_setpoint_w"),
-    ("combined_power",    "Combined Battery Power",     "W",  "power",   "measurement", "combined_power_w"),
-    ("control_state",     "EMS Control State",          None, None,      None,          "control_state"),
-    ("evcc_battery_mode", "EVCC Battery Mode",          None, None,      None,          "evcc_battery_mode"),
-    # --- New per-system entities (D-26 through D-31) ---
-    ("huawei_role",       "Huawei Battery Role",        None, None,      None,          "huawei_role"),
-    ("victron_role",      "Victron Battery Role",       None, None,      None,          "victron_role"),
-    ("huawei_power",      "Huawei Battery Power",       "W",  "power",   "measurement", "huawei_power_w"),
-    ("victron_power",     "Victron Battery Power",      "W",  "power",   "measurement", "victron_power_w"),
-    ("huawei_online",     "Huawei Online",              None, None,      None,          "huawei_available"),
-    ("victron_online",    "Victron Online",             None, None,      None,          "victron_available"),
-    ("pool_status",       "EMS Pool Status",            None, None,      None,          "pool_status"),
-    # Per-phase power populated by coordinator before publish
-    ("victron_l1_power",  "Victron L1 Power",           "W",  "power",   "measurement", "victron_l1_power_w"),
-    ("victron_l2_power",  "Victron L2 Power",           "W",  "power",   "measurement", "victron_l2_power_w"),
-    ("victron_l3_power",  "Victron L3 Power",           "W",  "power",   "measurement", "victron_l3_power_w"),
+_AVAILABILITY_TOPIC = "ems/status"
+
+_EMS_VERSION = "1.2.0"
+
+
+@dataclass(frozen=True)
+class EntityDefinition:
+    """Typed definition for a single HA MQTT sensor entity.
+
+    Replaces the previous flat tuple format with named fields for clarity
+    and type safety.
+    """
+
+    entity_id: str
+    """Unique entity identifier, e.g. 'huawei_soc'."""
+
+    name: str | None
+    """Short display name (has_entity_name removes device prefix), or None."""
+
+    platform: str
+    """HA platform: 'sensor' or 'binary_sensor'."""
+
+    unit: str | None
+    """Unit of measurement, e.g. '%', 'W', or None."""
+
+    device_class: str | None
+    """HA device class: 'battery', 'power', 'enum', etc."""
+
+    state_class: str | None
+    """HA state class: 'measurement', 'total_increasing', or None."""
+
+    entity_category: str | None
+    """HA entity category: None, 'diagnostic', or 'config'."""
+
+    value_key: str
+    """Field name in CoordinatorState or extra_fields dict."""
+
+    device_group: str
+    """Device grouping: 'huawei', 'victron', or 'system'."""
+
+
+SENSOR_ENTITIES: list[EntityDefinition] = [
+    # --- Huawei device (5 entities) ---
+    EntityDefinition("huawei_soc", "Battery SoC", "sensor", "%", "battery", "measurement", None, "huawei_soc_pct", "huawei"),
+    EntityDefinition("huawei_setpoint", "Discharge Setpoint", "sensor", "W", "power", "measurement", None, "huawei_discharge_setpoint_w", "huawei"),
+    EntityDefinition("huawei_power", "Battery Power", "sensor", "W", "power", "measurement", None, "huawei_power_w", "huawei"),
+    EntityDefinition("huawei_role", "Battery Role", "sensor", None, "enum", None, "diagnostic", "huawei_role", "huawei"),
+    EntityDefinition("huawei_online", "Online", "sensor", None, None, None, "diagnostic", "huawei_available", "huawei"),
+    # --- Victron device (8 entities) ---
+    EntityDefinition("victron_soc", "Battery SoC", "sensor", "%", "battery", "measurement", None, "victron_soc_pct", "victron"),
+    EntityDefinition("victron_setpoint", "AC Setpoint", "sensor", "W", "power", "measurement", None, "victron_discharge_setpoint_w", "victron"),
+    EntityDefinition("victron_power", "Battery Power", "sensor", "W", "power", "measurement", None, "victron_power_w", "victron"),
+    EntityDefinition("victron_role", "Battery Role", "sensor", None, "enum", None, "diagnostic", "victron_role", "victron"),
+    EntityDefinition("victron_online", "Online", "sensor", None, None, None, "diagnostic", "victron_available", "victron"),
+    EntityDefinition("victron_l1_power", "L1 Power", "sensor", "W", "power", "measurement", "diagnostic", "victron_l1_power_w", "victron"),
+    EntityDefinition("victron_l2_power", "L2 Power", "sensor", "W", "power", "measurement", "diagnostic", "victron_l2_power_w", "victron"),
+    EntityDefinition("victron_l3_power", "L3 Power", "sensor", "W", "power", "measurement", "diagnostic", "victron_l3_power_w", "victron"),
+    # --- System device (4 entities) ---
+    EntityDefinition("combined_power", "Combined Power", "sensor", "W", "power", "measurement", None, "combined_power_w", "system"),
+    EntityDefinition("control_state", "Control State", "sensor", None, "enum", None, "diagnostic", "control_state", "system"),
+    EntityDefinition("evcc_battery_mode", "EVCC Battery Mode", "sensor", None, "enum", None, "diagnostic", "evcc_battery_mode", "system"),
+    EntityDefinition("pool_status", "Pool Status", "sensor", None, "enum", None, "diagnostic", "pool_status", "system"),
 ]
+
+
+_DEVICES: dict[str, dict[str, Any]] = {
+    "huawei": {
+        "identifiers": ["ems_huawei"],
+        "name": "EMS Huawei",
+        "manufacturer": "Huawei",
+    },
+    "victron": {
+        "identifiers": ["ems_victron"],
+        "name": "EMS Victron",
+        "manufacturer": "Victron Energy",
+    },
+    "system": {
+        "identifiers": ["ems_system"],
+        "name": "EMS System",
+        "manufacturer": "EMS",
+    },
+}
 
 
 # ---------------------------------------------------------------------------
@@ -99,8 +162,8 @@ class HomeAssistantMqttClient:
         Optional MQTT password.
     device_id:
         Unique device identifier used in discovery topics and ``unique_id``.
-    device_name:
-        Human-readable device name shown in the HA device registry.
+    configuration_url:
+        URL for the device configuration page shown in HA device info.
     """
 
     def __init__(
@@ -110,14 +173,14 @@ class HomeAssistantMqttClient:
         username: str | None = None,
         password: str | None = None,
         device_id: str = "ems",
-        device_name: str = "Energy Management System",
+        configuration_url: str = "http://homeassistant.local:8000",
     ) -> None:
         self._host = host
         self._port = port
         self._username = username
         self._password = password
         self._device_id = device_id
-        self._device_name = device_name
+        self._configuration_url = configuration_url
 
         # Inspectable state flags
         self._connected: bool = False
@@ -147,8 +210,14 @@ class HomeAssistantMqttClient:
         Never raises — if the broker is unreachable the exception is caught,
         logged at WARNING, and ``_connected`` stays ``False``.
         """
-        self._loop = asyncio.get_event_loop()
         try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
+        try:
+            self._client.will_set(
+                _AVAILABILITY_TOPIC, "offline", qos=1, retain=True,
+            )
             self._client.connect(self._host, self._port)
         except (ConnectionRefusedError, OSError) as exc:
             logger.warning("HA MQTT connect failed: %s", exc)
@@ -157,6 +226,9 @@ class HomeAssistantMqttClient:
 
     async def disconnect(self) -> None:
         """Stop the paho network thread and disconnect from the broker."""
+        self._client.publish(
+            _AVAILABILITY_TOPIC, "offline", qos=1, retain=True,
+        )
         self._client.loop_stop()
         self._client.disconnect()
         self._connected = False
@@ -192,8 +264,8 @@ class HomeAssistantMqttClient:
     # Topic helpers
     # ------------------------------------------------------------------
 
-    def _discovery_topic(self, entity_id: str) -> str:
-        return f"homeassistant/sensor/{self._device_id}/{entity_id}/config"
+    def _discovery_topic(self, entity: EntityDefinition) -> str:
+        return f"homeassistant/{entity.platform}/{self._device_id}/{entity.entity_id}/config"
 
     def _state_topic(self) -> str:
         return f"homeassistant/sensor/{self._device_id}/state"
@@ -202,32 +274,40 @@ class HomeAssistantMqttClient:
     # Payload helpers
     # ------------------------------------------------------------------
 
-    def _discovery_payload(
-        self,
-        entity_id: str,
-        name: str,
-        unit: str | None,
-        device_class: str | None,
-        state_class: str | None,
-        value_key: str,
-    ) -> str:
+    def _discovery_payload(self, entity: EntityDefinition) -> str:
+        """Build a JSON discovery payload for a single entity."""
+        device_info = dict(_DEVICES[entity.device_group])
+        device_info["configuration_url"] = self._configuration_url
+
         payload: dict[str, Any] = {
-            "name": name,
-            "unique_id": f"{self._device_id}_{entity_id}",
+            "name": entity.name,
+            "unique_id": f"{self._device_id}_{entity.entity_id}",
             "state_topic": self._state_topic(),
-            "value_template": f"{{{{ value_json.{value_key} }}}}",
-            "device": {
-                "identifiers": [self._device_id],
-                "name": self._device_name,
-                "manufacturer": "EMS",
-            },
+            "value_template": f"{{{{ value_json.{entity.value_key} }}}}",
+            "has_entity_name": True,
+            "origin": {"name": "EMS", "sw": _EMS_VERSION},
+            "availability": [
+                {
+                    "topic": _AVAILABILITY_TOPIC,
+                    "payload_available": "online",
+                    "payload_not_available": "offline",
+                }
+            ],
+            "device": device_info,
         }
-        if unit is not None:
-            payload["unit_of_measurement"] = unit
-        if device_class is not None:
-            payload["device_class"] = device_class
-        if state_class is not None:
-            payload["state_class"] = state_class
+
+        if entity.platform == "sensor":
+            payload["expire_after"] = 120
+
+        if entity.unit is not None:
+            payload["unit_of_measurement"] = entity.unit
+        if entity.device_class is not None:
+            payload["device_class"] = entity.device_class
+        if entity.state_class is not None:
+            payload["state_class"] = entity.state_class
+        if entity.entity_category is not None:
+            payload["entity_category"] = entity.entity_category
+
         return json.dumps(payload)
 
     # ------------------------------------------------------------------
@@ -239,11 +319,9 @@ class HomeAssistantMqttClient:
         """Publish discovery config for all entities if not already done."""
         if self._discovery_sent:
             return
-        for entity_id, name, unit, device_class, state_class, value_key in _ENTITIES:
-            topic = self._discovery_topic(entity_id)
-            payload = self._discovery_payload(
-                entity_id, name, unit, device_class, state_class, value_key
-            )
+        for entity in SENSOR_ENTITIES:
+            topic = self._discovery_topic(entity)
+            payload = self._discovery_payload(entity)
             self._client.publish(topic, payload, retain=True)
         self._discovery_sent = True
         logger.info("HA MQTT discovery published")
@@ -273,7 +351,7 @@ class HomeAssistantMqttClient:
 
     def _on_connect(
         self,
-        client: mqtt.Client,  # noqa: ARG002
+        client: mqtt.Client,
         userdata: Any,  # noqa: ARG002
         connect_flags: Any,  # noqa: ARG002
         reason_code: Any,
@@ -282,6 +360,8 @@ class HomeAssistantMqttClient:
         if reason_code != 0:
             logger.warning("HA MQTT connect rejected: rc=%s", reason_code)
             return
+        # Publish online status
+        client.publish(_AVAILABILITY_TOPIC, "online", qos=1, retain=True)
         if self._loop is not None:
             self._loop.call_soon_threadsafe(self._set_connected, True)
         logger.info("HA MQTT connected")

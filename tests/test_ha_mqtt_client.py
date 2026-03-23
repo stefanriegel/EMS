@@ -224,14 +224,13 @@ class TestDiscoveryAvailability:
                 assert avail[0]["payload_available"] == "online"
                 assert avail[0]["payload_not_available"] == "offline"
 
-    def test_lwt_will_set_before_connect(self):
+    async def test_lwt_will_set_before_connect(self):
         """will_set() is called with ems/status, 'offline', retain=True before connect()."""
         client = _make_client()
         mock_paho = MagicMock()
         client._client = mock_paho
 
-        import asyncio
-        asyncio.get_event_loop().run_until_complete(client.connect())
+        await client.connect()
 
         mock_paho.will_set.assert_called_once_with(
             "ems/status", "offline", qos=1, retain=True,
@@ -259,14 +258,13 @@ class TestDiscoveryAvailability:
 
         mock_paho.publish.assert_called_with("ems/status", "online", qos=1, retain=True)
 
-    def test_disconnect_publishes_offline(self):
+    async def test_disconnect_publishes_offline(self):
         """disconnect() publishes 'offline' to ems/status before disconnecting."""
         client = _make_connected_client()
         mock_paho = MagicMock()
         client._client = mock_paho
 
-        import asyncio
-        asyncio.get_event_loop().run_until_complete(client.disconnect())
+        await client.disconnect()
 
         # Check offline was published before disconnect
         offline_order = None
@@ -275,9 +273,6 @@ class TestDiscoveryAvailability:
             if c[0] == "publish" and offline_order is None:
                 args = c[1]
                 if len(args) >= 2 and args[0] == "ems/status" and args[1] == "offline":
-                    offline_order = i
-                # Also check kwargs
-                elif c[2].get("topic") == "ems/status" if len(c) > 2 else False:
                     offline_order = i
             if c[0] == "disconnect" and disconnect_order is None:
                 disconnect_order = i
