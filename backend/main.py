@@ -50,7 +50,8 @@ from starlette.staticfiles import StaticFiles
 
 from backend.api import api_router
 from backend.auth import AdminConfig, AuthMiddleware, auth_router, ensure_jwt_secret
-from backend.config import HuaweiConfig, InfluxConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig, EvccConfig, SchedulerConfig, EvccMqttConfig, HaMqttConfig, TelegramConfig, HaRestConfig, HaStatisticsConfig, MultiEntityHaConfig, LiveTariffConfig
+from backend.config import HuaweiConfig, InfluxConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig, EvccConfig, SchedulerConfig, EvccMqttConfig, HaMqttConfig, TelegramConfig, HaRestConfig, HaStatisticsConfig, MultiEntityHaConfig, LiveTariffConfig, OpenMeteoConfig
+from backend.weather_client import OpenMeteoClient
 from backend.supervisor_client import SupervisorClient
 from backend.setup_config import load_setup_config, EMS_CONFIG_PATH
 from backend.setup_api import setup_router
@@ -387,6 +388,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # Use ML forecaster as the consumption reader for the scheduler if available
         effective_consumption_reader = consumption_forecaster if consumption_forecaster is not None else metrics_reader
 
+        # --- Open-Meteo weather client (optional — solar forecast fallback) ---
+        open_meteo_cfg = OpenMeteoConfig.from_env()
+        weather_client: OpenMeteoClient | None = None
+        if open_meteo_cfg is not None:
+            weather_client = OpenMeteoClient(open_meteo_cfg)
+            logger.info(
+                "Open-Meteo weather client configured — lat=%.2f lon=%.2f dc_kwp=%.1f",
+                open_meteo_cfg.latitude, open_meteo_cfg.longitude, open_meteo_cfg.dc_kwp,
+            )
+        else:
+            logger.info("Open-Meteo weather client disabled — OPEN_METEO_LATITUDE/LONGITUDE not set")
+        app.state.weather_client = weather_client
+
         evcc_client = EvccClient(evcc_cfg)
         scheduler = Scheduler(evcc_client, effective_consumption_reader, tariff_engine, sys_cfg, orch_cfg)
         app.state.scheduler = scheduler
@@ -550,6 +564,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.ha_mqtt_client = None
         app.state.notifier = None
         app.state.ha_rest_client = None
+        app.state.weather_client = None
         app.state.forecast_comparison = None
 
     yield  # application is running
