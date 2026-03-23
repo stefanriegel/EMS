@@ -52,12 +52,7 @@ Both battery systems operate independently with zero oscillation — coordinated
 
 ### Active
 
-- [ ] ~~Victron MultiPlus-II control via Modbus TCP (replacing MQTT)~~ → Validated in Phase 1
-- [ ] ~~Per-system metrics and reporting in InfluxDB~~ → Validated in Phase 4
-- [ ] ~~Production-ready alerting and monitoring~~ → Validated in Phase 4
-- [ ] ~~Reworked React dashboard with per-system visibility and decision transparency~~ → Validated in Phase 5
-- [ ] ~~HA Add-on as primary deployment target~~ → Validated in Phase 6
-- [ ] ~~Tariff optimization with per-battery dispatch strategy~~ → Validated in Phase 3
+(All v1.0 requirements validated — see above. Next milestone requirements TBD via `/gsd:new-milestone`.)
 
 ### Out of Scope
 
@@ -67,19 +62,28 @@ Both battery systems operate independently with zero oscillation — coordinated
 - Third-party battery brands — Huawei + Victron only for v1
 - Victron MQTT control — replaced by Modbus TCP
 
-## Context
+## Current State
 
-**Existing codebase (v1):** The current EMS uses a unified Orchestrator that computes weighted-average SoC across both batteries and dispatches proportional setpoints. This approach causes oscillations when both systems react to the same inputs, and produces suboptimal setpoints because the systems have different characteristics (Huawei: 30 kWh, Victron: 64 kWh).
+**v1.0 shipped 2026-03-23.** Complete rewrite from unified orchestrator to independent dual-battery controllers.
+
+**Codebase:**
+- Backend: ~11,200 LOC Python (FastAPI, pymodbus, paho-mqtt)
+- Frontend: ~2,600 LOC TypeScript/React (Vite, wouter)
+- Tests: ~15,200 LOC across 1,211 tests
+- 194 commits across 6 phases (16 plans, 29 tasks)
 
 **Hardware environment:**
 - Huawei SUN2000 inverter with LUNA2000 battery (30 kWh) — Modbus TCP on port 502
-- Victron MultiPlus-II with Pylontech/similar (64 kWh) — Venus OS GX device
+- Victron MultiPlus-II with Pylontech/similar (64 kWh) — Venus OS GX device via Modbus TCP
 - EVCC for EV charging optimization (co-installed HA add-on)
 - Home Assistant OS as the host platform
 
-**Architecture shift:** v1 treats both systems as one pool. v2 gives each system a dedicated controller that receives instructions from a coordinator. The coordinator ensures stability (no fighting) and optimizes the combined output, but each controller makes its own setpoint decisions.
+**Architecture:** Each battery system has a dedicated controller (HuaweiController, VictronController) receiving instructions from a Coordinator. SoC-based role assignment (PRIMARY_DISCHARGE, SECONDARY_DISCHARGE, CHARGING, HOLDING, GRID_CHARGE) with per-system hysteresis, ramp limiting, and failure isolation. PV surplus distributed by SoC headroom weighting. Solar-aware grid charge target reduction.
 
-**Victron protocol change:** Switching from MQTT to Modbus TCP for more precise ESS control (direct register writes instead of MQTT topic-based commands).
+**Known areas needing field validation:**
+- Victron Venus OS Modbus register addresses vs. actual firmware (v3.20+)
+- Unit ID assignments need probing or manual config on real hardware
+- Ramp rate and dead-band tuning values are starting estimates
 
 ## Constraints
 
@@ -94,8 +98,8 @@ Both battery systems operate independently with zero oscillation — coordinated
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Fresh rewrite over incremental refactor | Current unified orchestrator architecture is fundamentally incompatible with independent control | — Pending |
-| Victron Modbus TCP instead of MQTT | More precise ESS control via direct register writes | — Pending |
+| Fresh rewrite over incremental refactor | Current unified orchestrator architecture is fundamentally incompatible with independent control | ✓ Validated v1.0 |
+| Victron Modbus TCP instead of MQTT | More precise ESS control via direct register writes | ✓ Validated Phase 1+6 |
 | Dynamic roles instead of fixed specialization | SoC/tariff/PV conditions change throughout the day; fixed roles waste capacity | ✓ Validated Phase 2+3 |
 | SoC-headroom weighting for PV surplus | Proportional distribution by available capacity, not battery order | ✓ Validated Phase 3 |
 | Predictive pre-charging with solar forecast | Skip grid charge when solar covers demand (1.2x threshold) | ✓ Validated Phase 3 |
@@ -119,4 +123,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-23 after Phase 6 completion*
+*Last updated: 2026-03-23 after v1.0 milestone*
