@@ -61,7 +61,7 @@ Plans:
   3. Export does not cause dual-battery oscillation — only one system exports at a time, P_target offset prevents the other from reacting
 **Plans:** 2 plans
 Plans:
-- [ ] 08-01-PLAN.md — EXPORTING role + seasonal config pipeline
+- [x] 08-01-PLAN.md — EXPORTING role + seasonal config pipeline
 - [ ] 08-02-PLAN.md — Coordinator export integration + seasonal min-SoC + tests
 
 ### Phase 9: Weather & Forecast Data

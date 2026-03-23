@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Advanced Optimization
-status: Ready to plan
-stopped_at: Completed 07-02-PLAN.md
-last_updated: "2026-03-23T13:16:51.861Z"
+status: Ready to execute
+stopped_at: Completed 08-01-PLAN.md
+last_updated: "2026-03-23T14:14:11.760Z"
 progress:
   total_phases: 5
   completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
+  total_plans: 4
+  completed_plans: 3
 ---
 
 # Project State
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-23)
 
 **Core value:** Both battery systems operate independently with zero oscillation to maximize PV self-consumption
-**Current focus:** Phase 07 — export-foundation
+**Current focus:** Phase 08 — coordinator-export-integration
 
 ## Current Position
 
-Phase: 8
-Plan: Not started
+Phase: 08 (coordinator-export-integration) — EXECUTING
+Plan: 2 of 2
 
 ## Performance Metrics
 
@@ -59,6 +59,7 @@ Plan: Not started
 | Phase 06 | 2 | 7.5 min |
 | Phase 07 P01 | 5min | 2 tasks | 12 files |
 | Phase 07 P02 | 3min | 1 tasks | 2 files |
+| Phase 08 P01 | 3min | 2 tasks | 12 files |
 
 ## Accumulated Context
 
@@ -77,6 +78,7 @@ Recent decisions affecting current work:
 - [Phase 07]: Conservative default: STORE when forecaster unavailable or fallback used
 - [Phase 07]: Export advisory runs as post-cycle hook in _loop(), not inside _run_cycle() -- avoids 6-path duplication
 - [Phase 07]: Advisory-only in Plan 02: logs transitions but does not affect P_target (Phase 8 scope)
+- [Phase 08]: Winter months stored as comma-separated string in flat config for HA options compatibility
 
 ### Pending Todos
 
@@ -91,6 +93,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-23T13:13:40.086Z
-Stopped at: Completed 07-02-PLAN.md
+Last session: 2026-03-23T14:14:11.757Z
+Stopped at: Completed 08-01-PLAN.md
 Resume file: None
