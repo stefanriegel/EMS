@@ -16,7 +16,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Multi-Day Scheduling
 
-- [ ] **MDS-01**: Scheduler looks 2-3 days ahead using EVCC solar forecast data and Open-Meteo as fallback when EVCC is unavailable
+- [x] **MDS-01**: Scheduler looks 2-3 days ahead using EVCC solar forecast data and Open-Meteo as fallback when EVCC is unavailable
 - [ ] **MDS-02**: Nightly grid charge targets adjusted by multi-day forecast — charge more before cloudy stretches, reduce/skip when sunny days ahead (forward-looking demand vs. solar comparison)
 - [ ] **MDS-03**: Confidence-weighted forecast discounting — Day 1 at full weight, Day 2 at ~80%, Day 3 at ~60%
 - [ ] **MDS-04**: Intra-day re-planning — re-run schedule approximately every 6 hours when forecast deviates significantly from plan
@@ -64,7 +64,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SCO-02 | Phase 7 | Complete |
 | SCO-03 | Phase 8 | Complete |
 | SCO-04 | Phase 7 | Complete |
-| MDS-01 | Phase 9 | Pending |
+| MDS-01 | Phase 9 | Complete |
 | MDS-02 | Phase 10 | Pending |
 | MDS-03 | Phase 10 | Pending |
 | MDS-04 | Phase 10 | Pending |

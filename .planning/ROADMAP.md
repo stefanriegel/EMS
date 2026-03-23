@@ -74,7 +74,7 @@ Plans:
   3. Weather data degrades gracefully — if both EVCC and Open-Meteo are unreachable, system falls back to seasonal averages and continues operating
 **Plans:** 2 plans
 Plans:
-- [ ] 09-01-PLAN.md — OpenMeteoClient + cascading solar forecast provider + lifespan wiring
+- [x] 09-01-PLAN.md — OpenMeteoClient + cascading solar forecast provider + lifespan wiring
 - [x] 09-02-PLAN.md — ConsumptionForecaster 72h hourly prediction extension
 
 ### Phase 10: Multi-Day Scheduling
