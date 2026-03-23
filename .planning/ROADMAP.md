@@ -41,7 +41,10 @@ See MILESTONES.md for details.
   1. EMS starts without any setup wizard routes or config layers -- `setup_api.py`, `setup_config.py`, and `SetupWizard.tsx` do not exist
   2. Navigating to `/setup` in the browser shows the dashboard (or redirects), not a wizard page
   3. All runtime configuration is read from Add-on options (`options.json`) with no `ems_config.json` fallback layer
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [ ] 12-01-PLAN.md — Backend wizard removal (delete setup_api.py, setup_config.py, clean main.py lifespan)
+- [ ] 12-02-PLAN.md — Frontend wizard removal (delete SetupWizard.tsx, clean App.tsx routing)
 
 ### Phase 13: MQTT Discovery Overhaul
 **Goal**: All HA entities follow best practices -- availability, origin metadata, proper naming, correct platforms, and entity categories
@@ -86,7 +89,7 @@ Phases execute in numeric order: 12 -> 13 -> 14 -> 15
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 12. Wizard Removal | v1.2 | 0/TBD | Not started | - |
+| 12. Wizard Removal | v1.2 | 0/2 | Not started | - |
 | 13. MQTT Discovery Overhaul | v1.2 | 0/TBD | Not started | - |
 | 14. Controllable Entities | v1.2 | 0/TBD | Not started | - |
 | 15. HA Ingress Support | v1.2 | 0/TBD | Not started | - |
