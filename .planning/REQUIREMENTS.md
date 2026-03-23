@@ -70,40 +70,40 @@ Requirements for Intelligent Self-Tuning milestone.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INFRA-01 | TBD | Pending |
-| INFRA-02 | TBD | Pending |
-| INFRA-03 | TBD | Pending |
-| INFRA-04 | TBD | Pending |
-| INFRA-05 | TBD | Pending |
-| FCST-01 | TBD | Pending |
-| FCST-02 | TBD | Pending |
-| FCST-03 | TBD | Pending |
-| FCST-04 | TBD | Pending |
-| FCST-05 | TBD | Pending |
-| FCST-06 | TBD | Pending |
-| FCST-07 | TBD | Pending |
-| TUNE-01 | TBD | Pending |
-| TUNE-02 | TBD | Pending |
-| TUNE-03 | TBD | Pending |
-| TUNE-04 | TBD | Pending |
-| TUNE-05 | TBD | Pending |
-| TUNE-06 | TBD | Pending |
-| TUNE-07 | TBD | Pending |
-| TUNE-08 | TBD | Pending |
-| ANOM-01 | TBD | Pending |
-| ANOM-02 | TBD | Pending |
-| ANOM-03 | TBD | Pending |
-| ANOM-04 | TBD | Pending |
-| ANOM-05 | TBD | Pending |
-| ANOM-06 | TBD | Pending |
-| ANOM-07 | TBD | Pending |
-| ANOM-08 | TBD | Pending |
+| INFRA-01 | Phase 16 | Pending |
+| INFRA-02 | Phase 16 | Pending |
+| INFRA-03 | Phase 16 | Pending |
+| INFRA-04 | Phase 16 | Pending |
+| INFRA-05 | Phase 16 | Pending |
+| FCST-01 | Phase 17 | Pending |
+| FCST-02 | Phase 17 | Pending |
+| FCST-03 | Phase 17 | Pending |
+| FCST-04 | Phase 17 | Pending |
+| FCST-05 | Phase 17 | Pending |
+| FCST-06 | Phase 17 | Pending |
+| FCST-07 | Phase 17 | Pending |
+| ANOM-01 | Phase 18 | Pending |
+| ANOM-02 | Phase 18 | Pending |
+| ANOM-03 | Phase 18 | Pending |
+| ANOM-04 | Phase 18 | Pending |
+| ANOM-05 | Phase 18 | Pending |
+| ANOM-06 | Phase 18 | Pending |
+| ANOM-07 | Phase 18 | Pending |
+| ANOM-08 | Phase 18 | Pending |
+| TUNE-01 | Phase 19 | Pending |
+| TUNE-02 | Phase 19 | Pending |
+| TUNE-03 | Phase 19 | Pending |
+| TUNE-04 | Phase 19 | Pending |
+| TUNE-05 | Phase 19 | Pending |
+| TUNE-06 | Phase 19 | Pending |
+| TUNE-07 | Phase 19 | Pending |
+| TUNE-08 | Phase 19 | Pending |
 
 **Coverage:**
 - v1.3 requirements: 28 total
-- Mapped to phases: 0
-- Unmapped: 28
+- Mapped to phases: 28
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-23*
-*Last updated: 2026-03-23 after initial definition*
+*Last updated: 2026-03-23 after roadmap creation*

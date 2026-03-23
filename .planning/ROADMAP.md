@@ -1,105 +1,87 @@
-# Roadmap: EMS v2
+# Roadmap: EMS v1.3 Intelligent Self-Tuning
+
+## Overview
+
+Replace manual tuning with data-driven ML models that learn from real usage patterns. The dependency chain is strict: ML infrastructure first, then an upgraded forecaster that produces trustworthy predictions, then anomaly detection that measures system health, and finally self-tuning control that adjusts parameters only when the forecast and observability layers prove reliable. Each phase delivers independent user value while building the foundation for the next.
 
 ## Milestones
 
-- ✅ **v1.0 Independent Dual-Battery EMS** - Phases 1-6 (shipped 2026-03-23)
-- ✅ **v1.1 Advanced Optimization** - Phases 7-11 (shipped 2026-03-23)
-- 🚧 **v1.2 Home Assistant Best Practice Alignment** - Phases 12-15 (in progress)
+- v1.0 Independent Dual-Battery EMS (shipped 2026-03-23)
+- v1.1 Advanced Optimization (shipped 2026-03-23)
+- v1.2 Home Assistant Best Practice Alignment (shipped 2026-03-23)
+- **v1.3 Intelligent Self-Tuning** - Phases 16-19 (in progress)
 
 ## Phases
 
-<details>
-<summary>v1.0 Independent Dual-Battery EMS (Phases 1-6) - SHIPPED 2026-03-23</summary>
+**Phase Numbering:**
+- Integer phases (1, 2, 3): Planned milestone work
+- Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
-See MILESTONES.md for details.
+Decimal phases appear between their surrounding integers in numeric order.
 
-</details>
-
-<details>
-<summary>v1.1 Advanced Optimization (Phases 7-11) - SHIPPED 2026-03-23</summary>
-
-See MILESTONES.md for details.
-
-</details>
-
-### v1.2 Home Assistant Best Practice Alignment
-
-**Milestone Goal:** Make EMS a first-class HA citizen -- proper entity model, controllable via services, accessible via Ingress, and runtime-tunable through HA entities.
-
-- [x] **Phase 12: Wizard Removal** - Remove setup wizard; Add-on options page becomes sole config surface (completed 2026-03-23)
-- [x] **Phase 13: MQTT Discovery Overhaul** - Availability, origin metadata, binary sensors, entity naming, and translations (completed 2026-03-23)
-- [x] **Phase 14: Controllable Entities** - Number, Select, and Button entities with MQTT subscribe infrastructure (completed 2026-03-23)
-- [x] **Phase 15: HA Ingress Support** - Dashboard accessible in HA sidebar with proper path and auth handling (completed 2026-03-23)
+- [ ] **Phase 16: ML Infrastructure** - Foundation layer for model persistence, feature extraction, and safe sklearn execution
+- [ ] **Phase 17: Consumption Forecaster Upgrade** - Weather-aware forecasting with accuracy tracking and proper validation
+- [ ] **Phase 18: Anomaly Detection** - Nightly anomaly model training with lightweight per-cycle checks and tiered alerts
+- [ ] **Phase 19: Self-Tuning Control** - Data-driven parameter adjustment with shadow mode, bounded changes, and automatic rollback
 
 ## Phase Details
 
-### Phase 12: Wizard Removal
-**Goal**: Add-on options page is the sole configuration surface with zero wizard code remaining
-**Depends on**: Phase 11 (v1.1 complete)
-**Requirements**: CFG-01, CFG-02, CFG-03
+### Phase 16: ML Infrastructure
+**Goal**: All ML components have a reliable foundation for model persistence, feature extraction, and non-blocking training
+**Depends on**: Phase 15 (v1.2 complete)
+**Requirements**: INFRA-01, INFRA-02, INFRA-03, INFRA-04, INFRA-05
 **Success Criteria** (what must be TRUE):
-  1. EMS starts without any setup wizard routes or config layers -- `setup_api.py`, `setup_config.py`, and `SetupWizard.tsx` do not exist
-  2. Navigating to `/setup` in the browser shows the dashboard (or redirects), not a wizard page
-  3. All runtime configuration is read from Add-on options (`options.json`) with no `ems_config.json` fallback layer
-**Plans**: 2 plans
-Plans:
-- [x] 12-01-PLAN.md — Backend wizard removal (delete setup_api.py, setup_config.py, clean main.py lifespan)
-- [x] 12-02-PLAN.md — Frontend wizard removal (delete SetupWizard.tsx, clean App.tsx routing)
+  1. A trained sklearn model can be saved to /config/ems_models/ and restored across EMS restarts with version metadata preserved
+  2. When sklearn is upgraded, stale models are automatically discarded and retrained instead of crashing
+  3. Feature extraction from InfluxDB and HA statistics completes in a single cached read without blocking the 5s control loop
+  4. sklearn .fit() calls run in a background executor and never block the async event loop
+  5. OMP_NUM_THREADS=2 is set in the Docker image so training on aarch64 does not oversubscribe CPU threads
+**Plans**: TBD
 
-### Phase 13: MQTT Discovery Overhaul
-**Goal**: All HA entities follow best practices -- availability, origin metadata, proper naming, correct platforms, and entity categories
-**Depends on**: Phase 12
-**Requirements**: DISC-01, DISC-02, DISC-03, DISC-04, DISC-05, DISC-06, DISC-07, DISC-08, DISC-09, DISC-10, DISC-11, DISC-12, DISC-13
+### Phase 17: Consumption Forecaster Upgrade
+**Goal**: The consumption forecaster produces meaningfully better predictions using real weather, historical patterns, and proper validation -- and the system knows how accurate those predictions are
+**Depends on**: Phase 16
+**Requirements**: FCST-01, FCST-02, FCST-03, FCST-04, FCST-05, FCST-06, FCST-07
 **Success Criteria** (what must be TRUE):
-  1. When EMS goes offline, all entities show "unavailable" in HA (not stale values)
-  2. HA device page shows three devices (EMS Huawei, EMS Victron, EMS System) with entities grouped by physical device, and each device links to the EMS dashboard via configuration_url
-  3. Entity names in HA are clean (no device name duplication) with diagnostic and config entities properly categorized
-  4. `huawei_online`, `victron_online`, `grid_charge_active`, and `export_active` appear as binary sensors (not sensors) with correct device classes
-  5. Existing `unique_id` values are preserved -- no HA dashboards or automations break on upgrade
-**Plans**: 3 plans
-Plans:
-- [x] 13-01-PLAN.md — Entity model refactor with best-practice discovery payloads (LWT, origin, three devices, naming)
-- [x] 13-02-PLAN.md — Binary sensor entities and platform migration cleanup
-- [x] 13-03-PLAN.md — Add-on translations audit and completion
+  1. Forecast predictions incorporate outdoor temperature and Open-Meteo weather data as model inputs instead of the hardcoded neutral_temp placeholder
+  2. The model uses 24h-ago and 1-week-ago consumption as lag features, plus day-of-week encoding
+  3. After each day, the system computes and logs MAPE (mean absolute percentage error) comparing predicted vs actual consumption, visible via /api/ml/status
+  4. The model uses HistGradientBoostingRegressor with native NaN handling so missing weather or lag data does not crash training
+  5. Training uses expanding-window time-series cross-validation with recency weighting, not random splits
+**Plans**: TBD
 
-### Phase 14: Controllable Entities
-**Goal**: Users can control EMS parameters and modes directly from HA UI, automations, and scripts
-**Depends on**: Phase 13
-**Requirements**: CTRL-01, CTRL-02, CTRL-03, CTRL-04, CTRL-05, CTRL-06, CTRL-07, CTRL-08, CTRL-09, CTRL-10, CTRL-11
+### Phase 18: Anomaly Detection
+**Goal**: The system detects unusual consumption patterns, communication failures, and battery behavior drift -- alerting the user without generating false-positive fatigue
+**Depends on**: Phase 17
+**Requirements**: ANOM-01, ANOM-02, ANOM-03, ANOM-04, ANOM-05, ANOM-06, ANOM-07, ANOM-08
 **Success Criteria** (what must be TRUE):
-  1. User can adjust Huawei and Victron min-SoC via HA number sliders and the new value takes effect on the next control cycle
-  2. User can switch control mode (AUTO, HOLD, GRID_CHARGE, DISCHARGE_LOCKED) via an HA select entity and see the mode reflected in EMS state
-  3. User can press "Force Grid Charge" and "Reset to Auto" button entities in HA and EMS responds within one control cycle
-  4. After any command is processed, the entity's state topic reflects the updated value (state echo)
-  5. MQTT subscribe infrastructure survives paho reconnects without silent thread crash
-**Plans**: 2 plans
-Plans:
-- [x] 14-01-PLAN.md — MQTT subscribe infrastructure, entity definitions, and defensive paho threading
-- [x] 14-02-PLAN.md — Coordinator command handler, mode override, Supervisor persistence, and main.py wiring
+  1. Recurring driver timeout patterns are detected and surfaced as communication loss anomalies
+  2. Unusual consumption spikes relative to time-of-day baselines trigger tiered alerts -- warning after 1 occurrence, alert after 3 within 24h
+  3. SoC charge/discharge curve deviations and round-trip efficiency degradation trends are tracked and flagged over weeks
+  4. Nightly IsolationForest training runs in a background executor while per-cycle anomaly checks use only pre-computed thresholds (no sklearn predict in the 5s loop)
+  5. Anomaly events are queryable via REST API and optionally sent as Telegram notifications
+**Plans**: TBD
 
-### Phase 15: HA Ingress Support
-**Goal**: Dashboard is accessible from the HA sidebar without separate port or URL, while direct access continues to work
-**Depends on**: Phase 12
-**Requirements**: INGR-01, INGR-02, INGR-03, INGR-04, INGR-05, INGR-06
+### Phase 19: Self-Tuning Control
+**Goal**: Control parameters (dead-bands, ramp rates, min-SoC profiles) automatically adjust based on real usage data -- with strict safety gates ensuring tuning only activates when the system has proven forecast accuracy and sufficient historical data
+**Depends on**: Phase 17 (MAPE tracking), Phase 18 (oscillation detection)
+**Requirements**: TUNE-01, TUNE-02, TUNE-03, TUNE-04, TUNE-05, TUNE-06, TUNE-07, TUNE-08
 **Success Criteria** (what must be TRUE):
-  1. Clicking the EMS entry in the HA sidebar opens the dashboard with all assets loading correctly
-  2. WebSocket state updates work through both Ingress and direct port access simultaneously
-  3. Ingress requests bypass JWT authentication (trusted by HA session), while direct port access still requires login
-  4. All frontend routes, API calls, and static assets work with relative paths under both access methods
-**Plans**: 2 plans
-Plans:
-- [x] 15-01-PLAN.md — Backend Ingress: config.yaml fields, IngressMiddleware, auth bypass
-- [x] 15-02-PLAN.md — Frontend Ingress: Vite relative base, dynamic WS URL, relative fetch paths
-**UI hint**: yes
+  1. The system counts state transitions per hour and uses this oscillation rate to inform dead-band and ramp rate adjustments
+  2. Parameter changes are bounded to max 10% per night with absolute safe minimums, and automatically revert if oscillation rate increases
+  3. Self-tuning runs in shadow mode for 14+ days (logging recommended vs actual parameters) before any live parameter changes are applied
+  4. Self-tuning only activates when forecast MAPE is below 25% and at least 60 days of training data exist
+  5. Dead-band, ramp rate, and min-SoC profile tuning each adjust independently based on their respective signals (oscillation rate, grid import spikes, consumption patterns)
+**Plans**: TBD
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 12 -> 13 -> 14 -> 15
+Phases execute in numeric order: 16 -> 17 -> 18 -> 19
 
-| Phase | Milestone | Plans Complete | Status | Completed |
-|-------|-----------|----------------|--------|-----------|
-| 12. Wizard Removal | v1.2 | 2/2 | Complete    | 2026-03-23 |
-| 13. MQTT Discovery Overhaul | v1.2 | 3/3 | Complete    | 2026-03-23 |
-| 14. Controllable Entities | v1.2 | 2/2 | Complete    | 2026-03-23 |
-| 15. HA Ingress Support | v1.2 | 2/2 | Complete    | 2026-03-23 |
+| Phase | Plans Complete | Status | Completed |
+|-------|----------------|--------|-----------|
+| 16. ML Infrastructure | 0/? | Not started | - |
+| 17. Consumption Forecaster Upgrade | 0/? | Not started | - |
+| 18. Anomaly Detection | 0/? | Not started | - |
+| 19. Self-Tuning Control | 0/? | Not started | - |

@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Intelligent Self-Tuning
-status: Defining requirements
+status: Ready to plan
 stopped_at: null
-last_updated: "2026-03-23T22:00:00.000Z"
+last_updated: "2026-03-23T23:00:00.000Z"
 progress:
-  total_phases: 0
+  total_phases: 4
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -19,14 +19,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-23)
 
 **Core value:** Both battery systems operate independently with zero oscillation to maximize PV self-consumption
-**Current focus:** Defining v1.3 requirements
+**Current focus:** Phase 16 — ML Infrastructure
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-03-23 — Milestone v1.3 started
+Phase: 16 of 19 (ML Infrastructure)
+Plan: 0 of ? in current phase
+Status: Ready to plan
+Last activity: 2026-03-23 — Roadmap created for v1.3 Intelligent Self-Tuning (4 phases, 28 requirements)
+
+Progress: [░░░░░░░░░░] 0%
 
 ## Performance Metrics
 
@@ -49,21 +51,13 @@ Last activity: 2026-03-23 — Milestone v1.3 started
 
 *Updated after each plan completion*
 
-**v1.0+v1.1 historical velocity (26 plans across 11 phases):**
+**v1.0-v1.2 historical velocity (35 plans across 15 phases):**
 
 | Phase | Plans | Avg/Plan |
 |-------|-------|----------|
 | Phase 01-06 | 16 | 3.7 min |
 | Phase 07-11 | 10 | 3.3 min |
-| Phase 12 P02 | 1min | 1 tasks | 2 files |
-| Phase 12 P01 | 3 | 2 tasks | 6 files |
-| Phase 13 P03 | 1min | 1 tasks | 0 files |
-| Phase 13 P01 | 5min | 1 tasks | 2 files |
-| Phase 13 P02 | 5min | 1 tasks | 4 files |
-| Phase 14 P01 | 4min | 1 tasks | 2 files |
-| Phase 14 P02 | 4min | 2 tasks | 4 files |
-| Phase 15 P02 | 1min | 2 tasks | 7 files |
-| Phase 15 P01 | 2min | 2 tasks | 4 files |
+| Phase 12-15 | 9 | 2.9 min |
 
 ## Accumulated Context
 
@@ -72,24 +66,10 @@ Last activity: 2026-03-23 — Milestone v1.3 started
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
-- [Roadmap v1.2]: Four-phase structure: Wizard Removal -> MQTT Discovery -> Controllable Entities -> Ingress
-- [Roadmap v1.2]: unique_id values must be preserved across the MQTT discovery overhaul (DISC-12)
-- [Roadmap v1.2]: Platform migration (sensor -> binary_sensor) requires empty retained payload cleanup (DISC-11)
-- [Roadmap v1.2]: paho subscribe threading pitfall requires defensive wrapping and health check (CTRL-11)
-- [Roadmap v1.2]: Phase 15 (Ingress) depends on Phase 12 only, independent of MQTT phases 13-14
-- [Phase 12]: Auth check moved from /api/setup/status to /api/state for frontend redirect
-- [Phase 12]: Kept EMS_CONFIG_PATH in run.sh for JWT secret directory resolution
-- [Phase 12]: Env-var-only config: no ems_config.json fallback, Add-on options are sole config surface
-- [Phase 13]: en.yaml already covered all 40 config and schema keys -- no changes needed
-- [Phase 13]: Replaced device_name with configuration_url constructor param for HA device info
-- [Phase 13]: Used get_running_loop() instead of get_event_loop() for trio compatibility
-- [Phase 13]: Derived export_active from control_state == EXPORTING (no ExportAdvisor.should_export() method)
-- [Phase 14]: Extended EntityDefinition with optional fields for controllable entities (backward compatible)
-- [Phase 14]: Mode override checked after EVCC hold but before grid charge slot detection in control loop
-- [Phase 14]: Supervisor persistence is fire-and-forget to never block command handling
-- [Phase 15]: Used new URL('./api/ws/state', location.href) for dynamic WS URL under Ingress
-- [Phase 15]: Raw ASGI middleware for IngressMiddleware to support WebSocket scope types
-- [Phase 15]: ingress_port: 8000 matches uvicorn listen port (Supervisor connects to container internal port)
+- [v1.3 roadmap]: Strict 4-phase dependency chain: infra (16) -> forecast (17) -> anomaly (18) -> self-tuning (19)
+- [v1.3 roadmap]: Self-tuning activation gated on MAPE < 25% and 60+ days data
+- [v1.3 roadmap]: All sklearn .fit() calls use run_in_executor; per-cycle anomaly checks use pre-computed thresholds only
+- [v1.3 roadmap]: No new core dependencies needed; entire ML feature set built on existing scikit-learn + numpy
 
 ### Pending Todos
 
@@ -98,11 +78,10 @@ None yet.
 ### Blockers/Concerns
 
 - Victron Venus OS Modbus register addresses need verification against actual firmware (v3.20+)
-- Ingress WebSocket proxying under wss:// is MEDIUM confidence -- may need HTTP polling fallback
-- Supervisor API options write replaces ALL options (not partial patch) -- migration must read-merge-write
+- MAPE threshold (25%) for self-tuning gate is a heuristic -- calibrate against real data in Phase 17
 
 ## Session Continuity
 
-Last session: 2026-03-23T21:32:42.275Z
-Stopped at: Completed 15-01-PLAN.md
+Last session: 2026-03-23
+Stopped at: Roadmap created, ready to plan Phase 16
 Resume file: None
