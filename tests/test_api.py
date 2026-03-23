@@ -1243,3 +1243,208 @@ async def test_devices_includes_role_and_setpoint() -> None:
     # Top-level pool_status
     assert data["pool_status"] == "NORMAL"
 
+
+# ---------------------------------------------------------------------------
+# GET /api/optimization/forecast — solar forecast endpoint
+# ---------------------------------------------------------------------------
+
+
+def _make_day_plans() -> list:
+    """Return a list of DayPlan instances for testing."""
+    from datetime import date, datetime, timezone
+
+    from backend.schedule_models import ChargeSlot, DayPlan
+
+    slot = ChargeSlot(
+        battery="huawei",
+        target_soc_pct=85.0,
+        start_utc=datetime(2026, 3, 23, 1, 0, tzinfo=timezone.utc),
+        end_utc=datetime(2026, 3, 23, 5, 0, tzinfo=timezone.utc),
+        grid_charge_power_w=3000,
+    )
+    return [
+        DayPlan(
+            day_index=0,
+            date=date(2026, 3, 23),
+            solar_forecast_kwh=18.5,
+            consumption_forecast_kwh=12.3,
+            net_energy_kwh=6.2,
+            confidence=1.0,
+            charge_target_kwh=3.5,
+            slots=[slot],
+            advisory=False,
+        ),
+        DayPlan(
+            day_index=1,
+            date=date(2026, 3, 24),
+            solar_forecast_kwh=22.1,
+            consumption_forecast_kwh=11.8,
+            net_energy_kwh=10.3,
+            confidence=0.8,
+            charge_target_kwh=0.0,
+            slots=[],
+            advisory=True,
+        ),
+        DayPlan(
+            day_index=2,
+            date=date(2026, 3, 25),
+            solar_forecast_kwh=5.2,
+            consumption_forecast_kwh=13.0,
+            net_energy_kwh=-7.8,
+            confidence=0.6,
+            charge_target_kwh=8.0,
+            slots=[],
+            advisory=True,
+        ),
+    ]
+
+
+class MockWeatherScheduler:
+    """Stub for WeatherScheduler with active_day_plans support."""
+
+    def __init__(
+        self,
+        active_schedule=None,
+        active_day_plans=None,
+    ) -> None:
+        self.active_schedule = active_schedule
+        self.active_day_plans = active_day_plans
+
+
+@pytest.mark.anyio
+async def test_get_optimization_forecast_returns_503_when_no_scheduler() -> None:
+    """GET /api/optimization/forecast returns 503 when scheduler is None."""
+    from backend.api import get_scheduler
+    from fastapi import FastAPI
+
+    app = FastAPI(title="EMS-test")
+    app.include_router(api_router)
+    app.dependency_overrides[get_orchestrator] = lambda: MockOrchestrator(state=_make_state())
+    app.dependency_overrides[get_scheduler] = lambda: None
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/optimization/forecast")
+
+    assert resp.status_code == 503
+
+
+@pytest.mark.anyio
+async def test_get_optimization_forecast_returns_503_when_no_day_plans() -> None:
+    """GET /api/optimization/forecast returns 503 when active_day_plans is None."""
+    from backend.api import get_scheduler
+    from fastapi import FastAPI
+
+    app = FastAPI(title="EMS-test")
+    app.include_router(api_router)
+    app.dependency_overrides[get_orchestrator] = lambda: MockOrchestrator(state=_make_state())
+    app.dependency_overrides[get_scheduler] = lambda: MockWeatherScheduler(active_day_plans=None)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/optimization/forecast")
+
+    assert resp.status_code == 503
+
+
+@pytest.mark.anyio
+async def test_get_optimization_forecast_returns_200_with_days() -> None:
+    """GET /api/optimization/forecast returns 200 with per-day forecast data."""
+    import json
+
+    from backend.api import get_scheduler
+    from fastapi import FastAPI
+
+    day_plans = _make_day_plans()
+    scheduler = MockWeatherScheduler(active_day_plans=day_plans)
+    app = FastAPI(title="EMS-test")
+    app.include_router(api_router)
+    app.dependency_overrides[get_orchestrator] = lambda: MockOrchestrator(state=_make_state())
+    app.dependency_overrides[get_scheduler] = lambda: scheduler
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/optimization/forecast")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "days" in data
+    assert len(data["days"]) == 3
+
+    day0 = data["days"][0]
+    assert day0["date"] == "2026-03-23"
+    assert day0["day_index"] == 0
+    assert day0["solar_kwh"] == 18.5
+    assert day0["consumption_kwh"] == 12.3
+    assert day0["net_kwh"] == 6.2
+    assert day0["confidence"] == 1.0
+    assert day0["charge_target_kwh"] == 3.5
+    assert day0["advisory"] is False
+
+    # Date fields must be ISO strings, not raw date objects
+    for day in data["days"]:
+        assert isinstance(day["date"], str)
+
+    # JSON-serialisable
+    json.dumps(data)
+
+
+@pytest.mark.anyio
+async def test_optimization_schedule_includes_day_plans_when_available() -> None:
+    """GET /api/optimization/schedule includes day_plans when WeatherScheduler has them."""
+    from backend.api import get_scheduler
+    from fastapi import FastAPI
+
+    schedule = _make_charge_schedule()
+    day_plans = _make_day_plans()
+    scheduler = MockWeatherScheduler(
+        active_schedule=schedule,
+        active_day_plans=day_plans,
+    )
+    app = FastAPI(title="EMS-test")
+    app.include_router(api_router)
+    app.dependency_overrides[get_orchestrator] = lambda: MockOrchestrator(state=_make_state())
+    app.dependency_overrides[get_scheduler] = lambda: scheduler
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/optimization/schedule")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "day_plans" in data
+    assert len(data["day_plans"]) == 3
+
+    dp0 = data["day_plans"][0]
+    assert dp0["date"] == "2026-03-23"
+    assert dp0["solar_kwh"] == 18.5
+    assert "slots" in dp0
+
+
+@pytest.mark.anyio
+async def test_optimization_schedule_no_day_plans_for_plain_scheduler() -> None:
+    """GET /api/optimization/schedule omits day_plans key when using plain Scheduler."""
+    from backend.api import get_scheduler
+    from fastapi import FastAPI
+
+    schedule = _make_charge_schedule()
+    # MockScheduler has no active_day_plans attribute
+    scheduler = MockScheduler(active_schedule=schedule)
+    app = FastAPI(title="EMS-test")
+    app.include_router(api_router)
+    app.dependency_overrides[get_orchestrator] = lambda: MockOrchestrator(state=_make_state())
+    app.dependency_overrides[get_scheduler] = lambda: scheduler
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/optimization/schedule")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "day_plans" not in data
+
