@@ -20,6 +20,7 @@ from backend.ha_mqtt_client import (
     HomeAssistantMqttClient,
     EntityDefinition,
     SENSOR_ENTITIES,
+    BINARY_SENSOR_ENTITIES,
 )
 from backend.unified_model import ControlState, UnifiedPoolState
 
@@ -129,8 +130,8 @@ class TestEntityDefinition:
             e.entity_id = "changed"  # type: ignore[misc]
 
     def test_sensor_entities_count(self):
-        """SENSOR_ENTITIES contains all 17 existing sensor entities."""
-        assert len(SENSOR_ENTITIES) == 17
+        """SENSOR_ENTITIES contains 15 sensor entities (online sensors migrated to binary_sensor)."""
+        assert len(SENSOR_ENTITIES) == 15
 
     def test_sensor_entities_are_entity_definitions(self):
         """All entries in SENSOR_ENTITIES are EntityDefinition instances."""
@@ -147,17 +148,26 @@ class TestUniqueIdPreservation:
     """All existing unique_id values must be preserved (DISC-12)."""
 
     def test_existing_unique_ids_unchanged(self):
-        """All 17 entities produce the same unique_id as before: ems_{entity_id}."""
-        expected_ids = [
+        """All entities produce the same unique_id as before: ems_{entity_id}.
+
+        huawei_online and victron_online moved to BINARY_SENSOR_ENTITIES but
+        retain their unique_id pattern.
+        """
+        sensor_expected = [
             "huawei_soc", "victron_soc", "huawei_setpoint", "victron_setpoint",
             "combined_power", "control_state", "evcc_battery_mode",
             "huawei_role", "victron_role", "huawei_power", "victron_power",
-            "huawei_online", "victron_online", "pool_status",
+            "pool_status",
             "victron_l1_power", "victron_l2_power", "victron_l3_power",
         ]
-        entity_ids = [e.entity_id for e in SENSOR_ENTITIES]
-        for eid in expected_ids:
-            assert eid in entity_ids, f"Missing entity_id: {eid}"
+        sensor_ids = [e.entity_id for e in SENSOR_ENTITIES]
+        for eid in sensor_expected:
+            assert eid in sensor_ids, f"Missing entity_id: {eid}"
+
+        # Migrated entities now in BINARY_SENSOR_ENTITIES
+        binary_ids = [e.entity_id for e in BINARY_SENSOR_ENTITIES]
+        assert "huawei_online" in binary_ids
+        assert "victron_online" in binary_ids
 
     def test_unique_id_format_in_discovery(self):
         """unique_id in discovery payload is ems_{entity_id}."""
@@ -167,7 +177,7 @@ class TestUniqueIdPreservation:
 
         client._ensure_discovery()
 
-        # Check a few known unique_ids
+        # Check a few known unique_ids (sensors + binary_sensors)
         payloads = []
         for c in mock_paho.publish.call_args_list:
             topic = c.args[0] if c.args else c.kwargs.get("topic")
@@ -180,6 +190,11 @@ class TestUniqueIdPreservation:
         assert "ems_victron_soc" in unique_ids
         assert "ems_control_state" in unique_ids
         assert "ems_pool_status" in unique_ids
+        # Binary sensors also have ems_ prefix unique_ids
+        assert "ems_huawei_online" in unique_ids
+        assert "ems_victron_online" in unique_ids
+        assert "ems_grid_charge_active" in unique_ids
+        assert "ems_export_active" in unique_ids
 
 
 class TestDiscoveryOriginMetadata:
@@ -294,7 +309,7 @@ class TestDiscoveryExpireAfter:
 
         for c in mock_paho.publish.call_args_list:
             topic = c.args[0]
-            if "config" in topic:
+            if "config" in topic and "/sensor/" in topic:
                 payload = json.loads(c.args[1])
                 assert payload.get("expire_after") == 120, (
                     f"Missing expire_after in {topic}"
@@ -335,8 +350,7 @@ class TestDiscoveryHasEntityName:
         assert names["victron_role"] == "Battery Role"
         assert names["huawei_power"] == "Battery Power"
         assert names["victron_power"] == "Battery Power"
-        assert names["huawei_online"] == "Online"
-        assert names["victron_online"] == "Online"
+        # huawei_online / victron_online moved to BINARY_SENSOR_ENTITIES
         assert names["pool_status"] == "Pool Status"
         assert names["victron_l1_power"] == "L1 Power"
         assert names["victron_l2_power"] == "L2 Power"
@@ -348,17 +362,22 @@ class TestDiscoveryEntityCategory:
 
     def test_diagnostic_entities(self):
         """Diagnostic entities have entity_category 'diagnostic'."""
-        diagnostic_ids = {
-            "huawei_online", "victron_online", "pool_status",
+        sensor_diagnostic_ids = {
+            "pool_status",
             "control_state", "evcc_battery_mode",
             "huawei_role", "victron_role",
             "victron_l1_power", "victron_l2_power", "victron_l3_power",
         }
         for e in SENSOR_ENTITIES:
-            if e.entity_id in diagnostic_ids:
+            if e.entity_id in sensor_diagnostic_ids:
                 assert e.entity_category == "diagnostic", (
                     f"{e.entity_id} should be diagnostic"
                 )
+        # Binary sensor diagnostics
+        for e in BINARY_SENSOR_ENTITIES:
+            assert e.entity_category == "diagnostic", (
+                f"{e.entity_id} should be diagnostic"
+            )
 
     def test_primary_entities_no_category(self):
         """Primary entities (SoC, power, setpoints) have entity_category None."""
@@ -382,10 +401,13 @@ class TestDiscoveryEntityCategory:
         client._ensure_discovery()
 
         diagnostic_ids = {
-            "huawei_online", "victron_online", "pool_status",
+            "pool_status",
             "control_state", "evcc_battery_mode",
             "huawei_role", "victron_role",
             "victron_l1_power", "victron_l2_power", "victron_l3_power",
+            # binary sensor diagnostics
+            "huawei_online", "victron_online",
+            "grid_charge_active", "export_active",
         }
         for c in mock_paho.publish.call_args_list:
             topic = c.args[0]
@@ -393,7 +415,7 @@ class TestDiscoveryEntityCategory:
                 payload = json.loads(c.args[1])
                 # Extract entity_id from topic
                 parts = topic.split("/")
-                entity_id = parts[-2]  # homeassistant/sensor/{device_id}/{entity_id}/config
+                entity_id = parts[-2]  # homeassistant/{platform}/{device_id}/{entity_id}/config
                 if entity_id in diagnostic_ids:
                     assert payload.get("entity_category") == "diagnostic", (
                         f"{entity_id} missing entity_category in payload"
@@ -431,11 +453,14 @@ class TestDiscoveryDeviceClass:
                 assert e.device_class == "enum", f"{e.entity_id} device_class"
                 assert e.state_class is None, f"{e.entity_id} state_class"
 
-    def test_online_entities_no_device_class(self):
-        """Online entities keep device_class=None for now (migrated in plan 02)."""
-        for e in SENSOR_ENTITIES:
-            if e.entity_id in ("huawei_online", "victron_online"):
-                assert e.device_class is None, f"{e.entity_id} should have no device_class"
+    def test_online_entities_migrated_to_binary_sensor(self):
+        """Online entities moved to BINARY_SENSOR_ENTITIES with device_class connectivity."""
+        sensor_ids = [e.entity_id for e in SENSOR_ENTITIES]
+        assert "huawei_online" not in sensor_ids
+        assert "victron_online" not in sensor_ids
+        binary_ids = {e.entity_id: e for e in BINARY_SENSOR_ENTITIES}
+        assert binary_ids["huawei_online"].device_class == "connectivity"
+        assert binary_ids["victron_online"].device_class == "connectivity"
 
 
 class TestDiscoveryConfigurationUrl:
@@ -467,19 +492,19 @@ class TestThreeDeviceGrouping:
         assert groups == {"huawei", "victron", "system"}
 
     def test_huawei_entities(self):
-        """Huawei device has the correct entities."""
+        """Huawei device has the correct sensor entities."""
         huawei_ids = {e.entity_id for e in SENSOR_ENTITIES if e.device_group == "huawei"}
         assert huawei_ids == {
             "huawei_soc", "huawei_setpoint", "huawei_power",
-            "huawei_role", "huawei_online",
+            "huawei_role",
         }
 
     def test_victron_entities(self):
-        """Victron device has the correct entities."""
+        """Victron device has the correct sensor entities."""
         victron_ids = {e.entity_id for e in SENSOR_ENTITIES if e.device_group == "victron"}
         assert victron_ids == {
             "victron_soc", "victron_setpoint", "victron_power",
-            "victron_role", "victron_online",
+            "victron_role",
             "victron_l1_power", "victron_l2_power", "victron_l3_power",
         }
 
@@ -560,14 +585,16 @@ class TestHaMqttTopics:
 
 class TestHaMqttDiscovery:
     def test_ensure_discovery_publishes_all_entities(self):
-        """_ensure_discovery() calls paho publish for each entity with retain=True."""
+        """_ensure_discovery() publishes sensor + binary_sensor discovery + migration cleanup."""
         client = _make_connected_client(device_id="ems")
         mock_paho = MagicMock()
         client._client = mock_paho
 
         client._ensure_discovery()
 
-        assert mock_paho.publish.call_count == len(SENSOR_ENTITIES)
+        # 15 sensors + 4 binary_sensors + 2 migration cleanup = 21
+        expected = len(SENSOR_ENTITIES) + len(BINARY_SENSOR_ENTITIES) + 2
+        assert mock_paho.publish.call_count == expected
         # All discovery publishes must use retain=True
         for c in mock_paho.publish.call_args_list:
             assert c.kwargs.get("retain", c.args[2] if len(c.args) > 2 else None) is True
@@ -581,7 +608,8 @@ class TestHaMqttDiscovery:
         client._ensure_discovery()
         client._ensure_discovery()
 
-        assert mock_paho.publish.call_count == len(SENSOR_ENTITIES)
+        expected = len(SENSOR_ENTITIES) + len(BINARY_SENSOR_ENTITIES) + 2
+        assert mock_paho.publish.call_count == expected
 
     def test_ensure_discovery_sets_flag(self):
         client = _make_connected_client()
@@ -634,14 +662,16 @@ class TestHaMqttPublishAsync:
         mock_paho.publish.assert_not_called()
 
     async def test_publish_sends_discovery_then_state_on_first_call(self):
-        """publish() sends len(SENSOR_ENTITIES) discovery + 1 state message on first call."""
+        """publish() sends discovery (sensors + binary + migration) + 1 state on first call."""
         client = _make_connected_client()
         mock_paho = MagicMock()
         client._client = mock_paho
 
         await client.publish(_make_state())
 
-        assert mock_paho.publish.call_count == len(SENSOR_ENTITIES) + 1
+        # 15 sensors + 4 binary + 2 migration + 1 state = 22
+        discovery_count = len(SENSOR_ENTITIES) + len(BINARY_SENSOR_ENTITIES) + 2
+        assert mock_paho.publish.call_count == discovery_count + 1
 
     async def test_publish_sends_only_state_on_subsequent_calls(self):
         """publish() sends only 1 state message after discovery is done."""
@@ -652,9 +682,9 @@ class TestHaMqttPublishAsync:
         await client.publish(_make_state())
         await client.publish(_make_state())
 
-        # First call: len(SENSOR_ENTITIES) discovery + 1 state
-        # Second call: 1 state only
-        assert mock_paho.publish.call_count == len(SENSOR_ENTITIES) + 2
+        # First call: discovery + 1 state; Second call: 1 state only
+        discovery_count = len(SENSOR_ENTITIES) + len(BINARY_SENSOR_ENTITIES) + 2
+        assert mock_paho.publish.call_count == discovery_count + 2
 
 
 class TestHaMqttCallbacks:
@@ -738,8 +768,9 @@ class TestHaMqttPublishCoordinatorState:
         state = _make_coordinator_state()
         await client.publish(state)
 
-        # discovery + state = len(SENSOR_ENTITIES) + 1
-        assert mock_paho.publish.call_count == len(SENSOR_ENTITIES) + 1
+        # discovery (sensors + binary + migration) + state
+        discovery_count = len(SENSOR_ENTITIES) + len(BINARY_SENSOR_ENTITIES) + 2
+        assert mock_paho.publish.call_count == discovery_count + 1
 
     async def test_coordinator_state_payload_has_new_fields(self):
         """Published JSON must include huawei_role, victron_role, pool_status."""
@@ -823,7 +854,227 @@ class TestValueKeysMatchDataclasses:
             "huawei_power_w", "victron_power_w",
             "victron_l1_power_w", "victron_l2_power_w", "victron_l3_power_w",
         }
-        for e in SENSOR_ENTITIES:
+        all_entities = list(SENSOR_ENTITIES) + list(BINARY_SENSOR_ENTITIES)
+        for e in all_entities:
             assert e.value_key in coord_fields or e.value_key in extra_keys, (
                 f"Entity '{e.entity_id}' value_key '{e.value_key}' not found"
             )
+
+
+# ---------------------------------------------------------------------------
+# Binary sensor entities (Plan 02)
+# ---------------------------------------------------------------------------
+
+
+class TestBinarySensorEntities:
+    """Tests for BINARY_SENSOR_ENTITIES list and definitions."""
+
+    def test_binary_sensor_count(self):
+        """BINARY_SENSOR_ENTITIES contains exactly 4 entries."""
+        assert len(BINARY_SENSOR_ENTITIES) == 4
+
+    def test_binary_sensor_entity_ids(self):
+        """All 4 expected binary sensor entity_ids are present."""
+        ids = {e.entity_id for e in BINARY_SENSOR_ENTITIES}
+        assert ids == {"huawei_online", "victron_online", "grid_charge_active", "export_active"}
+
+    def test_huawei_online_definition(self):
+        """huawei_online has device_class connectivity, entity_category diagnostic, device_group huawei."""
+        e = next(e for e in BINARY_SENSOR_ENTITIES if e.entity_id == "huawei_online")
+        assert e.platform == "binary_sensor"
+        assert e.device_class == "connectivity"
+        assert e.entity_category == "diagnostic"
+        assert e.device_group == "huawei"
+        assert e.value_key == "huawei_available"
+        assert e.name is None  # HA derives from device_class
+
+    def test_victron_online_definition(self):
+        """victron_online has device_class connectivity, entity_category diagnostic, device_group victron."""
+        e = next(e for e in BINARY_SENSOR_ENTITIES if e.entity_id == "victron_online")
+        assert e.platform == "binary_sensor"
+        assert e.device_class == "connectivity"
+        assert e.entity_category == "diagnostic"
+        assert e.device_group == "victron"
+        assert e.value_key == "victron_available"
+        assert e.name is None
+
+    def test_grid_charge_active_definition(self):
+        """grid_charge_active has device_class running, device_group system."""
+        e = next(e for e in BINARY_SENSOR_ENTITIES if e.entity_id == "grid_charge_active")
+        assert e.platform == "binary_sensor"
+        assert e.device_class == "running"
+        assert e.entity_category == "diagnostic"
+        assert e.device_group == "system"
+        assert e.value_key == "grid_charge_slot_active"
+
+    def test_export_active_definition(self):
+        """export_active has device_class running, device_group system."""
+        e = next(e for e in BINARY_SENSOR_ENTITIES if e.entity_id == "export_active")
+        assert e.platform == "binary_sensor"
+        assert e.device_class == "running"
+        assert e.entity_category == "diagnostic"
+        assert e.device_group == "system"
+        assert e.value_key == "export_active"
+
+    def test_all_binary_sensors_are_entity_definitions(self):
+        """All entries in BINARY_SENSOR_ENTITIES are EntityDefinition instances."""
+        for e in BINARY_SENSOR_ENTITIES:
+            assert isinstance(e, EntityDefinition)
+
+    def test_binary_sensor_unique_ids_follow_pattern(self):
+        """Binary sensor unique_ids follow pattern ems_{entity_id}."""
+        client = _make_connected_client(device_id="ems")
+        for e in BINARY_SENSOR_ENTITIES:
+            payload = json.loads(client._discovery_payload(e))
+            assert payload["unique_id"] == f"ems_{e.entity_id}"
+
+
+class TestBinarySensorDiscoveryPayload:
+    """Tests for binary_sensor discovery payload specifics."""
+
+    def test_no_expire_after(self):
+        """Binary sensor discovery payloads do NOT include expire_after."""
+        client = _make_connected_client(device_id="ems")
+        for e in BINARY_SENSOR_ENTITIES:
+            payload = json.loads(client._discovery_payload(e))
+            assert "expire_after" not in payload, (
+                f"{e.entity_id} should not have expire_after"
+            )
+
+    def test_payload_on_off(self):
+        """Binary sensor payloads include payload_on='True' and payload_off='False'."""
+        client = _make_connected_client(device_id="ems")
+        for e in BINARY_SENSOR_ENTITIES:
+            payload = json.loads(client._discovery_payload(e))
+            assert payload["payload_on"] == "True"
+            assert payload["payload_off"] == "False"
+
+    def test_discovery_topic_uses_binary_sensor_prefix(self):
+        """Binary sensor discovery topics use homeassistant/binary_sensor/ prefix."""
+        client = _make_client(device_id="ems")
+        for e in BINARY_SENSOR_ENTITIES:
+            topic = client._discovery_topic(e)
+            assert topic.startswith("homeassistant/binary_sensor/"), (
+                f"{e.entity_id} topic should start with homeassistant/binary_sensor/"
+            )
+
+    def test_value_template_uses_value_key(self):
+        """Binary sensor value_template uses value_json.{value_key} same as sensors."""
+        client = _make_connected_client(device_id="ems")
+        for e in BINARY_SENSOR_ENTITIES:
+            payload = json.loads(client._discovery_payload(e))
+            expected = f"{{{{ value_json.{e.value_key} }}}}"
+            assert payload["value_template"] == expected
+
+    def test_availability_present(self):
+        """Binary sensor payloads include availability topic."""
+        client = _make_connected_client(device_id="ems")
+        for e in BINARY_SENSOR_ENTITIES:
+            payload = json.loads(client._discovery_payload(e))
+            assert "availability" in payload
+            assert payload["availability"][0]["topic"] == "ems/status"
+
+    def test_has_entity_name_and_origin(self):
+        """Binary sensor payloads include has_entity_name and origin."""
+        client = _make_connected_client(device_id="ems")
+        for e in BINARY_SENSOR_ENTITIES:
+            payload = json.loads(client._discovery_payload(e))
+            assert payload["has_entity_name"] is True
+            assert payload["origin"]["name"] == "EMS"
+
+
+class TestPlatformMigrationCleanup:
+    """Tests for one-time migration that cleans up old sensor topics."""
+
+    def test_migration_publishes_empty_retained_to_old_topics(self):
+        """Migration publishes empty retained payload to old sensor topics."""
+        client = _make_connected_client(device_id="ems")
+        mock_paho = MagicMock()
+        client._client = mock_paho
+
+        client._ensure_discovery()
+
+        # Check for empty retained payloads to old sensor topics
+        cleanup_calls = [
+            c for c in mock_paho.publish.call_args_list
+            if len(c.args) >= 2 and c.args[1] == ""
+        ]
+        cleanup_topics = {c.args[0] for c in cleanup_calls}
+        assert "homeassistant/sensor/ems/huawei_online/config" in cleanup_topics
+        assert "homeassistant/sensor/ems/victron_online/config" in cleanup_topics
+
+    def test_migration_runs_once(self):
+        """Migration flag prevents re-running cleanup."""
+        client = _make_connected_client(device_id="ems")
+        mock_paho = MagicMock()
+        client._client = mock_paho
+
+        client._ensure_discovery()
+        count_first = mock_paho.publish.call_count
+
+        # Reset discovery flag to simulate reconnect
+        client._discovery_sent = False
+        client._ensure_discovery()
+        count_second = mock_paho.publish.call_count
+
+        # Second run should NOT publish migration cleanup again
+        # (migration_done flag stays True even after reconnect)
+        # Both runs publish discovery (sensors + binary), but only first run has migration
+        discovery_per_run = len(SENSOR_ENTITIES) + len(BINARY_SENSOR_ENTITIES)
+        assert count_first == discovery_per_run + 2  # +2 for migration
+        assert count_second == count_first + discovery_per_run  # no extra migration
+
+
+class TestCoordinatorStateExportActive:
+    """Tests for export_active field on CoordinatorState."""
+
+    def test_export_active_defaults_to_false(self):
+        """CoordinatorState has export_active: bool field defaulting to False."""
+        state = _make_coordinator_state()
+        assert hasattr(state, "export_active")
+        assert state.export_active is False
+
+    def test_export_active_can_be_set(self):
+        """export_active can be set to True."""
+        state = _make_coordinator_state(export_active=True)
+        assert state.export_active is True
+
+    def test_export_active_in_published_json(self):
+        """Published state JSON includes export_active."""
+        client = _make_connected_client()
+        mock_paho = MagicMock()
+        client._client = mock_paho
+        client._discovery_sent = True
+
+        state = _make_coordinator_state(export_active=True)
+        client._publish_state(state)
+
+        _, payload = mock_paho.publish.call_args[0]
+        parsed = json.loads(payload)
+        assert parsed["export_active"] is True
+
+    def test_export_active_false_in_published_json(self):
+        """Published state JSON includes export_active=False by default."""
+        client = _make_connected_client()
+        mock_paho = MagicMock()
+        client._client = mock_paho
+        client._discovery_sent = True
+
+        state = _make_coordinator_state()
+        client._publish_state(state)
+
+        _, payload = mock_paho.publish.call_args[0]
+        parsed = json.loads(payload)
+        assert parsed["export_active"] is False
+
+
+class TestSensorEntitiesNoOnline:
+    """Verify huawei_online and victron_online removed from SENSOR_ENTITIES."""
+
+    def test_huawei_online_not_in_sensors(self):
+        ids = [e.entity_id for e in SENSOR_ENTITIES]
+        assert "huawei_online" not in ids
+
+    def test_victron_online_not_in_sensors(self):
+        ids = [e.entity_id for e in SENSOR_ENTITIES]
+        assert "victron_online" not in ids
