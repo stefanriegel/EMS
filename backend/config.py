@@ -643,3 +643,82 @@ class LiveTariffConfig:
             ),
         )
 
+
+@dataclass
+class OpenMeteoConfig:
+    """Configuration for the Open-Meteo solar forecast fallback.
+
+    Used by :class:`~backend.weather_client.OpenMeteoClient` to fetch
+    global tilted irradiance from the free Open-Meteo forecast API and
+    convert it to estimated PV output.
+
+    Attributes:
+        latitude:  Site latitude in decimal degrees.
+        longitude: Site longitude in decimal degrees.
+        tilt:      Panel tilt angle in degrees from horizontal (default 30).
+        azimuth:   Panel azimuth in degrees: 0=south, -90=east, 90=west (default 0).
+        dc_kwp:    PV system rated DC capacity in kWp (default 10.0).
+        derating:  System derating factor for inverter/wiring/soiling losses
+                   (default 0.80).
+        timeout_s: HTTP request timeout in seconds (default 10.0).
+
+    Environment variables:
+        ``OPEN_METEO_LATITUDE``  -- site latitude (required for activation).
+        ``OPEN_METEO_LONGITUDE`` -- site longitude (required for activation).
+        ``OPEN_METEO_TILT``      -- panel tilt (default 30).
+        ``OPEN_METEO_AZIMUTH``   -- panel azimuth (default 0).
+        ``OPEN_METEO_DC_KWP``    -- PV capacity in kWp (default 10).
+    """
+
+    latitude: float = 0.0
+    longitude: float = 0.0
+    tilt: float = 30.0
+    azimuth: float = 0.0
+    dc_kwp: float = 10.0
+    derating: float = 0.80
+    timeout_s: float = 10.0
+
+    @classmethod
+    def from_env(cls) -> "OpenMeteoConfig | None":
+        """Construct from environment variables, or ``None`` if not configured.
+
+        Returns ``None`` when ``OPEN_METEO_LATITUDE`` or
+        ``OPEN_METEO_LONGITUDE`` is absent or empty -- the weather client
+        is entirely optional.
+        """
+        lat = os.environ.get("OPEN_METEO_LATITUDE", "")
+        lon = os.environ.get("OPEN_METEO_LONGITUDE", "")
+        if not lat or not lon:
+            return None
+        return cls(
+            latitude=float(lat),
+            longitude=float(lon),
+            tilt=float(os.environ.get("OPEN_METEO_TILT", "30")),
+            azimuth=float(os.environ.get("OPEN_METEO_AZIMUTH", "0")),
+            dc_kwp=float(os.environ.get("OPEN_METEO_DC_KWP", "10")),
+        )
+
+
+@dataclass
+class ModelStoreConfig:
+    """Configuration for ML model persistence.
+
+    Attributes:
+        model_dir: Directory for persisted models (default /config/ems_models).
+        enabled: Whether model persistence is active.
+
+    Environment variables:
+        ``EMS_MODEL_DIR`` -- directory path (default ``/config/ems_models``).
+    """
+
+    model_dir: str = "/config/ems_models"
+    enabled: bool = True
+
+    @classmethod
+    def from_env(cls) -> "ModelStoreConfig":
+        """Construct from environment variables."""
+        model_dir = os.environ.get("EMS_MODEL_DIR", "/config/ems_models")
+        return cls(
+            model_dir=model_dir,
+            enabled=bool(model_dir),
+        )
