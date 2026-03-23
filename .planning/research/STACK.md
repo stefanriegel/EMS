@@ -1,275 +1,223 @@
-# Technology Stack
+# Stack Research: ML Self-Tuning for EMS v1.3
 
-**Project:** EMS v1.2 -- Home Assistant Best Practice Alignment
+**Domain:** ML-enhanced energy management (forecasting, self-tuning, anomaly detection)
 **Researched:** 2026-03-23
+**Confidence:** HIGH (all recommendations use existing dependencies or well-established sklearn modules)
 
-## Recommended Stack Changes
+## Recommended Stack
 
-This milestone requires **zero new dependencies**. All changes are configuration/code-level changes to existing libraries. This is the correct outcome -- adding dependencies for HA protocol compliance would be a smell.
+### Core Technologies
 
-### Existing Dependencies (No Version Changes Needed)
+| Technology | Version | Purpose | Why Recommended |
+|------------|---------|---------|-----------------|
+| scikit-learn | >=1.4,<2 (keep existing) | All ML models: forecasting, anomaly detection, self-tuning | Already a dependency. Contains every algorithm needed: GBR, IsolationForest, HistGradientBoosting. Zero new deps required for core ML. Current stable is 1.8.0 (Dec 2025). |
+| numpy | >=1.25,<3 (keep existing) | Feature engineering, array ops, statistical computations | Already a dependency. Used for rolling statistics, z-score calculations, feature matrix construction. |
+| joblib | (bundled with sklearn) | Model persistence to disk | Ships with scikit-learn. The standard for sklearn model serialization. No additional install needed. |
 
-| Technology | Current Version | Purpose in v1.2 | Change Needed |
-|------------|----------------|------------------|---------------|
-| paho-mqtt | >=2.1 (pinned) | MQTT discovery overhaul + command topic subscriptions | **Code change only**: add `on_message` callback and `subscribe()` calls. No version bump. |
-| FastAPI | latest | Ingress path handling via `root_path` | **Code change only**: read `X-Ingress-Path` header, pass to `root_path`. |
-| uvicorn[standard] | latest | Serve behind HA Ingress reverse proxy | **No change**: already supports `--proxy-headers`. |
-| Vite | 8.0.1 (frontend) | Build SPA with dynamic base path for Ingress | **Config change only**: set `base` dynamically or use relative paths. |
+### Key Design Decision: NO New ML Dependencies
 
-### No New Dependencies
+The entire v1.3 ML feature set can be built with the existing `scikit-learn` and `numpy` dependencies. This is the strongest recommendation in this document.
 
-| Considered | Why NOT Needed |
-|------------|---------------|
-| aiomqtt / asyncio-mqtt | paho-mqtt 2.1 already works. The existing `EvccMqttDriver` proves the subscribe pattern works fine with paho's background thread + `call_soon_threadsafe`. Adding asyncio-mqtt would create two MQTT client patterns in the codebase. |
-| nginx / reverse proxy | HA Ingress proxies directly to port 8099. FastAPI + uvicorn handle this natively. |
-| PyYAML | Translations are YAML files in `ha-addon/translations/` -- edited by hand, not parsed by Python code. HA Supervisor reads them directly. |
-| Starlette middleware for path rewriting | FastAPI's built-in `root_path` mechanism handles Ingress path prefixing. A middleware would over-engineer this. |
+**Rationale:**
+- The EMS runs on aarch64 Alpine inside an HA Add-on with `openblas-dev` already installed for sklearn
+- Every new C-extension dependency (LightGBM, XGBoost) adds Docker build time, image size, and aarch64 compilation risk
+- The dataset is small: ~2,160 hourly samples per 90-day training window. At this scale, sklearn's `GradientBoostingRegressor` trains in <1 second. LightGBM's histogram binning advantage only kicks in above ~10,000 samples
+- scikit-learn 1.4+ has `HistGradientBoostingRegressor` which provides LightGBM-comparable speed natively if the dataset ever grows
 
-## Detailed Stack Analysis by Feature
+### Module-by-Module Recommendations
 
-### 1. MQTT Discovery Overhaul
+#### 1. Consumption Forecasting (Upgrade Existing)
 
-**Library:** paho-mqtt 2.1.0 (current: `>=2.1` in pyproject.toml -- already correct)
-**Confidence:** HIGH (verified against official HA MQTT docs + existing codebase pattern)
+| Component | Current | Recommended Change | Why |
+|-----------|---------|-------------------|-----|
+| Model class | `GradientBoostingRegressor` | Keep, or migrate to `HistGradientBoostingRegressor` | HistGBR handles missing values natively (useful when HA entities have gaps), trains faster. Available in sklearn >=1.0. Both support `warm_start=True`. |
+| Features | 5 features (temp, ewm_temp, dow, hour, month) | Add ~5 more: is_weekend, is_holiday_de, solar_forecast_kwh, wind_speed, cloud_cover | Weather features from existing Open-Meteo client. Calendar features from stdlib. No new deps. |
+| Feature engineering | Manual `_build_features()` | Keep manual approach | At 5-10 features, sklearn Pipelines add complexity without benefit. Keep the explicit feature matrix. |
+| Training data | 90 days HA SQLite | Keep 90 days | Sufficient for seasonal patterns. Longer risks concept drift from household changes. |
+| Retraining | Daily via `retrain_if_stale(24)` | Keep daily nightly batch | Correct cadence. More frequent wastes cycles. Less frequent misses seasonal shifts. |
 
-**What changes in the discovery payload (no library changes):**
-
+**Migration path for HistGBR:**
 ```python
-# Current minimal discovery payload:
-{
-    "name": "Huawei Battery SOC",
-    "unique_id": "ems_huawei_soc",
-    "state_topic": "homeassistant/sensor/ems/state",
-    "value_template": "{{ value_json.huawei_soc_pct }}",
-    "device": {"identifiers": ["ems"], "name": "Energy Management System", "manufacturer": "EMS"},
-}
+# Before (current)
+from sklearn.ensemble import GradientBoostingRegressor
+model = GradientBoostingRegressor(n_estimators=100, max_depth=3, random_state=42)
 
-# v1.2 best-practice payload adds:
-{
-    # ... existing fields ...
-    "availability": [
-        {"topic": "ems/availability", "payload_available": "online", "payload_not_available": "offline"},
-        {"topic": "homeassistant/status", "payload_available": "online", "payload_not_available": "offline"},
-    ],
-    "availability_mode": "all",
-    "origin": {
-        "name": "EMS Energy Management System",
-        "sw_version": "1.2.0",
-        "support_url": "https://github.com/stefanriegel/EMS",
-    },
-    "entity_category": "diagnostic",  # for internal metrics, not for primary entities
-    "expire_after": 120,  # seconds -- 2x the control loop interval (60s cycle * 2)
-    "device": {
-        "identifiers": ["ems"],
-        "name": "EMS",
-        "manufacturer": "Stefan Riegel",
-        "model": "EMS v2",
-        "sw_version": "1.2.0",
-    },
-}
+# After (v1.3) -- native NaN handling, faster training
+from sklearn.ensemble import HistGradientBoostingRegressor
+model = HistGradientBoostingRegressor(
+    max_iter=100, max_depth=3, random_state=42,
+    early_stopping=True, n_iter_no_change=10,  # auto stop if converged
+)
 ```
 
-**Key decisions:**
-- `availability_mode: "all"` requires both the EMS availability topic AND the HA birth message to be online. This is the correct mode -- if HA restarts, entities should briefly go unavailable until both sides confirm.
-- `expire_after: 120` (2 minutes) -- the control loop runs every 5s, so 120s is generous enough to survive brief stalls without false unavailability. Do NOT use `expire_after` on entities whose state is published with `retain=True` (HA docs explicitly warn about this causing stale-state-on-restart).
-- `entity_category: "diagnostic"` for internal tuning parameters (dead-band, ramp rate). Primary battery entities (SoC, power, role) should NOT have entity_category set.
-- `origin` is required for device-based discovery and recommended for component discovery. Include it on all entities.
+#### 2. Self-Tuning Control Parameters
 
-### 2. MQTT Command Topics (Subscribe Capability)
+| Component | Approach | Library | Why |
+|-----------|---------|---------|-----|
+| Parameter optimizer | Bayesian-style search over dead-band/ramp configs | `sklearn.gaussian_process.GaussianProcessRegressor` | Lightweight surrogate model. Evaluates few configurations per night. No scipy.optimize needed. |
+| Alternative | Grid search with performance scoring | Manual loop + numpy | Even simpler. With only 3-5 parameters to tune (dead_band_huawei, dead_band_victron, ramp_rate, min_soc_floor), exhaustive grid search is feasible nightly. |
+| Performance metric | Oscillation count + energy waste from InfluxDB | `numpy` statistical functions | Query InfluxDB for setpoint reversals, idle losses. Score each parameter set. |
+| Safety bounds | Hard min/max per parameter | Config dataclass with validation | Never let self-tuning set dead-band below safe minimum. Enforce bounds in code. |
 
-**Library:** paho-mqtt 2.1.0 (no change)
-**Confidence:** HIGH (existing `EvccMqttDriver` proves the pattern)
+**Recommended approach:** Start with simple grid search over bounded parameter space. Gaussian Process only if the parameter space grows beyond 5 dimensions.
 
-The current `HomeAssistantMqttClient` is publish-only. For number/select/switch/button entities, it must also subscribe to command topics and dispatch incoming values.
+#### 3. Anomaly Detection
 
-**paho-mqtt subscribe pattern already proven in codebase:**
+| Component | Algorithm | Library | Why |
+|-----------|-----------|---------|-----|
+| Hardware fault detection | `IsolationForest` | `sklearn.ensemble.IsolationForest` | Tree-based, fast, no feature scaling needed. Works well with the mixed numeric features from Modbus readings. Handles small datasets. |
+| Consumption anomaly | Statistical z-score on residuals | `numpy` | Simpler and more interpretable than ML for "actual vs predicted" deviation. Flag when residual > 2.5 sigma. |
+| Driver behavior drift | Exponential moving average on error rates | `numpy` | Track Modbus timeout rate, CRC error rate. EMA + threshold is sufficient. No ML model needed. |
+| SoC sensor drift | Rolling mean comparison | `numpy` | Compare reported SoC delta vs integrated power delta. Pure math, no ML. |
 
-```python
-# From evcc_mqtt_driver.py -- same pattern applies:
-self._client.on_message = self._on_message
-# In _on_connect:
-client.subscribe("ems/+/set")  # wildcard for all command topics
+**Why IsolationForest over LocalOutlierFactor:**
+- IsolationForest is faster on the data volumes here (~2K-10K samples)
+- Does not require feature scaling (LOF does)
+- Better at global anomalies (hardware faults are global, not local density deviations)
+- Supports `predict()` on new unseen data (LOF in sklearn is primarily for training data scoring unless `novelty=True`)
 
-# Callback (runs in paho background thread):
-def _on_message(self, client, userdata, msg):
-    # Bridge to asyncio via call_soon_threadsafe
-    if self._loop is not None:
-        self._loop.call_soon_threadsafe(self._handle_command, msg.topic, msg.payload)
+#### 4. Model Persistence
+
+| Component | Approach | Library | Why |
+|-----------|---------|---------|-----|
+| Serialization | `joblib.dump()` / `joblib.load()` | `joblib` (bundled with sklearn) | Standard sklearn persistence. Efficient with numpy arrays. Already available. |
+| Versioning | Metadata sidecar JSON | `json` (stdlib) | Store sklearn version, feature names, training date, sample count, RMSE alongside each model file. |
+| Storage location | `/config/ems_models/` (HA persistent config dir) | `pathlib` (stdlib) | Survives container restarts. HA Add-on convention for persistent data. |
+| Cold-start | Seasonal fallback (existing pattern) | Already implemented | Current `_seasonal_fallback_kwh` and `_seasonal_hourly_fallback` patterns are correct. Extend to anomaly detection (no anomaly flagging until model trained). |
+| Model rotation | Keep last 2 versions | `pathlib` + `os` (stdlib) | Rollback if new model performs worse. Simple file rename. |
+
+**Persistence file layout:**
+```
+/config/ems_models/
+  consumption_forecaster.joblib       # Current model
+  consumption_forecaster.prev.joblib  # Previous version (rollback)
+  consumption_forecaster.meta.json    # {sklearn_version, features, trained_at, rmse, samples}
+  anomaly_detector.joblib
+  anomaly_detector.meta.json
+  tuning_history.json                 # Parameter tuning results over time
 ```
 
-**No API changes in paho-mqtt 2.1 for `on_message`** -- the callback signature is `def on_message(client, userdata, msg)` regardless of `CallbackAPIVersion.VERSION2`. The VERSION2 changes only affect `on_connect` and `on_disconnect` signatures (which the codebase already uses correctly).
+### Supporting Libraries
 
-**Command topic convention for HA MQTT entities:**
+| Library | Version | Purpose | When to Use |
+|---------|---------|---------|-------------|
+| `holidays` | >=0.40 | German public holiday detection for calendar features | Only if holiday feature improves forecast accuracy. ~50KB pure Python, no C extensions. aarch64 safe. Optional -- can start without it and add later. |
 
-| Entity Type | Discovery Topic | Command Topic | State Topic |
-|-------------|----------------|---------------|-------------|
-| number | `homeassistant/number/ems/{id}/config` | `ems/number/{id}/set` | `ems/number/{id}/state` |
-| select | `homeassistant/select/ems/{id}/config` | `ems/select/{id}/set` | `ems/select/{id}/state` |
-| switch | `homeassistant/switch/ems/{id}/config` | `ems/switch/{id}/set` | `ems/switch/{id}/state` |
-| button | `homeassistant/button/ems/{id}/config` | `ems/button/{id}/set` | N/A (stateless) |
-| binary_sensor | `homeassistant/binary_sensor/ems/{id}/config` | N/A (read-only) | `ems/binary_sensor/{id}/state` |
-| sensor | `homeassistant/sensor/ems/{id}/config` | N/A (read-only) | `ems/sensor/{id}/state` |
+**Note:** `holidays` is the only potentially new dependency, and it is optional. All other functionality uses existing deps.
 
-**Critical: per-entity state topics vs shared state topic.** The current implementation uses a single shared state topic (`homeassistant/sensor/ems/state`) with `value_template` to extract per-entity values. This works for sensors (read-only) but controllable entities (number, select, switch) MUST have their own `command_topic` and SHOULD have their own `state_topic`. Recommendation: keep the shared JSON state topic for sensors, use individual topics for controllable entities.
+### Development Tools
 
-### 3. New Entity Types for v1.2
-
-**No new libraries needed. Discovery payloads only.**
-
-| HA Entity Type | Use Case | Key Fields |
-|---------------|----------|------------|
-| `binary_sensor` | Huawei online, Victron online, grid charge active, export active | `device_class: "connectivity"` or `"running"`, `payload_on: "ON"`, `payload_off: "OFF"` |
-| `number` | Min SoC (Huawei/Victron), dead-band, ramp rate | `min`, `max`, `step`, `mode: "slider"` or `"box"`, `entity_category: "config"` |
-| `select` | Control mode (IDLE/DISCHARGE/CHARGE/HOLD) | `options: [...]`, `entity_category: "config"` |
-| `switch` | Force grid charge on/off | `payload_on: "ON"`, `payload_off: "OFF"` |
-| `button` | Force schedule recompute | `device_class: "restart"`, `payload_press: "PRESS"` |
-
-**entity_category usage:**
-- `"config"` -- for number/select entities that tune runtime behavior (min SoC, dead-bands). These appear under the device's "Configuration" section in HA.
-- `"diagnostic"` -- for sensors showing internal state (setpoints, roles). These appear under "Diagnostic".
-- Omitted (None) -- for primary user-facing entities (SoC, power, online status). These appear in the main entity list.
-
-### 4. HA Ingress Support
-
-**Library changes:** None. FastAPI + uvicorn handle this natively.
-**Confidence:** HIGH (verified against HA developer docs + FastAPI docs)
-
-**config.yaml additions:**
-
-```yaml
-ingress: true
-ingress_port: 8000   # Match existing uvicorn port
-ingress_entry: /
-```
-
-**Backend changes (FastAPI):**
-
-FastAPI's `root_path` mechanism handles the Ingress path prefix. The HA Supervisor proxy passes `X-Ingress-Path` as a header. Two approaches:
-
-**Option A (recommended): ASGI middleware to set root_path from header**
-
-```python
-class IngressMiddleware:
-    """Read X-Ingress-Path header and set ASGI root_path."""
-    async def __call__(self, scope, receive, send):
-        if scope["type"] in ("http", "websocket"):
-            headers = dict(scope.get("headers", []))
-            ingress_path = headers.get(b"x-ingress-path", b"").decode()
-            if ingress_path:
-                scope["root_path"] = ingress_path
-        await self.app(scope, receive, send)
-```
-
-**Option B: uvicorn `--root-path` flag** -- only works for static path, but Ingress path is dynamic per installation.
-
-Option A is correct because the Ingress path varies per HA installation (it includes the add-on slug in the path).
-
-**Frontend changes (Vite/React):**
-
-The SPA must use relative paths for all assets and API calls. Currently:
-- API calls use relative paths like `/api/state` -- these work behind Ingress because the browser resolves them relative to the current origin.
-- Static assets: Vite's default `base: '/'` generates absolute paths (`/assets/index-xxx.js`). This breaks behind Ingress.
-
-**Fix:** Set Vite `base: './'` (relative) in production build, or inject the base path at build time. Relative paths (`./assets/...`) work universally.
-
-```typescript
-// vite.config.ts
-export default defineConfig({
-  base: './',  // Use relative paths for all assets
-  // ... existing config
-})
-```
-
-**WebSocket path:** The current WebSocket connects to `/api/ws/state`. Behind Ingress, this path is rewritten by the Supervisor proxy. As long as the frontend uses a relative WebSocket URL (constructed from `window.location`), this works automatically.
-
-**Authentication:** HA Ingress handles authentication before forwarding. The `X-Remote-User-ID`, `X-Remote-User-Name`, and `X-Remote-User-Display-Name` headers are passed to the add-on. The EMS auth middleware should detect Ingress requests (presence of `X-Ingress-Path` header or source IP `172.30.32.2`) and skip JWT auth for those requests. This is a security consideration -- only trust these headers from the Supervisor IP.
-
-**Port change:** The current config uses port 8000 with `host_network: true`. For Ingress, the internal port should match `ingress_port`. Keeping port 8000 and setting `ingress_port: 8000` is the simplest approach. The `ports` mapping can remain for direct access outside Ingress.
-
-### 5. Add-on Translations
-
-**No library changes.** Translations are static YAML files read by HA Supervisor.
-**Confidence:** HIGH (existing en.yaml and de.yaml already in place)
-
-The existing translations at `ha-addon/translations/en.yaml` and `de.yaml` already follow the correct format:
-
-```yaml
-configuration:
-  option_name:
-    name: Display Name
-    description: Description text
-network:
-  "8000/TCP": EMS web interface
-```
-
-For v1.2, the existing translations need to be updated to include descriptions for any new config options added. The format does not change.
-
-## What NOT to Add
-
-| Do NOT Add | Reason |
-|-----------|--------|
-| aiomqtt or asyncio-mqtt | Would create a second MQTT client pattern. paho-mqtt's thread-based model is proven and works fine for both publish and subscribe. |
-| Any YAML parsing library | Translations are static files, not parsed by the EMS Python code. |
-| nginx or any reverse proxy | HA Supervisor handles the Ingress proxy. FastAPI serves directly. |
-| Additional auth library | HA Ingress provides authentication. Detect Ingress via header/IP and bypass EMS JWT auth. |
-| WebSocket library beyond uvicorn | uvicorn already handles WebSocket. HA Ingress supports WebSocket proxying natively. |
-| Path rewriting middleware (beyond the thin ASGI root_path setter) | FastAPI's ASGI scope `root_path` is the standard mechanism. No third-party middleware needed. |
-
-## Integration Points
-
-### paho-mqtt: From Publish-Only to Pub/Sub
-
-The `HomeAssistantMqttClient` class needs these additions (not library changes):
-
-1. **`on_message` callback** -- registered in `__init__`, dispatches to a command handler
-2. **`subscribe()` call in `_on_connect`** -- subscribe to `ems/+/set` wildcard after CONNACK
-3. **Command dispatch map** -- maps topic patterns to handler functions that update `SystemConfig` / `OrchestratorConfig` or trigger actions (force grid charge, recompute schedule)
-4. **State echo** -- after processing a command, publish the new value back to the entity's state topic so HA confirms the change
-
-The threading model is identical to `EvccMqttDriver`: paho callbacks in background thread, `call_soon_threadsafe` to bridge into asyncio for state mutations.
-
-### FastAPI: Ingress Path Handling
-
-1. **Thin ASGI middleware** -- reads `X-Ingress-Path`, sets `scope["root_path"]`
-2. **Auth bypass for Ingress** -- detect Supervisor IP `172.30.32.2` or `X-Ingress-Path` header presence, skip JWT validation
-3. **No route changes** -- all `/api/*` routes work as-is because root_path is a prefix, not part of the route
-
-### Vite: Relative Base Path
-
-1. **`base: './'`** in vite.config.ts for production builds
-2. **WebSocket URL construction** -- use `window.location.host` + relative path, not hardcoded origin
-3. **No router changes** -- wouter's default behavior works with base paths
-
-## Versions Summary
-
-| Package | Version | Status | Source |
-|---------|---------|--------|--------|
-| paho-mqtt | 2.1.0 | Latest stable (Apr 2024), already pinned `>=2.1` | [PyPI](https://pypi.org/project/paho-mqtt/) |
-| FastAPI | latest (no pin) | Supports `root_path` for Ingress | [FastAPI docs](https://fastapi.tiangolo.com/advanced/behind-a-proxy/) |
-| uvicorn[standard] | latest (no pin) | Supports `--proxy-headers` | Standard |
-| Vite | 8.0.1 | Frontend build, `base` config for Ingress | Existing |
+| Tool | Purpose | Notes |
+|------|---------|-------|
+| `pytest` (existing) | Test ML models with synthetic data | Already configured. Use `pytest-mock` for mocking InfluxDB/HA responses. |
+| `sklearn.model_selection.cross_val_score` | Validate model quality during development | Built into sklearn. Use 5-fold time-series split for honest evaluation. |
+| `sklearn.model_selection.TimeSeriesSplit` | Proper CV for time-series data | Never use random k-fold on time-series. TimeSeriesSplit respects temporal ordering. |
 
 ## Installation
 
-No changes to `pyproject.toml` or `package.json` dependencies.
-
 ```bash
-# No new packages to install
-# Existing: pip install -e . (or uv pip install -e .)
-# Existing: cd frontend && npm install
+# No new core dependencies needed. Existing pyproject.toml is sufficient.
+# The only optional addition:
+pip install holidays>=0.40  # Only if German holiday features prove valuable
 ```
+
+**pyproject.toml change (if holidays added):**
+```toml
+dependencies = [
+    # ... existing ...
+    "holidays>=0.40",  # German public holiday calendar features (optional but lightweight)
+]
+```
+
+## Alternatives Considered
+
+| Recommended | Alternative | When to Use Alternative |
+|-------------|-------------|-------------------------|
+| sklearn `HistGradientBoostingRegressor` | LightGBM 4.6+ | Never for this project. LightGBM adds ~50MB to Docker image, requires `cmake` + `build-base` at build time on aarch64. Performance gain is negligible at <10K samples. Only consider if training dataset grows to >100K rows (unlikely for household EMS). |
+| sklearn `IsolationForest` | PyOD (Python Outlier Detection) | Never for this project. PyOD pulls in torch/tensorflow as optional deps and has a heavy dependency tree. IsolationForest covers our use case. |
+| sklearn `GaussianProcessRegressor` for tuning | Optuna hyperparameter optimization | Only if parameter space exceeds 10 dimensions. Optuna adds a dependency (sqlite, sqlalchemy). For 3-5 control parameters, manual grid search or GP is sufficient. |
+| `joblib` for persistence | `skops` (secure persistence) | Only if model files are loaded from untrusted sources. Our models are self-trained and self-loaded in the same container. Security benefit is irrelevant. skops adds a dependency. |
+| `numpy` z-score for consumption anomaly | sklearn `IsolationForest` | Only if simple statistical detection produces too many false positives. Start simple, upgrade if needed. |
+| Daily batch retraining | River (online learning) | Never for this project. River is a separate framework with different API. Daily batch retraining on 90 days of data takes <2 seconds. Online learning adds complexity with no benefit at this scale. |
+
+## What NOT to Use
+
+| Avoid | Why | Use Instead |
+|-------|-----|-------------|
+| TensorFlow / PyTorch | Massive dependencies (>500MB), GPU-oriented, overkill for tabular data with <10K samples. Would not fit in HA Add-on image budget. | sklearn gradient boosting |
+| LightGBM / XGBoost | Adds C++ build complexity on aarch64 Alpine. No performance benefit at this data scale. Marginal accuracy improvement not worth the operational cost. | sklearn `HistGradientBoostingRegressor` (same histogram-binning approach, built into sklearn) |
+| pandas | Not needed. Feature matrices are small enough for pure numpy arrays. Pandas adds ~30MB and import-time overhead on every control cycle restart. | numpy arrays + Python lists |
+| Prophet / NeuralProphet | Designed for univariate time-series with strong seasonality. Our problem is multivariate (weather, calendar, device state). Also heavy deps (cmdstanpy or PyTorch). | sklearn GBR with engineered features |
+| ONNX Runtime | Model serving framework for production ML pipelines. Our models are trained and served in the same Python process. No serialization format benefit. | joblib persistence |
+| MLflow / Weights & Biases | Experiment tracking platforms. Massive overkill for a single-model HA Add-on. | Simple JSON metadata sidecar files |
+| `dask-ml` / distributed training | The entire dataset fits in ~1MB of RAM. Distributed training adds complexity with zero benefit. | Single-process sklearn `fit()` |
+
+## Stack Patterns by Variant
+
+**If forecast accuracy is poor with GBR (>25% MAPE):**
+- Switch to `HistGradientBoostingRegressor` with `early_stopping=True`
+- Add more weather features from Open-Meteo (humidity, pressure, wind)
+- Increase training window from 90 to 180 days
+- All still within existing sklearn
+
+**If anomaly detection has too many false positives:**
+- Increase `contamination` threshold in IsolationForest (default 0.05 -> 0.01)
+- Add a confirmation window: only alert if anomaly persists for 3+ consecutive readings
+- Fall back to pure statistical approach (rolling z-score)
+
+**If self-tuning diverges or causes oscillation:**
+- Implement hard safety bounds that cannot be overridden
+- Require N days of stable operation before applying new parameters
+- Keep a "known-good" parameter snapshot for emergency rollback
+- Limit parameter changes to max 10% per tuning cycle
+
+## Version Compatibility
+
+| Package | Compatible With | Notes |
+|---------|-----------------|-------|
+| scikit-learn >=1.4,<2 | numpy >=1.25,<3 | Already validated in pyproject.toml. sklearn 1.8 supports Python 3.11-3.14. |
+| scikit-learn >=1.4 | joblib (bundled) | joblib ships with sklearn. No separate version pin needed. |
+| scikit-learn >=1.4 | `HistGradientBoostingRegressor` | Available since sklearn 1.0, stable API since 1.1. Safe to use. |
+| scikit-learn >=1.4 | `IsolationForest` | Available since sklearn 0.18, stable API. `warm_start` added in 0.21. |
+| holidays >=0.40 | Python 3.12+ | Pure Python, no C extensions, no numpy dependency. |
+| Alpine 3.21 + openblas-dev | scikit-learn wheels | Already validated in current Dockerfile. No additional system packages needed. |
+
+## Memory and Performance Budget (aarch64 constraints)
+
+| Operation | Expected Time | Memory | Frequency |
+|-----------|--------------|--------|-----------|
+| Consumption model training (90 days, ~2160 samples) | <1 second | ~5 MB peak | Nightly |
+| Anomaly model training (IsolationForest, ~2160 samples) | <0.5 second | ~3 MB peak | Nightly |
+| Parameter tuning grid search (50 configurations scored) | <2 seconds | ~2 MB peak | Nightly |
+| Single prediction (all models) | <5 ms | ~1 MB (model in memory) | Per control cycle (~5s) |
+| Model persistence (joblib dump) | <100 ms | Negligible | After each retrain |
+| Total model files on disk | - | ~2 MB | Persistent |
+
+These numbers are well within HA Add-on resource constraints. The entire ML pipeline adds <10 seconds to the nightly scheduler run and <5ms per control cycle for inference.
+
+## Integration Points with Existing Code
+
+| Existing Component | How ML Integrates | Change Required |
+|-------------------|-------------------|-----------------|
+| `ConsumptionForecaster` | Upgrade features, add HistGBR option, add persistence | Extend existing class |
+| `WeatherScheduler` | Consume improved forecasts, pass weather data to forecaster | Wire weather features into forecaster |
+| `Orchestrator` | Consume tuned parameters, feed metrics to anomaly detector | Add anomaly check in control loop |
+| `InfluxDB writer/reader` | Source training data for anomaly detection and tuning scoring | Add queries for setpoint reversal count, error rates |
+| `HA Statistics Reader` | Source training data (existing) | No change needed |
+| `/api/` endpoints | Expose model status, anomaly alerts, tuning history | New REST endpoints |
+| `Notifier` (Telegram) | Send anomaly alerts | New notification type |
+| `config.py` | Add ML config dataclass (model_dir, retrain_interval, safety_bounds) | New config section |
 
 ## Sources
 
-- [HA MQTT Integration docs](https://www.home-assistant.io/integrations/mqtt/) -- discovery payload structure, availability, origin
-- [HA MQTT Sensor](https://www.home-assistant.io/integrations/sensor.mqtt/) -- entity_category, expire_after behavior
-- [HA MQTT Number](https://www.home-assistant.io/integrations/number.mqtt/) -- command_topic, min/max/step/mode
-- [HA MQTT Select](https://www.home-assistant.io/integrations/select.mqtt/) -- command_topic, options list
-- [HA MQTT Switch](https://www.home-assistant.io/integrations/switch.mqtt/) -- payload_on/off, state vs command topics
-- [HA MQTT Button](https://www.home-assistant.io/integrations/button.mqtt/) -- payload_press, stateless action trigger
-- [HA MQTT Binary Sensor](https://www.home-assistant.io/integrations/binary_sensor.mqtt/) -- device_class connectivity/running
-- [HA Add-on Ingress docs](https://developers.home-assistant.io/docs/apps/presentation/) -- ingress config, X-Ingress-Path, port 8099 default, IP restriction
-- [HA Add-on Configuration](https://developers.home-assistant.io/docs/apps/configuration/) -- ingress_port, ingress_entry, ingress_stream, translations format
-- [FastAPI Behind a Proxy](https://fastapi.tiangolo.com/advanced/behind-a-proxy/) -- root_path mechanism
-- [paho-mqtt PyPI](https://pypi.org/project/paho-mqtt/) -- version 2.1.0 latest
-- [paho-mqtt migrations](https://eclipse.dev/paho/files/paho.mqtt.python/html/migrations.html) -- CallbackAPIVersion.VERSION2 signature details
+- [scikit-learn 1.8.0 documentation -- Model persistence](https://scikit-learn.org/stable/model_persistence.html) -- joblib best practices, versioning guidance
+- [scikit-learn 1.8.0 -- HistGradientBoostingRegressor](https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.HistGradientBoostingRegressor.html) -- native NaN support, early stopping, warm_start
+- [scikit-learn 1.8.0 -- IsolationForest](https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.IsolationForest.html) -- anomaly detection API, contamination parameter
+- [scikit-learn 1.8.0 -- Novelty and Outlier Detection](https://scikit-learn.org/stable/modules/outlier_detection.html) -- IsolationForest vs LOF comparison
+- [scikit-learn 1.8.0 -- Speeding up gradient boosting](https://inria.github.io/scikit-learn-mooc/python_scripts/ensemble_hist_gradient_boosting.html) -- HistGBR vs GBR speed comparison
+- [LightGBM PyPI](https://pypi.org/project/lightgbm/) -- aarch64 wheel availability confirmed for 4.6.0 (Feb 2025), but deemed unnecessary
+- [scikit-learn Release Highlights 1.8](https://scikit-learn.org/stable/auto_examples/release_highlights/plot_release_highlights_1_8_0.html) -- Array API support, Python 3.14 compatibility
+
+---
+*Stack research for: EMS v1.3 ML Self-Tuning*
+*Researched: 2026-03-23*

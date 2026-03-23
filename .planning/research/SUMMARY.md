@@ -1,172 +1,185 @@
 # Project Research Summary
 
-**Project:** EMS v1.2 — Home Assistant Best Practice Alignment
-**Domain:** HA Add-on MQTT integration — entity model, controllability, ingress, config simplification
+**Project:** EMS v1.3 — ML Self-Tuning for Dual-Battery Energy Management
+**Domain:** ML-enhanced residential energy management (forecasting, self-tuning, anomaly detection)
 **Researched:** 2026-03-23
-**Confidence:** HIGH
+**Confidence:** HIGH (stack), MEDIUM (features), HIGH (architecture), HIGH (pitfalls)
 
 ## Executive Summary
 
-EMS v1.2 is a polish-and-alignment milestone, not a feature milestone. The goal is to make the existing dual-battery EMS behave as a first-class Home Assistant citizen: proper MQTT discovery payloads, bidirectional entity control, Ingress dashboard access, and wizard removal. Mature integrations like EMS-ESP32, Zigbee2MQTT, and Tasmota define the pattern — and that pattern is well-documented in official HA developer docs. Zero new dependencies are required; every change is configuration or code-level against libraries already in the project.
+EMS v1.3 extends an existing, production-ready dual-battery controller with ML capabilities: improved consumption forecasting, self-tuning control parameters, and anomaly detection. The system already has scikit-learn and numpy as dependencies with a working `ConsumptionForecaster` class — the entire v1.3 ML feature set can be built without adding any new core dependencies. The existing codebase provides all the infrastructure hooks needed (nightly scheduler loop, dependency injection via setters, graceful degradation patterns, InfluxDB metrics, HA statistics reader), making this primarily an enhancement project rather than a greenfield build.
 
-The recommended approach is a strictly ordered four-phase delivery. The first priority is wizard removal and config migration, because it simplifies the startup code before anything else changes and avoids a critical data-loss risk for existing users. MQTT discovery cleanup follows immediately, targeting the "janky integration" perception with low-risk additions (availability, origin, entity_category, binary sensors). Controllable entities (number, select, button platforms) come third because they require the new MQTT subscribe infrastructure that the discovery overhaul prepares. HA Ingress support is the most isolated change and slots in as Phase 4, dependent only on Phase 1's routing cleanup.
+The recommended approach follows a strict three-layer progression: first fix the forecaster's known weaknesses (neutral temperature placeholder, missing lagged features, no accuracy tracking), then build the measurement and safety infrastructure (optimization scorecard, oscillation detector), and only then activate self-tuning parameters. This ordering is non-negotiable: self-tuning activated before the forecast is reliable amplifies forecast errors into dangerous parameter recommendations. The dependency chain is clear — anomaly detection requires a good forecast baseline; self-tuning dead-bands require the oscillation detector; self-tuning min-SoC requires both a trusted 72h forecast and a stable self-tuning foundation.
 
-The two non-obvious risks that must be managed carefully are: (1) `unique_id` preservation — changing even one `unique_id` value silently destroys every user dashboard, automation, and history reference pointing at that entity; and (2) the paho-mqtt background thread crash on reconnect when `subscribe()` is called from `_on_connect` — a known upstream bug that requires defensive wrapping and a periodic health check. Both risks have clear prevention strategies. The build order respects all inter-phase dependencies identified across the four research files.
+The highest risks are not technical but operational: running sklearn training synchronously in the async control loop (which causes missed 5s control cycles), self-tuning activating before enough training data exists (60-day minimum for seasonal coverage), and anomaly detection generating alert fatigue (tiered alerts with confirmation periods are mandatory, not optional). Every new ML component must follow the established patterns — `run_in_executor()` for training, setter-based injection, hard safety bounds, and graceful degradation to seasonal constants when data is unavailable.
 
 ## Key Findings
 
 ### Recommended Stack
 
-No version bumps and no new dependencies. The current stack already provides everything needed: paho-mqtt 2.1 handles both publish and subscribe (the `evcc_mqtt_driver.py` in the codebase is the exact reference implementation to copy), FastAPI handles the Ingress path prefix via the ASGI `root_path` mechanism, uvicorn serves behind the Supervisor proxy with `--proxy-headers`, and a single Vite `base: './'` config change fixes all static asset paths.
+The entire v1.3 ML feature set fits within the existing dependency set. scikit-learn `GradientBoostingRegressor` (or `HistGradientBoostingRegressor` for native NaN handling) handles consumption forecasting; `IsolationForest` handles anomaly detection; `joblib` (bundled with sklearn) handles model persistence. The only optional new dependency is `holidays>=0.40` for German public holiday calendar features — pure Python, no C extensions, ~50KB.
 
-**Core technologies and their required changes:**
-- **paho-mqtt 2.1**: Add `on_message` callback and `subscribe()` in `_on_connect` — code change only, no version bump
-- **FastAPI**: Add thin ASGI `IngressMiddleware` (~40 lines) reading `X-Ingress-Path` and setting `scope["root_path"]` — no new library
-- **uvicorn[standard]**: Already supports `--proxy-headers` — no change needed
-- **Vite 8.0.1**: Set `base: './'` in `vite.config.ts` for relative asset paths — single config change
+**Core technologies:**
+- `scikit-learn >=1.4,<2` (existing): All ML models — GBR/HistGBR forecasting, IsolationForest anomaly detection, Gaussian Process or grid search for self-tuning — zero new deps required
+- `numpy >=1.25,<3` (existing): Feature engineering, rolling statistics, z-score calculations, all numerical operations
+- `joblib` (bundled with sklearn): Model persistence to `/config/ems_models/` with version metadata sidecar JSON
+- `holidays >=0.40` (optional new): German public holiday calendar feature for day-of-week encoding — only add if holiday feature improves MAPE
+- `OMP_NUM_THREADS=2` / `OPENBLAS_NUM_THREADS=2` (Dockerfile env): Critical runtime fix for aarch64 — without this, training is 3-10x slower due to OpenMP oversubscription in containers
 
 ### Expected Features
 
-**Must have (table stakes) — fixes "janky integration" perception:**
-- Origin metadata on all MQTT discovery payloads — HA logs "unknown origin" without it; required since HA 2023.x
-- Availability topics with LWT — entities show stale values forever instead of "unavailable" without it
-- `expire_after: 120` on sensor entities — safety net if EMS crashes silently
-- `has_entity_name: True` with short names — entity IDs are ugly and device grouping breaks without it
-- `entity_category` tagging (diagnostic/config/none) — flat entity list is unusable without separation
-- `device_class` and `state_class` audit — required for HA long-term statistics and energy dashboard
-- Binary sensors for `huawei_online`, `victron_online`, `grid_charge_active`, `export_active` — boolean values are wrong on sensor platform
-- `configuration_url` in device info — points users to the EMS dashboard from the HA device page
-- Add-on `translations/en.yaml` — config options show raw key names (`huawei_deadband_w`) without it
-- Wizard removal — Add-on options page becomes sole config surface
+**Must have (table stakes — P1, Phase 1):**
+- Weather-aware consumption forecast — replace `neutral_temp = 10.0` placeholder with actual Open-Meteo hourly forecast; single biggest accuracy win for lowest effort
+- Lagged consumption features — add `load_24h_ago`, `load_168h_ago`, `avg_load_last_24h`; research confirms these are the strongest predictors for residential load
+- Day-of-week and holiday encoding — proper categorical encoding plus German holiday flag; current raw integer encoding loses cyclical structure
+- Forecast accuracy tracking (MAPE) — persist daily predicted vs. actual to InfluxDB; this gates all self-tuning features
+- Optimization scorecard — daily self-consumption ratio (SCR), self-sufficiency ratio (SSR), grid import kWh; the "did it work?" metric for all ML features
 
-**Should have (differentiators) — elevate from "works" to "excellent HA citizen":**
-- Number entities for tunable parameters (`min_soc`, `deadband`, `ramp_rate`) — HA automations can adjust seasonally
-- Select entity for control mode (AUTO/HOLD/GRID_CHARGE/DISCHARGE_LOCKED) — users pick mode from HA UI
-- Button entities for force actions (`force_grid_charge`, `reset_to_auto`) — one-tap control without opening the dashboard
-- HA Ingress support — dashboard accessible from HA sidebar without separate port/URL
-- Two HA devices (EMS Huawei + EMS Victron + EMS System) instead of one — matches physical reality
+**Should have (differentiators — P2, Phase 2):**
+- Self-tuning dead-bands and ramp rates — count oscillation events from `ems_decision` log; adjust hysteresis within [100W, 500W] bounds nightly; unique vs. EMHASS and SolarAssistant
+- Multi-horizon 72h forecast with real weather — pipe Open-Meteo hourly forecasts into `predict_hourly(72)`; enables better WeatherScheduler decisions
+- Consumption anomaly detection — flag hours where actual > 2x forecast for 2+ consecutive hours; tiered alerts with 15-minute cooldown
 
-**Defer to v2+:**
-- Custom HA integration (Python component) — MQTT discovery provides 90% of the value at 5% of the complexity
-- MQTT device triggers — wrong semantic model for a continuous-state EMS
-- Climate entity — wrong platform for battery management
-- Diagnostic uptime/cycle-duration sensors — polish, not blocking
-- 50+ granular entities (one per register) — entity sprawl harms usability
+**Defer (P3, Phase 3 or v1.4):**
+- Self-tuning min-SoC profiles — requires high forecast confidence (MAPE < 25%), complex safety constraints, high under-reserve risk
+- SoC curve anomaly detection — needs weeks of baseline data for calibration; meaningful only after Phase 2 is stable
+- Efficiency degradation tracking — meaningful only over months of data; low urgency for v1.3
 
 ### Architecture Approach
 
-All changes are modifications to existing components plus one new 40-line file (`backend/ingress.py`) and three file deletions (`setup_config.py`, `setup_api.py`, `SetupWizard.tsx`). The MQTT publish path is unchanged; a new subscribe path is added alongside it. The `evcc_mqtt_driver.py` paho threading pattern (subscribe in `_on_connect`, cross thread boundary via `call_soon_threadsafe`) is the exact reference to replicate in `ha_mqtt_client.py`. The entity registry refactors from a flat `_ENTITIES` tuple to a typed `EntityDefinition` dataclass list that dispatches discovery by platform.
+The ML features integrate as three loosely-coupled subsystems — `ConsumptionForecaster` (upgrade in place), `SelfTuner` (new), `AnomalyDetector` (new) — sharing a common `FeaturePipeline` and `ModelStore`. No existing component needs a rewrite; the Coordinator gains an anomaly hook (~40 lines) and setter methods for tunable parameters, following the established injection pattern used by ExportAdvisor, HA MQTT, and Telegram notifier. Heavy computation (training, self-tuning evaluation) runs exclusively in the nightly `_nightly_scheduler_loop`; per-cycle anomaly checking uses pre-computed statistical thresholds only (no sklearn inference on the hot path).
 
-**Major components and change type:**
-1. `ha_mqtt_client.py` — MODIFY (major): add subscribe path, availability publishing, entity registry refactor to `EntityDefinition` dataclass
-2. `coordinator.py` — MODIFY (minor): add `_handle_ha_command()` callback wired via `set_ha_mqtt_client()`
-3. `backend/ingress.py` — NEW: ASGI middleware reading `X-Ingress-Path` and setting `scope["root_path"]`
-4. `backend/main.py` — MODIFY: remove wizard wiring, add ingress middleware to app
-5. `frontend/src/App.tsx` — MODIFY: remove setup route, fix WebSocket URL construction
-6. `frontend/vite.config.ts` — MODIFY: set `base: './'`
-7. `backend/setup_api.py`, `setup_config.py`, `frontend/src/pages/SetupWizard.tsx` — DELETE
+**Major components:**
+1. `FeaturePipeline` (`backend/feature_pipeline.py`, NEW) — centralized feature extraction from HA SQLite + InfluxDB, cached in memory for the nightly batch; gracefully degrades when either source is unavailable
+2. `ConsumptionForecaster` (UPGRADED in place) — same public interface, upgraded internals: real weather features, lagged consumption, delegates to FeaturePipeline; interface change is zero — downstream WeatherScheduler and Scheduler are untouched
+3. `SelfTuner` (`backend/self_tuner.py`, NEW) — reads 7 days of `ems_decision` InfluxDB data nightly, produces bounded `TuningRecommendation` objects, applies via Coordinator setters; max 10% change per night per parameter
+4. `AnomalyDetector` (`backend/anomaly_detector.py`, NEW) — two-layer: per-cycle lightweight threshold checks (< 10ms), nightly IsolationForest retrain; alert cooldown per-flag type (default 15 min)
+5. `ModelStore` (`backend/model_store.py`, NEW) — `joblib` persistence to `/config/ems_models/` with `ModelMetadata` sidecar; version mismatch triggers discard and retrain
 
 ### Critical Pitfalls
 
-1. **`unique_id` change destroys user dashboards** — Never rename existing `unique_id` values (`ems_huawei_soc` etc.). New entities follow the same `ems_{entity_id}` pattern. Use `default_entity_id` (not deprecated `object_id`, removed in HA 2026.4) for entity ID control. Define migration plan before writing any discovery code.
+1. **Blocking the async control loop with sklearn training** — always use `asyncio.get_event_loop().run_in_executor(None, model.fit, X, y)` for any `.fit()` call; never call `.train()` synchronously in the async path; set a 120s training timeout with fallback to the previous model
 
-2. **Platform migration leaves ghost entities** — Moving `huawei_online` from `sensor` to `binary_sensor` requires publishing an empty retained payload to the old `homeassistant/sensor/ems/huawei_online/config` topic before publishing the new `homeassistant/binary_sensor/...` discovery. Implement a one-time migration function that runs on first v1.2 startup.
+2. **Self-tuning activating before the forecast is trustworthy** — enforce a 60-day minimum data requirement and shadow mode (log ML-recommended vs. actual parameters for 14+ days before applying); MAPE must be below 25% before any parameter auto-adjustment activates
 
-3. **Ingress breaks SPA routing, WebSocket, and API calls** — The frontend uses absolute paths today. Fix: Vite `base: './'`, WebSocket URL constructed from `window.location` using `new URL('./api/ws/state', window.location.href)`, API calls use relative paths. Must be tested with both direct port access and Ingress URL simultaneously.
+3. **Anomaly detection alert fatigue from high variance household consumption** — use hour-of-day and day-of-week specific baselines, require 2+ consecutive cycles for confirmation, tiered alerts (INFO log only for 1.5-2x, Telegram for sustained 2x, coordinator action only for hardware faults); never allow anomaly detection to change control parameters
 
-4. **paho subscribe threading — silent background thread crash** — Known upstream bug (`paho#894`): calling `subscribe()` in `_on_connect` during reconnect can crash paho's background thread while `_connected` stays `True`. Prevention: wrap subscribe in try/except for `BrokenPipeError`/`OSError`, add periodic health check (no successful publish in N cycles → force reconnect). Consider split publish/subscribe paho clients as the safest pattern.
+4. **Self-tuning destabilizing the 5-second control loop** — build the oscillation detector first (before any parameter adjustment capability); enforce combined dead-band minimum of 150W across both systems; apply parameter changes only at clean transition points (start of hour, after HOLD); auto-revert to defaults if oscillation rate exceeds 6 transitions/hour
 
-5. **Config migration data loss** — Existing users configured via the wizard have settings in `ems_config.json` that are absent from `options.json`. On v1.2 upgrade these silently revert to defaults and the add-on enters degraded mode. Prevention: idempotent one-time migration script that reads `ems_config.json` and writes values to Supervisor options via `POST /addons/self/options` (read-merge-write, not replace). Must execute before main application startup.
+5. **aarch64 OpenMP oversubscription** — set `OMP_NUM_THREADS=2` and `OPENBLAS_NUM_THREADS=2` in the Dockerfile; this is the single most impactful fix for runtime training performance on Raspberry Pi class hardware; without it, GBR training is 3-10x slower than expected
 
 ## Implications for Roadmap
 
-Based on combined research, the suggested phase structure follows the dependency graph from ARCHITECTURE.md exactly.
+Based on research, the dependency chain mandates this order: fix the forecast foundation first, build measurement and safety infrastructure second, activate self-tuning third. Reversing any step creates compounding risk.
 
-### Phase 1: Wizard Removal and Config Migration
+### Phase 1: Forecaster Foundation
 
-**Rationale:** Config migration (Pitfall 6) has the highest recovery cost of any pitfall (rated HIGH — user must manually re-enter all settings). It must run before any other change to avoid data loss on upgrade. Removing the wizard also simplifies `main.py` lifespan from three config layers to two, making subsequent phases cleaner. No other phase depends on the wizard being present; Phases 3 and 4 (Ingress) depend on it being gone.
-**Delivers:** Simplified startup, `ems_config.json` eliminated, `setup_api.py` / `setup_config.py` / `SetupWizard.tsx` deleted, one-time idempotent migration script, frontend routing cleaned up.
-**Addresses:** Wizard anti-feature (FEATURES.md), config migration pitfall (PITFALLS.md P6).
-**Avoids:** Users losing all configured settings on upgrade; setup wizard rendering under Ingress.
+**Rationale:** The current forecaster uses `neutral_temp = 10.0` for all predictions, making it substantially less accurate than it could be with zero additional dependencies. Everything that follows (self-tuning, anomaly detection, optimization scorecard) depends on a trustworthy forecast as its baseline. This phase has the highest value-to-effort ratio in the entire project.
 
-### Phase 2: MQTT Discovery Overhaul
+**Delivers:** A materially improved consumption forecaster that uses real weather data, lagged consumption history, and proper day-of-week encoding. Forecast accuracy tracking (MAPE) persisted to InfluxDB. Optimization scorecard API endpoint.
 
-**Rationale:** All table-stakes items (origin, availability, expire_after, has_entity_name, entity_category, binary sensors, translations) require no MQTT subscribe infrastructure and have no inter-dependencies. Grouping them delivers the "it no longer feels janky" result in a single shippable phase. The `EntityDefinition` registry refactor is the foundation Phase 3 depends on — the `command_topic` field lives there.
-**Delivers:** ~30 discovery entities across sensor/binary_sensor platforms, availability topic with LWT, origin metadata, `expire_after: 120`, proper entity naming with `has_entity_name`, `entity_category` tagging, `translations/en.yaml`, platform migration cleanup (empty retained payloads to old sensor topics before new binary_sensor publication).
-**Addresses:** All 10 table-stakes features in FEATURES.md. Pitfalls P1 (unique_id preservation), P2 (ghost entities from platform migration).
-**Uses:** paho-mqtt publish path only — no subscribe infrastructure yet. Entity registry pattern (ARCHITECTURE.md Pattern 3).
+**Addresses:** Weather-aware forecast, lagged features, day-of-week/holiday encoding, MAPE tracking, optimization scorecard (all P1 features from FEATURES.md)
 
-### Phase 3: Controllable Entities (Number, Select, Button)
+**Implements:** FeaturePipeline, upgraded ConsumptionForecaster, ModelStore (no persistence initially — retrain on startup is safer per PITFALLS.md Pitfall 8)
 
-**Rationale:** Depends on Phase 2's `EntityDefinition` registry (command_topic field). Adds the MQTT subscribe infrastructure — the most architecturally significant addition in this milestone. Number/select/button entities all share the same subscribe path, so implementing them together is efficient. The paho threading pitfall (P4) must be solved here.
-**Delivers:** MQTT subscribe loop in `ha_mqtt_client.py`, `_handle_ha_command()` in coordinator, number entities for min_soc/deadband/ramp_rate (with hardware limit validation), select entity for control mode, button entities for force actions, state echo after command processing.
-**Addresses:** All three differentiator controllable entity features (FEATURES.md). Pitfalls P4 (paho threading), P5 (Number min/max vs hardware limits), P7 (silent service call failure).
-**Uses:** paho subscribe pattern from existing `evcc_mqtt_driver.py` (ARCHITECTURE.md Pattern 1). QoS 1 for command subscriptions.
+**Avoids:** Feature leakage (Pitfall 5), model drift from neutral temp placeholder, cold-start model being worse than seasonal fallback (Pitfall 1)
 
-### Phase 4: HA Ingress Support
+**Research flag:** Standard patterns — sklearn GBR, Open-Meteo integration, HA statistics all well-documented in codebase and STACK.md; skip phase research
 
-**Rationale:** Independent of MQTT work (no shared code paths with Phases 2-3). Depends on Phase 1 (wizard routes removed, frontend routing simplified). Can be developed in parallel with Phase 3 if capacity allows. Isolated failure domain — if Ingress breaks, direct port 8000 access is unaffected; no user data is at risk.
-**Delivers:** `ingress: true` / `ingress_port` / `panel_icon` / `panel_title` in `config.yaml`, `backend/ingress.py` (IngressMiddleware, ~40 lines), Vite `base: './'`, dynamic WebSocket URL construction from `window.location`, auth bypass for Ingress requests (detect `X-Ingress-Path` header or Supervisor IP `172.30.32.2`).
-**Addresses:** Ingress differentiator (FEATURES.md). Pitfall P3 (broken SPA routing, WebSocket, and API calls under Ingress).
-**Uses:** ASGI middleware pattern (ARCHITECTURE.md Pattern 2). FastAPI `root_path` mechanism.
+### Phase 2: Safety and Observability Layer
+
+**Rationale:** The oscillation detector and anomaly detection infrastructure must exist and be proven stable before any self-tuning parameter writes happen. Building observability before action is the correct order — you cannot tune what you cannot measure. This phase also produces immediate user value (anomaly alerts) while building the foundation for Phase 3.
+
+**Delivers:** AnomalyDetector with per-cycle scoring and nightly IsolationForest retrain. Oscillation counter from `ems_decision` InfluxDB data. New API endpoints (`/api/ml/status`, `/api/ml/anomalies`). Coordinator anomaly hook (setter injection pattern, ~40 lines).
+
+**Addresses:** Consumption anomaly detection, multi-horizon 72h forecast (P2 features from FEATURES.md)
+
+**Implements:** AnomalyDetector, Coordinator anomaly hook, oscillation counting infrastructure
+
+**Avoids:** Anomaly false positive alert fatigue (Pitfall 4 — tiered alerts and confirmation periods must be in the initial design), blocking control loop with inference (Pitfall 3 — pre-computed thresholds only in the 5s loop)
+
+**Research flag:** Standard patterns — IsolationForest, asyncio executor offload well-documented; skip phase research
+
+### Phase 3: Self-Tuning Parameters
+
+**Rationale:** Self-tuning activates only after Phase 1 (reliable forecast, MAPE tracking) and Phase 2 (oscillation detector that can catch and revert bad parameters) are stable. The 60-day data maturity requirement means this phase starts implementation during Phase 2 but only goes live once the data threshold is met. Shadow mode must run for 14+ days before any parameter is applied to the live system.
+
+**Delivers:** SelfTuner with dead-band and ramp rate adjustment. Shadow mode logging. `TuningRecommendation` API. Auto-revert on oscillation detection. Dashboard showing outcome metrics (fewer mode switches, not raw parameter values).
+
+**Addresses:** Self-tuning dead-bands, ramp rates (P2 features); defers min-SoC self-tuning to Phase 4 (requires forecast MAPE < 25% proven over 30+ days)
+
+**Implements:** SelfTuner, Coordinator setter methods, ModelStore persistence with version metadata
+
+**Avoids:** Self-tuning destabilizing control loop (Pitfall 2 — oscillation detector is prerequisite), cold-start parameter thrashing (Pitfall 1 — 60-day minimum, shadow mode gate), model versioning failures on Add-on update (Pitfall 8 — sklearn version check in ModelStore)
+
+**Research flag:** Bounded parameter optimization with safety constraints is a nuanced area — consider `/gsd:research-phase` for the shadow mode activation logic and rollback mechanism design
+
+### Phase 4: Advanced ML (Optional v1.3 or v1.4)
+
+**Rationale:** These features require months of baseline data under ML control before they can be trusted. They are explicitly marked P3 in FEATURES.md and should only be planned once Phase 3 is stable and producing measurable improvements on the scorecard.
+
+**Delivers:** Self-tuning min-SoC profiles, SoC curve anomaly detection, efficiency degradation tracking
+
+**Addresses:** Remaining P3 features from FEATURES.md
+
+**Avoids:** Under-reserve risk from min-SoC tuning with unreliable forecast (requires Phase 1 MAPE < 25% confirmed over 30+ days)
+
+**Research flag:** Min-SoC dynamic programming or heuristic design warrants `/gsd:research-phase` — the safety constraints and interaction with the nightly scheduler are non-trivial
 
 ### Phase Ordering Rationale
 
-- **Phase 1 must be first** because config migration data loss (P6) has the highest recovery cost and affects every user upgrading from v1.1. Wizard deletion also unblocks Ingress routing.
-- **Phase 2 before Phase 3** because Phase 3 needs the `EntityDefinition` registry with `command_topic` field that Phase 2 introduces. Subscribe topics are cleaner to add when all entity definitions are already typed.
-- **Phase 4 after Phase 1, independent of Phases 2-3** — can be parallelized or deferred. No MQTT code paths are shared with the Ingress changes.
-- **Each phase is independently shippable** — the add-on remains fully functional and safe at every phase boundary.
+- **Forecast before self-tuning:** Anomaly detection quality and self-tuning signal quality both degrade proportionally to forecast error. An inaccurate forecast makes everything downstream worse.
+- **Observability before action:** You cannot safely auto-tune parameters you cannot measure. The oscillation detector (Phase 2) is a hard prerequisite for self-tuning (Phase 3), not just nice-to-have.
+- **aarch64 fixes belong to Phase 1:** `OMP_NUM_THREADS=2`, `run_in_executor()` for training, and `HistGradientBoostingRegressor` migration should all land in Phase 1 before any new ML code is written — they are foundational correctness fixes.
+- **Shadow mode gates Phase 3 activation:** The 60-day data requirement and 14-day shadow period mean Phase 3 implementation starts in parallel with Phase 2, but live activation is gated by data maturity. Implementation can proceed; deployment waits for the gate.
 
 ### Research Flags
 
-Phases with well-documented patterns (skip research-phase):
-- **Phase 1 (Wizard Removal):** Straightforward deletion plus migration. Supervisor API options write pattern is simple read-merge-write. No architectural unknowns.
-- **Phase 2 (MQTT Discovery Overhaul):** All entity platforms and discovery fields are comprehensively documented in official HA MQTT docs. Zigbee2MQTT and EMS-ESP32 serve as real-world reference implementations.
-- **Phase 3 (Controllable Entities):** paho subscribe pattern is already implemented in `evcc_mqtt_driver.py`. The threading pitfall (P4) has a documented prevention strategy. Copy-and-adapt work.
+Phases needing `/gsd:research-phase` during planning:
+- **Phase 3 (Self-Tuning):** Shadow mode activation logic, rollback trigger design, and the interaction between SelfTuner and Coordinator setter methods — the bounded parameter optimization approach is sound but the activation gating and rollback protocol need careful design
+- **Phase 4 (Min-SoC self-tuning):** Dynamic programming or heuristic for optimal SoC floor per hour, interaction with nightly charge scheduler, safety constraints around under-reserve
 
-Phases likely needing deeper research or exploratory testing during planning:
-- **Phase 4 (HA Ingress):** Ingress documentation is fragmented across community posts and Supervisor source code. The `X-Ingress-Path` behavior, WebSocket proxying specifics, and the auth header trust model are MEDIUM-confidence findings. Plan for exploratory testing with a real HA install before committing to the full implementation. If WS proxying does not work as expected, the fallback is the existing HTTP polling path already in the frontend.
+Phases with standard patterns (skip research-phase):
+- **Phase 1 (Forecaster Foundation):** All patterns well-documented in existing codebase and STACK.md — Open-Meteo integration already exists, HA statistics reader already exists, GBR features are established practice
+- **Phase 2 (Observability):** IsolationForest, asyncio executor offload, Coordinator injection pattern — all standard and well-documented
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | Zero new dependencies. All changes use existing libraries at existing versions. HA MQTT docs are authoritative. |
-| Features | HIGH | Table-stakes features verified against official HA MQTT platform docs for each entity type. Differentiator features follow patterns from Zigbee2MQTT and EMS-ESP32. |
-| Architecture | MEDIUM-HIGH | MQTT changes and wizard removal are HIGH confidence (based on codebase analysis + official docs). Ingress proxy internals are MEDIUM — community sources and Supervisor source, not official add-on developer docs. |
-| Pitfalls | HIGH | Critical pitfalls sourced from official HA docs, a known upstream paho bug (GitHub #894), and direct codebase analysis. Recovery costs reflect real user impact. |
+| Stack | HIGH | All recommendations use existing dependencies. No new C-extension risk. scikit-learn and numpy already validated on Alpine aarch64 in CI. |
+| Features | MEDIUM | Academic sources confirm feature importance rankings. EMHASS competitor analysis provides real-world validation. Exact MAPE thresholds (< 25% for self-tuning gate) are heuristic — validate against actual household data in Phase 1. |
+| Architecture | HIGH | Based on direct codebase analysis of existing injection patterns, nightly loop structure, and Coordinator interface. All component boundaries trace directly to existing code. |
+| Pitfalls | HIGH | Most pitfalls identified from direct codebase analysis (neutral temp placeholder, missing executor offload, no validation split) rather than inference. aarch64 performance issue has a known GitHub issue reference. |
 
 **Overall confidence:** HIGH
 
 ### Gaps to Address
 
-- **Ingress WebSocket proxying under wss://**: The exact behavior of the Supervisor proxy when upgrading a WebSocket connection is documented in community posts but not in official developer docs. Validate with a real WS connection through Ingress before implementing the URL fix. The HTTP polling fallback in `useEmsState.ts` is the safety net if WS proxying proves unreliable.
-- **Supervisor API options write format**: `POST /addons/self/options` replaces ALL options (not a partial patch). The migration script must read current options, merge wizard values, then write the full merged object back. Verify the exact JSON schema expected by the Supervisor API before implementing.
-- **Two HA devices vs one**: FEATURES.md lists restructuring into Huawei/Victron/System devices as a differentiator. This changes `device` identifiers in discovery payloads and could interact with Pitfall 1 (unique_id). Explicitly scope this as in-Phase-2 or deferred before writing any discovery code — do not discover mid-implementation that it conflicts with entity ID preservation.
+- **MAPE threshold for self-tuning activation (25%):** This is a research-derived heuristic. The actual threshold that works for this household's consumption patterns will only be known after Phase 1 produces real MAPE data. Plan to calibrate in Phase 2 before committing to Phase 3 activation logic.
+- **Oscillation rate threshold (6 transitions/hour for revert):** Current EMS data shows existing oscillation rates. Before implementing the revert trigger, query actual `ems_decision` data to set a threshold that is above normal operation but below problematic behavior.
+- **Shadow mode duration (14 days):** May need adjustment based on how quickly the self-tuner's recommendations stabilize. If recommendations converge in 5 days, shadow mode can be shortened; if they oscillate between runs, it should be extended.
+- **aarch64 training time benchmarks:** PITFALLS.md estimates 15-60s for GBR training on aarch64. Actual timing on the target HA host should be measured in Phase 1 to set a realistic training timeout value.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- [HA MQTT Integration docs](https://www.home-assistant.io/integrations/mqtt/) — discovery payload structure, availability, origin, entity_category, migrate_discovery
-- [HA MQTT Sensor / Binary Sensor / Number / Select / Switch / Button platform docs](https://www.home-assistant.io/integrations/) — all entity platform fields verified
-- [HA Add-on Configuration docs](https://developers.home-assistant.io/docs/apps/configuration/) — ingress_port, ingress_entry, translations format
-- [HA Add-on Presentation / Ingress docs](https://developers.home-assistant.io/docs/apps/presentation/) — ingress config, X-Ingress-Path, port and IP restriction
-- [FastAPI Behind a Proxy docs](https://fastapi.tiangolo.com/advanced/behind-a-proxy/) — root_path mechanism
-- [paho-mqtt PyPI / migrations docs](https://eclipse.dev/paho/files/paho.mqtt.python/html/migrations.html) — CallbackAPIVersion.VERSION2, on_message signature
-- Existing `evcc_mqtt_driver.py` in codebase — paho subscribe/threading reference implementation (HIGH — code-verified)
-- [object_id deprecation HA Core #153612](https://github.com/home-assistant/core/issues/153612) — deprecated 2025.10, removed 2026.4
+- scikit-learn 1.8.0 documentation (model persistence, HistGBR, IsolationForest, novelty/outlier detection)
+- Existing EMS codebase: `backend/consumption_forecaster.py`, `backend/coordinator.py`, `backend/main.py`, `backend/weather_scheduler.py`
+- scikit-learn GitHub issue #15824 — aarch64 OpenMP oversubscription
 
 ### Secondary (MEDIUM confidence)
-- [HA Supervisor Proxy and Ingress (DeepWiki)](https://deepwiki.com/home-assistant/supervisor/6.3-proxy-and-ingress) — Ingress proxy internals
-- [HA Community: X-Ingress-Path header usage](https://community.home-assistant.io/t/how-to-use-x-ingress-path-in-an-add-on/276905) — header format and add-on behavior
-- [HA Community: Ingress static asset issues](https://community.home-assistant.io/t/trouble-with-static-assets-in-custom-addon-with-ingress/712298) — base path, relative URLs
-- [HA Community: expire_after vs availability_topic](https://community.home-assistant.io/t/mqtt-discovery-msg-availability-vs-expire-after/788468) — combined usage guidance
-- [EMS-ESP32 HA Integration docs](https://docs.emsesp.org/Home-Assistant/) — real-world reference implementation for MQTT discovery best practices
-- [Zigbee2MQTT HA Integration](https://www.zigbee2mqtt.io/guide/usage/integrations/home_assistant.html) — naming convention reference
+- EMHASS documentation (ML forecaster, forecast module) — competitor feature comparison
+- Gradient Boosting for home energy prediction (ScienceDirect) — validates GBR for residential forecasting
+- Load forecasting for battery storage control (MDPI) — feature importance validation
+- Seasonal hourly electricity demand forecasting (Nature) — weather + calendar feature confirmation
+- Hybrid ML framework for battery anomaly detection (Nature 2025) — IsolationForest applicability
+- Self-consumption and self-sufficiency metrics (MDPI) — SCR/SSR metric definitions
+- Anomaly detection in energy consumption (Wiley 2025) — false positive rates, adaptive thresholds
 
-### Tertiary (MEDIUM-LOW confidence)
-- [paho-mqtt thread crash on reconnect GitHub #894](https://github.com/eclipse-paho/paho.mqtt.python/issues/894) — BrokenPipeError in on_connect subscribe; needs validation against current paho 2.1 behavior specifically
-- [HA Community: Ingress with WebSocket support](https://community.home-assistant.io/t/ingress-with-support-for-websocket/588542) — WS proxying under Ingress; verify in real HA environment before relying on it
+### Tertiary (LOW confidence)
+- Optimal PV-BESS household strategy (arXiv) — academic optimization approach, not directly applicable
+- Stability-preserving RL-based PID tuning (OAE) — oscillation stability theory, adapted for ML tuning bounds
 
 ---
 *Research completed: 2026-03-23*

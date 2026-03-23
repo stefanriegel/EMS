@@ -1,292 +1,307 @@
 # Pitfalls Research
 
-**Domain:** HA best practice alignment for existing dual-battery EMS add-on (MQTT discovery overhaul, Ingress, services, controllable entities)
+**Domain:** ML self-tuning, anomaly detection, and forecasting for dual-battery EMS
 **Researched:** 2026-03-23
-**Confidence:** HIGH (based on official HA docs, community issue trackers, and direct codebase analysis)
+**Confidence:** HIGH (based on existing codebase analysis, scikit-learn docs, InfluxDB docs, and published research)
 
 ## Critical Pitfalls
 
-### Pitfall 1: MQTT Entity unique_id Change Destroys User Dashboards and Automations
+### Pitfall 1: Cold-Start ML Producing Worse Results Than the Seasonal Fallback
 
 **What goes wrong:**
-The current `unique_id` format is `ems_{entity_id}` (e.g., `ems_huawei_soc`). When overhauling MQTT discovery to add `entity_category`, `availability`, `origin`, and binary sensors, the temptation is to restructure the `unique_id` scheme (e.g., to include the platform prefix, or to rename entities for better HA naming compliance). Any `unique_id` change causes HA to treat the entity as a completely new entity. The old entity becomes "unavailable" forever (retained discovery config still on the broker), and the new entity gets a fresh entity ID. Every HA dashboard card, automation, script, and history reference pointing at the old entity ID breaks silently.
+The existing `ConsumptionForecaster` has a 14-day minimum training threshold, but the v1.3 self-tuning features (dead-band optimization, ramp rate tuning, min-SoC profile learning) need much more data to produce safe recommendations. With 14-30 days of history, an ML model can learn spurious correlations (e.g., a two-week cold spell makes it think consumption is always high) and produce parameter suggestions that are objectively worse than the current hand-tuned defaults. The system ships defaults that already work -- `hysteresis_w=200`, `debounce_cycles=2`, `loop_interval_s=5.0` -- and an undertrained model could recommend values that cause oscillation or missed discharge opportunities.
 
 **Why it happens:**
-HA's entity registry keys entities by `(platform, unique_id)`. Changing either deletes the entity and creates a new one. Developers rename entities "for clarity" during a refactor, not realizing `unique_id` is the primary key that users' entire HA configuration depends on.
+Developers treat "model trained" as "model ready for production." GradientBoostingRegressor will happily fit 14 days of data and report low training RMSE, but the model has never seen a season change, a holiday week, or a heat pump defrost cycle. The existing codebase already shows this risk: `_BASE_LOAD_W = 300.0` is a constant placeholder, and the neutral temperature fallback (`neutral_temp = 10.0`) means the ML path ignores actual weather conditions even when trained.
 
 **How to avoid:**
-- Never change existing `unique_id` values. The current `ems_huawei_soc`, `ems_victron_soc`, etc. must remain exactly as they are.
-- New entities (binary sensors, number entities, select entities) get new `unique_id` values following the existing pattern: `ems_{entity_id}`.
-- Use `default_entity_id` (not `object_id`, which is deprecated as of HA 2025.10 and removed in 2026.4) to control the entity ID shown in HA, without touching `unique_id`.
-- To move an existing entity from `sensor` to `binary_sensor` platform (e.g., `huawei_online`), use the `migrate_discovery` process: publish `{"migrate_discovery": true}` to the old topic, then publish the new discovery config to the new platform topic.
+- Define explicit graduation criteria: a self-tuned parameter only replaces the default when the model has seen at least 60 days of data spanning at least 2 distinct outdoor temperature regimes (warm/cold).
+- Implement a shadow mode: ML-recommended parameters are logged alongside the actual parameters being used. Compare outcomes for at least 14 days before activating.
+- Cap parameter adjustment range: a self-tuned hysteresis value must stay within [100W, 500W], ramp rates within [50W/s, 500W/s]. Never allow the ML to recommend values outside physically safe bounds.
+- Keep the seasonal fallback as the permanent backstop. The `fallback_used=True` pattern in the existing `ConsumptionForecast` is correct -- extend it to all self-tuned parameters.
 
 **Warning signs:**
-- After add-on update, entities show as "unavailable" in HA while new entities with `_2` suffix appear.
-- User automations stop firing because `sensor.ems_huawei_soc` no longer exists.
-- HA logs show "entity not found" warnings referencing old entity IDs.
+- Model training succeeds but `days_of_history < 60`.
+- Self-tuned parameters change by more than 30% from defaults in the first month.
+- Forecast error percentage (`error_pct` from `get_forecast_comparison()`) exceeds 40% consistently.
 
 **Phase to address:**
-Must be the very first step of the MQTT discovery overhaul phase. Define a migration plan before writing any discovery code.
+First phase of self-tuning implementation. Shadow mode must be built before any parameter is auto-applied.
 
 ---
 
-### Pitfall 2: Migrating sensor Entities to binary_sensor Breaks the Discovery Topic Path
+### Pitfall 2: Self-Tuning Destabilizes the 5-Second Control Loop
 
 **What goes wrong:**
-The current code publishes ALL entities (including `huawei_online`, `victron_online`, `pool_status`) as `sensor` platform via discovery topic `homeassistant/sensor/ems/{entity_id}/config`. These should be `binary_sensor` per HA best practices (they represent on/off states). But changing the discovery topic from `homeassistant/sensor/...` to `homeassistant/binary_sensor/...` without cleaning up the old topic leaves a ghost `sensor` entity alongside the new `binary_sensor` entity. The user sees duplicates: `sensor.ems_huawei_online` (stale, unavailable) and `binary_sensor.ems_huawei_online` (new, working).
+The Coordinator runs a hard 5-second control loop (`_cfg.loop_interval_s = 5.0`) with carefully tuned anti-oscillation: 200W hysteresis dead-band, 2-cycle debounce, per-system ramp limiting. If self-tuning adjusts these parameters during operation, it can create resonance between the two independent battery controllers. For example: reducing Huawei dead-band to 100W while Victron stays at 150W can cause the two systems to alternate between CHARGING and DISCHARGING on successive cycles when load hovers near the threshold.
 
 **Why it happens:**
-MQTT discovery topics are retained on the broker. Publishing to a new topic path does not delete the old one. HA discovers both and creates both entities. The old entity never goes away until someone publishes an empty payload to the old topic.
+The dual-battery architecture has coupled dynamics even though the controllers are logically independent -- they share the same grid meter reading. A parameter change to one system's control response affects the other system's behavior through the shared P_target calculation. Classical control theory calls this "unmodeled coupling," and ML optimizers that treat each parameter independently will miss it.
 
 **How to avoid:**
-- For each entity changing platform, publish an empty retained payload to the OLD discovery topic to delete it: `self._client.publish("homeassistant/sensor/ems/huawei_online/config", "", retain=True)`.
-- Then publish the new discovery config to the NEW topic: `homeassistant/binary_sensor/ems/huawei_online/config`.
-- Use `migrate_discovery` for entities that need to preserve their entity registry settings.
-- Implement a one-time migration function that runs on first startup after the version upgrade, cleaning up old topics before publishing new ones.
-- Include version tracking in the MQTT client: store the last-published discovery schema version (e.g., in a file on the HA config volume) so migration only runs once.
+- Never adjust control parameters mid-cycle or mid-hour. Apply parameter updates only at well-defined transition points (e.g., start of a new hour, after a HOLD period).
+- Test parameter combinations in simulation before applying. Build a lightweight replay simulator that feeds historical grid meter data through the Coordinator with proposed parameters, counting oscillation events (role transitions per hour > threshold = reject).
+- Enforce monotonic constraints: if the ML suggests reducing hysteresis for Huawei, it must also verify that the Victron hysteresis provides sufficient damping. The combined dead-band must never drop below 150W total.
+- Add an oscillation detector to the coordinator: if role transitions exceed 6 per hour for either system, revert to default parameters and log a CRITICAL alert.
 
 **Warning signs:**
-- Duplicate entities in HA entity registry (one sensor, one binary_sensor with same name).
-- Old sensor entities stuck in "unavailable" state indefinitely.
-- Entity count in HA device info doubles instead of staying the same.
+- Role transition count per hour increasing after parameter change.
+- Both batteries alternating between CHARGING and DISCHARGING within a 30-second window.
+- Grid power oscillating (import/export flip-flop visible in InfluxDB metrics).
+- `DecisionEntry` ring buffer showing rapid state changes with contradictory reasoning.
 
 **Phase to address:**
-MQTT discovery overhaul phase. Must implement topic cleanup before new discovery publication.
+Must be addressed in the self-tuning phase. The oscillation detector should be built first, before any parameter adjustment capability.
 
 ---
 
-### Pitfall 3: Ingress Path Rewriting Breaks SPA Routing, WebSocket, and API Calls
+### Pitfall 3: Blocking the Control Loop with ML Inference
 
 **What goes wrong:**
-HA Ingress proxies add-on traffic through `/api/hassio_ingress/{token}/`. The current SPA uses absolute paths (`/api/state`, `/api/ws/state`, static assets at `/assets/`). When accessed via Ingress, these paths resolve to the HA root, not the add-on. Every API call 404s. Every static asset returns the HA frontend HTML. The WebSocket connection at `/api/ws/state` hits HA's own WebSocket API instead of the EMS one.
+GradientBoostingRegressor `.predict()` on 100 trees with 5 features takes 0.5-2ms on amd64 but 5-15ms on aarch64 (Raspberry Pi 4 class hardware common in Home Assistant). Training `.fit()` on 90 days of hourly data (2160 samples, 100 trees) takes 2-8 seconds on amd64 and 15-60 seconds on aarch64. If training or batch prediction runs inside the coordinator's `_run_cycle()` or blocks the event loop, the 5-second control interval is violated. A missed control cycle means stale setpoints remain active, which is a safety issue for battery systems.
 
 **Why it happens:**
-The Vite config has no `base` setting (defaults to `/`). The frontend fetches from hardcoded paths like `/api/state`. HA Ingress adds the `X-Ingress-Path` header with the correct prefix, but neither the FastAPI backend nor the React frontend reads or uses it. The SPA's `index.html` references assets at `/assets/index-xxx.js` which bypass the Ingress prefix entirely.
+The existing code imports sklearn lazily (`from sklearn.ensemble import GradientBoostingRegressor` inside `train()`) which is good. But `train()` is an `async def` that calls synchronous sklearn `.fit()` -- this blocks the asyncio event loop for the entire training duration. The current architecture runs training in `_nightly_scheduler_loop` which happens at 04:00, far from peak demand. But v1.3's "self-tuning" implies more frequent model updates, and anomaly detection implies per-cycle inference.
 
 **How to avoid:**
-- **Frontend build:** Set Vite's `base` to `./` (relative paths) so all asset references in `index.html` become `./assets/index-xxx.js` instead of `/assets/index-xxx.js`. This makes assets load correctly regardless of the URL prefix.
-- **API calls:** The frontend must detect the Ingress base path at runtime. Approach: inject a `<script>` tag in `index.html` that reads the document's `baseURI` or uses a well-known endpoint. Alternatively, use relative URLs (`./api/state` instead of `/api/state`) which work under any prefix.
-- **WebSocket:** The WebSocket URL must be constructed from the current page location, not hardcoded. Use `new URL('./api/ws/state', window.location.href)` to derive the full WebSocket URL dynamically. Ensure the protocol is `wss://` when the page is loaded over HTTPS (which Ingress always is).
-- **FastAPI:** Add `ingress: true` to `config.yaml`. Read the `X-Ingress-Path` header in a middleware and make it available to responses if needed for URL generation. The FastAPI app must NOT assume it runs at `/` -- use `root_path` from the ASGI scope.
-- **Static file mount:** The current `StaticFiles(directory="frontend/dist", html=True)` catch-all must work correctly with Ingress. Since Ingress strips the prefix before forwarding, the backend sees requests at `/` not `/api/hassio_ingress/{token}/`. This means the backend routing should work as-is, but the frontend asset URLs must be relative.
+- Run all sklearn `.fit()` calls in `asyncio.get_event_loop().run_in_executor(None, ...)` to offload to a thread pool. The GIL will still block CPU-bound work, but it won't block the event loop's I/O operations (driver polling, WebSocket updates).
+- For per-cycle anomaly detection, pre-compute thresholds (e.g., z-score bounds, IQR ranges) outside the control loop and use simple arithmetic checks (< 0.1ms) inside the loop. Never call `.predict()` inside `_run_cycle()`.
+- Cap training frequency: retrain at most once per 24 hours (the existing `retrain_if_stale(stale_hours=24)` pattern is correct). Self-tuning parameter updates at most once per hour.
+- Set `OMP_NUM_THREADS=2` in the Dockerfile for aarch64 builds. OpenMP default thread detection in containers is broken -- it detects all host CPUs, causing oversubscription and severe slowdown on Raspberry Pi.
 
 **Warning signs:**
-- Dashboard loads as a blank page when accessed through HA sidebar.
-- Browser console shows 404 errors for `/assets/index-xxx.js`.
-- WebSocket connects to HA's API instead of EMS, producing "invalid message" errors.
-- API calls return HA's "unauthorized" response instead of EMS data.
+- Control loop cycle time exceeding 5 seconds (log the elapsed time of each `_run_cycle()`).
+- asyncio event loop blocked warnings in Python logs.
+- Driver readings becoming stale (`stale_threshold_s=30.0` breached) during training windows.
 
 **Phase to address:**
-Ingress support phase. Must be tested with both direct access (`http://host:8000`) and Ingress access (`https://ha.local/api/hassio_ingress/...`) simultaneously.
+Anomaly detection phase (per-cycle checks) and self-tuning phase (training offloading). The `run_in_executor` pattern should be implemented as the very first task.
 
 ---
 
-### Pitfall 4: Adding MQTT Subscribe to a Publish-Only Client Introduces Threading Hazards
+### Pitfall 4: Anomaly Detection False Positives Triggering Unnecessary Alerts and Mode Changes
 
 **What goes wrong:**
-The current `HomeAssistantMqttClient` is publish-only: it calls `self._client.publish()` from the asyncio thread and handles `_on_connect`/`_on_disconnect` callbacks from paho's thread. Adding subscribe capability (for command_topic on Number/Select entities and service call topics) introduces `_on_message` callbacks that need to safely mutate state and trigger actions in the asyncio thread. A known paho-mqtt bug (reported June 2025) causes `BrokenPipeError` when calling `client.subscribe()` in the `_on_connect` callback during reconnection, which crashes paho's background thread silently. After the crash, `publish()` calls succeed without error but messages are never delivered.
+Anomaly detection on energy consumption data has notoriously high false positive rates because "normal" household consumption is highly variable. A heat pump defrost cycle, an oven preheating, or an EV starting to charge all look like anomalies to a model trained on quiet periods. If anomaly detection triggers Telegram alerts or -- worse -- forces the coordinator into HOLD mode, the user gets alert fatigue and the system becomes less effective than without ML.
+
+Published research shows that models trained on clean data overfit to small variations, with 40% data subsets actually producing fewer false positives than full-dataset models. Static thresholds produce 20% more false positives than adaptive thresholds.
 
 **Why it happens:**
-paho-mqtt's threading model has a single network thread that handles both reads and writes. When `subscribe()` is called from `_on_connect()` during a reconnect (not initial connect), the socket may be in a transitional state. The background thread crashes, but there is no callback or exception visible to the asyncio side. The `_connected` flag stays `True` because `_on_disconnect` was never called (the thread died, it did not disconnect).
+Energy consumption is quasi-periodic with high variance within cycles. A household's consumption at 18:00 on a Tuesday might range from 1.5 kW to 8 kW depending on cooking, laundry, and heat pump behavior. Simple z-score or IQR-based anomaly detection will flag the high end of normal variation as anomalous.
 
 **How to avoid:**
-- Add a `_on_subscribe` callback to detect successful subscription acknowledgment from the broker.
-- Wrap `subscribe()` calls in `_on_connect` with a try/except that catches `BrokenPipeError` and `OSError`, logs the error, and sets a flag to retry subscription on the next control cycle.
-- Add a periodic health check: if `_connected` is `True` but no state update has been published successfully in the last N cycles, force a reconnect by calling `_client.reconnect()`.
-- Use QoS 1 for command_topic subscriptions to ensure delivery guarantees on commands that affect real hardware.
-- Consider splitting into two paho clients: one for publish (existing pattern, low risk) and one for subscribe (new pattern, isolated failure domain). This matches the existing codebase pattern where `EvccMqttDriver` is a separate client from `HomeAssistantMqttClient`.
+- Use context-aware baselines: anomaly thresholds must be hour-of-day and day-of-week specific. A 6 kW draw at 18:00 is normal; at 03:00 it warrants investigation.
+- Implement a tiered alert system: (1) INFO log only for mild anomalies (1.5-2x expected), (2) Telegram notification for sustained anomalies (> 30 minutes above 2x expected), (3) coordinator action only for hardware-level anomalies (driver communication failure, SoC reading impossible values).
+- Never let anomaly detection change battery control parameters or force mode changes. Anomaly detection is observability, not control.
+- Require confirmation period: an anomaly must persist for N consecutive cycles before generating any alert. A single-cycle spike is noise.
+- Track false positive rate: log every alert, and when the user dismisses or ignores it, count that as a false positive. If FP rate exceeds 30%, widen thresholds automatically.
 
 **Warning signs:**
-- Number entity changes in HA UI do not reach the EMS backend (no log messages for received commands).
-- MQTT entities in HA show "unavailable" after a broker restart, even though the EMS log says "HA MQTT connected".
-- Paho thread silently stops: `threading.enumerate()` shows the paho thread is gone while `_connected` is still `True`.
+- More than 3 Telegram alerts per day from anomaly detection.
+- User stops responding to anomaly alerts (alert fatigue).
+- Anomaly rate exceeding 5% of all observations (indicates threshold is too tight).
 
 **Phase to address:**
-Controllable entities phase (Number/Select entities). Must be tested with broker restart scenarios.
+Anomaly detection phase. The tiered system and confirmation periods must be in the initial design, not added after complaints.
 
 ---
 
-### Pitfall 5: Number Entity min/max Values Conflict with Hardware Limits
+### Pitfall 5: Feature Engineering Leaking Future Data Into Training
 
 **What goes wrong:**
-MQTT Number entities require `min` and `max` in the discovery payload. If the published min/max does not match the actual hardware limits, two bad things happen: (1) HA allows the user to set a value outside hardware-safe range (e.g., Huawei min SoC set to 0% when the BMS minimum is 5%), and (2) HA rejects valid values that are outside the published range (e.g., user tries to set Victron deadband to 50W but the Number entity has `min: 100`). The HA UI shows a slider that silently clips values, and the user does not realize their change was not applied.
+The existing `ConsumptionForecaster` builds features from `[outdoor_temp, ewm_temp_3d, day_of_week, hour_of_day, month]`. When predicting future hours, it uses `neutral_temp = 10.0` as a placeholder because actual future temperatures are unknown. This creates a train/predict distribution mismatch: the model trains on real temperature data but predicts with a constant. If v1.3 adds more features (solar production, grid price, EV charging status), the risk of accidentally including "future" features in training grows. For example, using tomorrow's actual solar production to train a model that predicts tonight's charge target is a classic data leakage bug.
 
 **Why it happens:**
-The discovery payload's `min`/`max` are static values published at connect time. Hardware limits may vary per installation (different BMS firmware, different inverter models). The current `SystemConfig` has hardcoded defaults (`min_soc_pct_huawei: 10`, `min_soc_pct_victron: 15`) that are reasonable starting values but not universal. If the Number entity discovery publishes `min: 0, max: 100` for SoC and the hardware actually requires `min: 5, max: 95`, the user can set dangerous values.
+In time-series ML, the boundary between "known at prediction time" and "only known after the fact" is subtle. Features like "yesterday's consumption" are fine. Features like "today's total consumption" are leakage if you're predicting the morning and the feature includes evening data. The existing codebase already has this issue with the temperature placeholder -- the model's training distribution doesn't match its inference distribution.
 
 **How to avoid:**
-- Read actual hardware limits from the drivers at startup. The Huawei driver can read min/max SoC from Modbus registers. The Victron driver can read ESS limits from Venus OS registers. Use these as the source of truth for Number entity min/max.
-- If hardware limits cannot be read (driver offline at startup), use conservative defaults and update the Number entity discovery payload when the driver connects. Re-publishing discovery with updated min/max is safe -- HA will update the entity.
-- Validate every command received on the command_topic against current hardware limits before applying. If the value is out of range, publish the current valid value back to the state_topic (so HA UI reverts to the correct value) and log a warning.
-- Document which Number entities are "soft limits" (tuning parameters like deadband, ramp rate) vs. "hard limits" (SoC floors that affect hardware safety).
+- Categorize every feature as KNOWN_AT_PREDICTION_TIME or RETROSPECTIVE. Only KNOWN_AT_PREDICTION_TIME features may be used during inference. RETROSPECTIVE features are fine for training evaluation but must be replaced with forecasts or dropped during prediction.
+- For weather features, integrate the existing `weather_client.OpenMeteoClient` forecast into the prediction pipeline instead of using `neutral_temp = 10.0`. The solar forecast infrastructure already exists.
+- Use time-series cross-validation (expanding window), not random train/test split. The existing code trains on all available data without validation -- add a rolling validation window to detect leakage.
+- Build a test that compares model accuracy on training data vs. a held-out future period. If training accuracy is dramatically better than held-out accuracy, leakage is likely.
 
 **Warning signs:**
-- HA UI slider range does not match hardware reality.
-- User sets min SoC to 5% but BMS refuses to discharge below 10%, causing the controller to appear stuck.
-- Number entity state and command value are perpetually out of sync (HA shows 5, backend shows 10).
+- Training RMSE is suspiciously low (e.g., < 50W for heat pump prediction).
+- Model accuracy degrades sharply when deployed vs. offline evaluation.
+- Prediction accuracy is much worse at hour boundaries (morning/evening transitions) than mid-period.
 
 **Phase to address:**
-Controllable entities phase. Must coordinate with driver initialization.
+Improved forecasting phase. Feature categorization must happen before any new features are added to the model.
 
 ---
 
-### Pitfall 6: Config Migration from Wizard JSON to Add-on Options Loses User Settings
+### Pitfall 6: Model Drift From Seasonal Changes and New Appliances
 
 **What goes wrong:**
-The current system has two config sources: the setup wizard's `ems_config.json` (on the HA config volume) and the add-on `options.json` (managed by HA Supervisor). The v1.2 plan removes the wizard and makes `options.json` the sole config surface. Existing users who configured EMS through the wizard have settings in `ems_config.json` that are NOT in `options.json` (because they never used the add-on config page). After upgrading to v1.2, the wizard config is ignored, and all user-specific settings (hardware hosts, EVCC endpoints, tariff rates, SoC limits) revert to defaults.
+A model trained during winter (high heat pump consumption, low solar) performs poorly in spring (heat pump off, high solar). A model trained before an EV purchase doesn't understand the new 7 kW charging patterns. The existing `retrain_if_stale(stale_hours=24)` retrains daily, but the 90-day training window means winter patterns dominate even in March, and vice versa. The model slowly adapts but lags reality by weeks.
 
 **Why it happens:**
-The current `lifespan()` in `main.py` calls `load_setup_config()` and injects values into `os.environ` via `setdefault()`. The add-on's `run.sh` exports `options.json` values BEFORE the Python process starts. If `options.json` has empty defaults, they get exported as empty strings, and `setdefault()` in the lifespan does not override them (because the env var exists, even if empty). The `_require_env()` function treats empty as "not set" and enters degraded mode. So the user upgrades, the wizard config exists on disk but is never read because `run.sh` already exported empty env vars.
+GradientBoostingRegressor has no built-in concept of data recency. All 2160 training samples (90 days * 24 hours) are weighted equally. A one-week heatwave 80 days ago has the same influence as yesterday's data. The existing EWM smoothing (`_compute_ewm`) helps the temperature feature but doesn't address the target variable weighting.
 
 **How to avoid:**
-- Implement a one-time migration script that runs BEFORE the main application. On first v1.2 startup, check if `ems_config.json` exists and `options.json` still has default values. If so, write the wizard values into the Supervisor options via the Supervisor API (`POST /addons/self/options`).
-- The migration must be idempotent: if it runs twice, it should detect that migration already happened (e.g., check a `_migrated` flag in `ems_config.json`) and skip.
-- After migration, rename `ems_config.json` to `ems_config.json.bak` so it is clear the file is no longer authoritative.
-- Add a startup log message: "Migrated N settings from wizard config to add-on options" or "No wizard config found, using add-on options directly."
-- Keep the `load_setup_config()` fallback for one more version as a safety net: if migration fails, the system still works.
+- Implement sample weighting: recent data gets higher weight. Use sklearn's `sample_weight` parameter in `.fit()`, with exponential decay (half-life of 30 days). This is a one-line change but dramatically improves seasonal adaptation.
+- Track model error over time (the existing `get_forecast_comparison()` method). If error trends upward for 5 consecutive days, trigger immediate retrain with a shorter lookback window (30 days instead of 90).
+- Detect distribution shift: compare the mean and variance of predictions over the last 7 days to the training data distribution. A significant shift (> 2 sigma) triggers a retrain alert.
+- For new appliance detection: monitor total daily consumption trend. A step change of > 20% sustained for 7 days should trigger a notification suggesting the user confirm a new appliance, and the model retrains with a shorter window.
 
 **Warning signs:**
-- After v1.2 upgrade, the add-on enters "setup-only mode" even though it was fully configured before.
-- User sees the HA add-on config page with all fields at defaults, not their actual values.
-- Coordinator fails to start because `HUAWEI_HOST` is empty.
+- `error_pct` from `get_forecast_comparison()` consistently above 30% for 5+ days.
+- Predicted daily consumption diverging from actual by more than 5 kWh.
+- Model always predicting high consumption during summer (winter training dominance).
 
 **Phase to address:**
-First phase of v1.2 (config migration). Must happen before any other changes.
+Self-tuning phase, specifically the model lifecycle management component.
 
 ---
 
-### Pitfall 7: Service Calls Fail Silently When Hardware Is Offline
+### Pitfall 7: aarch64 Build and Runtime Failures for scikit-learn + numpy
 
 **What goes wrong:**
-HA Services (e.g., `ems.set_discharge_setpoint`, `ems.force_grid_charge`) are expected to succeed or raise an explicit error. If the user calls a service from an automation while one or both battery systems are offline, the service must either: (a) apply the command to the available system only, or (b) return an error that HA can display. The current codebase has no service call infrastructure. Adding services without proper error handling means HA automations silently do nothing when hardware is down, and the user never knows.
+The Dockerfile already handles this partially (`apk add gfortran openblas-dev`) but scikit-learn on Alpine aarch64 is fragile. The `scikit-learn>=1.4,<2` constraint means pip must compile from source on aarch64 Alpine (no manylinux wheels for musl). Build times exceed 15 minutes on Raspberry Pi 4. At runtime, OpenMP thread detection inside Docker containers detects all host CPUs instead of the container's cgroup limit, causing thread oversubscription that makes GBR training 3-10x slower than expected.
 
 **Why it happens:**
-MQTT-based service calls arrive as messages on a command_topic. Unlike HTTP APIs (which return status codes), MQTT commands are fire-and-forget. If the backend receives a command but cannot execute it (driver offline, value out of range, conflicting state), there is no built-in way to signal failure back to HA.
+Home Assistant Add-on base images use Alpine Linux (musl libc), not Debian/Ubuntu (glibc). PyPI wheels for scikit-learn are built for manylinux (glibc), so Alpine must compile from source. The HA Add-on builder uses QEMU for cross-architecture builds (amd64 host building aarch64 image), which makes compilation even slower. OpenMP's CPU detection reads `/proc/cpuinfo` (host CPUs) instead of the cgroup CPU quota.
 
 **How to avoid:**
-- Publish the service execution result to a status/response topic that HA can monitor.
-- More practically: update the entity state immediately after processing a command. If the command failed, the state does not change, and the HA entity shows the old value (which signals failure to attentive users).
-- Log every service call with its result (applied, rejected, partially applied) at INFO level.
-- For critical services like `force_grid_charge`: validate prerequisites (tariff window, SoC limits, hardware availability) before accepting the command. If prerequisites fail, publish a notification via Telegram (already wired) explaining why the command was rejected.
-- Add integration health information to the device's `availability` topic. If the coordinator is in HOLD/degraded mode, set the device availability to "offline" so HA marks all entities as unavailable and prevents new service calls from being attempted.
+- Set `OMP_NUM_THREADS=2` and `OPENBLAS_NUM_THREADS=2` in the Dockerfile or `run.sh`. This is the single most impactful fix for runtime performance on constrained hardware.
+- Consider switching to `HistGradientBoostingRegressor` which is faster and uses less memory than `GradientBoostingRegressor` (it's the recommended replacement in scikit-learn docs since 1.0).
+- Pin numpy to a version with pre-built Alpine aarch64 wheels if available, or ensure openblas-dev is installed before numpy compilation.
+- Add a build cache step in CI: build the Python dependencies in a separate Docker layer so they're cached between code changes (the current Dockerfile structure already does this correctly with `COPY pyproject.toml .` before `COPY backend/`).
+- Set a training timeout: if `.fit()` takes longer than 120 seconds, abort and keep the previous model. Log a WARNING so the user knows training was skipped.
 
 **Warning signs:**
-- HA automation log shows "service call completed" but nothing happened on the hardware.
-- Number entity UI shows a value the user set, but the actual hardware is doing something different.
-- No error feedback in HA UI when a command cannot be executed.
+- Docker build taking > 20 minutes on aarch64.
+- `import sklearn` taking > 5 seconds at startup.
+- Training taking > 60 seconds for 2160 samples on target hardware.
+- High CPU usage (> 100% of allocated cores) during training.
 
 **Phase to address:**
-HA Services phase. Must define error handling strategy before implementing any service.
+First phase touching ML code. The `OMP_NUM_THREADS` fix and `HistGradientBoostingRegressor` switch should happen before any new ML features are added.
+
+---
+
+### Pitfall 8: Model Versioning and Rollback Failure
+
+**What goes wrong:**
+scikit-learn models serialized with `pickle` or `joblib` are version-coupled: a model saved with sklearn 1.4 may not load correctly on sklearn 1.5. The existing codebase doesn't persist models at all (retrains from scratch each startup), which avoids this issue but wastes 15-60 seconds on every restart. If v1.3 adds model persistence for faster cold starts, the system must handle sklearn version upgrades gracefully. A failed model load on startup could crash the entire EMS.
+
+More importantly, if a newly trained model performs worse than the previous one (e.g., after a data quality issue), there's no rollback mechanism. The old model is simply overwritten.
+
+**Why it happens:**
+scikit-learn explicitly states that loading models across versions is "entirely unsupported and inadvisable." The Add-on auto-updates, and a sklearn minor version bump could silently break persisted models.
+
+**How to avoid:**
+- Don't persist sklearn models to disk. The current approach (retrain from scratch at startup + nightly) is actually safer for an HA Add-on environment. Training 2160 samples takes < 60s even on aarch64 -- acceptable for a startup-time cost.
+- If persistence is needed: store model metadata (sklearn version, training date, sample count, validation RMSE) alongside the model. On load, verify the sklearn version matches. If it doesn't, discard the model and retrain.
+- Keep the last-known-good model: before overwriting, copy the current model file. If the new model's validation RMSE is worse than the previous model's by more than 20%, keep the old model and log a WARNING.
+- Use `skops.io` instead of pickle for serialization if persistence is added -- it's more secure and provides version compatibility metadata.
+
+**Warning signs:**
+- Model load failure after Add-on update.
+- Validation RMSE of new model is worse than the previous model.
+- Model age exceeding 7 days (retrain loop may be silently failing).
+
+**Phase to address:**
+Model lifecycle management component of the self-tuning phase.
+
+---
 
 ## Technical Debt Patterns
 
 | Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
 |----------|-------------------|----------------|-----------------|
-| Hardcoding entity list in `_ENTITIES` tuple | Simple, flat, easy to test | Adding new entity types (binary_sensor, number, select) makes the tuple format inadequate; need a proper entity registry class | Never for v1.2; refactor to a typed entity definition system first |
-| Publishing all entities on one shared state_topic | One publish call per cycle, simple | Command responses, binary sensors, and number states need their own topics; shared topic grows into a god-object JSON blob | Acceptable for sensor entities; command entities must have separate topics |
-| Using `retain=True` for state payloads | Entity value survives broker restart | `expire_after` does not work correctly with retained state payloads (HA replays the retained value on restart, making expired sensors appear available with stale data) | Never for sensors with `expire_after`; use `retain=True` only for discovery config |
-| Single paho client for both pub and sub | Fewer connections to broker | Threading issues on reconnect (Pitfall 4); failure in subscribe path kills publish path | Accept only if broker restarts are rare; split clients is safer |
+| Training on all data without validation split | Simpler code, uses all available data | Can't detect overfitting or leakage | Only during cold-start (< 30 days of data) |
+| Using `neutral_temp = 10.0` for prediction | Avoids weather forecast dependency | Predictions ignore the primary consumption driver (heating) | Never acceptable in v1.3 -- integrate Open-Meteo forecast |
+| `_BASE_LOAD_W = 300.0` constant | Placeholder until real entity available | Underestimates base load for many households | Only until a consumption entity is configured |
+| Retraining from scratch on every startup | Avoids model persistence version coupling | 15-60s startup delay on aarch64 | Acceptable given the safety tradeoff -- persistence is riskier |
+| Single GBR model per load type | Simple architecture | No ensemble diversity, single point of failure | Acceptable for v1.3 scope; ensemble can be added in v2 |
+| In-process ML training (no separate worker) | No infrastructure complexity | Blocks event loop during training | Acceptable with `run_in_executor()` -- only unacceptable if training runs in the async path without executor |
 
 ## Integration Gotchas
 
 | Integration | Common Mistake | Correct Approach |
 |-------------|----------------|------------------|
-| MQTT Discovery | Using `object_id` in discovery payload | Use `default_entity_id` instead; `object_id` deprecated in HA 2025.10, removed in 2026.4 |
-| MQTT Discovery | Publishing discovery config without `retain=True` | Discovery config MUST be retained; otherwise entities disappear after broker restart |
-| MQTT Discovery | Not publishing `availability_topic` with `expire_after` | Use `expire_after` for sensor entities (marks unavailable if no update within N seconds) AND publish a birth/will availability topic for the device |
-| MQTT Discovery | Missing `origin` field in discovery payload | Add `origin: {name: "EMS", sw_version: "1.2.0", support_url: "..."}` -- HA uses this for device info and issue reporting |
-| HA Ingress | Hardcoded absolute paths in SPA | Use relative paths (`./api/state`) or dynamic base path detection from `window.location` |
-| HA Ingress | Assuming WebSocket URL is `ws://host:port/path` | Under Ingress, WebSocket must use `wss://` and the full Ingress path; construct from `window.location` |
-| HA Ingress | Not setting `ingress: true` in config.yaml | Without this flag, HA Supervisor does not create the Ingress proxy endpoint |
-| HA Ingress | Setting `ingress_port` to the wrong value | Must match the port the FastAPI server listens on inside the container (8000) |
-| MQTT Number | Publishing `min: 1, max: 100` (defaults) | Always set meaningful min/max that match hardware limits; validate commands server-side |
-| MQTT Number | Using `optimistic: true` without state_topic | HA assumes command succeeded immediately; backend must publish actual state to state_topic for closed-loop feedback |
-| Supervisor API | Calling `/addons/self/options` with partial data | The Supervisor API replaces ALL options, not just the ones you send; always read current options, merge changes, then write back |
-| translations/en.yaml | Mismatched keys between config.yaml options and translations | Every option in `config.yaml` must have a corresponding entry in translations; missing keys show raw option names in UI |
+| HA SQLite statistics | Querying > 90 days of hourly data causes slow reads on SD card | Limit to 90 days; use `LIMIT` clause; cache results in memory |
+| InfluxDB Flux queries for training data | Using `filter()` after `map()` prevents pushdown optimization | Always put `filter()`, `range()`, and `keep()` before any `map()` or `reduce()` operations |
+| Open-Meteo weather forecast | Treating forecast as ground truth for feature engineering | Use forecast only for inference features; train on actual weather from HA statistics |
+| EVCC state for EV charging detection | Polling EVCC HTTP API inside the control loop | Use the existing `EvccMqttDriver` -- it pushes state updates without polling overhead |
+| Telegram notifications for anomalies | Sending one message per anomaly detection cycle | Batch anomalies: one summary per hour maximum, with deduplication |
 
 ## Performance Traps
 
 | Trap | Symptoms | Prevention | When It Breaks |
 |------|----------|------------|----------------|
-| Publishing full state JSON on every 5-second control cycle via MQTT | Broker message queue grows; HA entity history inflated | Throttle MQTT publish to every 15-30 seconds unless values changed significantly | Not a breaking issue at current scale but wasteful; becomes problematic with 30+ entities |
-| Re-publishing discovery config on every reconnect without deduplication | Broker processes identical retained messages; HA re-registers entities | Track `_discovery_version` and only re-publish if the schema changed | Not performance-critical but adds unnecessary broker load on flaky connections |
-| Ingress + WebSocket with high-frequency state updates | Each WebSocket message goes through HA's nginx proxy, adding latency | Reduce WebSocket update frequency to 5-10s when accessed via Ingress; keep 1-2s for direct access | Noticeable at >20 concurrent Ingress WebSocket connections (unlikely for single-user EMS) |
+| sklearn `.fit()` in async without executor | Event loop freezes for 2-60s, missed control cycles, stale WebSocket | Always use `run_in_executor(None, model.fit, X, y)` | Immediately on aarch64; after ~5000 samples on amd64 |
+| InfluxDB query for 90 days of 5s-interval metrics | Query takes 30s+, returns millions of rows | Pre-aggregate to hourly in Flux query using `aggregateWindow(every: 1h, fn: mean)` | At ~500K data points (about 30 days of 5s data) |
+| OpenMP thread oversubscription in container | Training takes 10x longer than expected, high CPU steal time | Set `OMP_NUM_THREADS=2` and `OPENBLAS_NUM_THREADS=2` | Immediately on any containerized aarch64 deployment |
+| Per-cycle anomaly detection with sklearn predict | Each `.predict()` call adds 5-15ms on aarch64 | Pre-compute thresholds; use simple arithmetic in the loop | At scale of 5s cycles on aarch64 (need < 1ms budget for anomaly check) |
+| Growing in-memory training data cache | Memory usage grows unbounded as history accumulates | Cap in-memory cache at 90 days; drop oldest data on each retrain | At ~6 months of operation on 1GB RAM devices |
 
 ## Security Mistakes
 
 | Mistake | Risk | Prevention |
 |---------|------|------------|
-| Accepting MQTT commands without validation | Malicious MQTT message could set SoC limit to 0% or discharge setpoint to max, potentially damaging hardware | Validate every command against hardware limits before applying; reject and log invalid commands |
-| Exposing service topics without authentication | Anyone with MQTT broker access can send commands | HA's MQTT broker (Mosquitto add-on) handles auth; ensure command topics require authenticated clients; document that shared brokers need ACLs |
-| Ingress token in browser history | Ingress URLs contain a session token that could be shared inadvertently | This is HA's concern, not the add-on's; but do not log or expose the Ingress token in the EMS UI |
+| Persisting ML models with pickle | Arbitrary code execution on model load (pickle deserialization vulnerability) | Use `skops.io` or retrain from scratch (current approach is safe) |
+| Exposing model parameters via REST API without auth | Attacker could observe consumption patterns (occupancy inference) | Ensure `/api/ml/*` endpoints are behind the existing JWT auth middleware |
+| Logging raw consumption data at DEBUG level | Energy consumption patterns leak household activity schedule | Log aggregates only; never log per-minute consumption in production |
 
 ## UX Pitfalls
 
 | Pitfall | User Impact | Better Approach |
 |---------|-------------|-----------------|
-| Entity names like "EMS Huawei Battery SOC" (current) | Verbose, does not follow HA naming convention (device name should not repeat in entity name) | Name should be just "Battery SOC" since the device is already "EMS Huawei"; HA concatenates device + entity name |
-| Changing entity names in discovery without renaming in entity registry | User sees new name in entity list but old name in dashboards (HA caches entity names) | Use `has_entity_name: true` in discovery so HA correctly composes the display name from device + entity name |
-| Number entity slider with 0-100 range for a 50-500W deadband | User cannot set precise values; slider resolution too coarse | Set `mode: "box"` for parameters that need exact values; use `mode: "slider"` only for percentage-based values |
-| No entity_category on diagnostic entities | Battery role, pool status, and control state entities clutter the main entity list alongside actionable entities | Set `entity_category: "diagnostic"` for read-only status entities; `entity_category: "config"` for tuning parameters |
+| Showing ML confidence without context | "72% confidence" means nothing to a homeowner | Show "Based on 45 days of data (learning, expect improvement)" |
+| Anomaly alerts with technical details | "Z-score 3.2 on base_load at 03:15 UTC" is useless | "Unusual power draw detected at 4:15 AM (3.2 kW vs typical 0.5 kW) -- check for appliances left on" |
+| Showing self-tuned parameter changes | "hysteresis_w changed from 200 to 187" confuses users | Don't show parameter changes at all. Show outcomes: "System response optimized -- 12% fewer mode switches this week" |
+| Requiring user action for model management | "Model retrained -- approve new parameters?" blocks automation | Fully automated with guardrails. User sees outcomes, not process. Notify only on problems. |
 
 ## "Looks Done But Isn't" Checklist
 
-- [ ] **MQTT Discovery:** All entities have `availability_topic` or `expire_after` -- verify entities go unavailable when EMS stops
-- [ ] **MQTT Discovery:** `origin` field included with `name`, `sw_version`, and `support_url` -- verify in HA device info page
-- [ ] **MQTT Discovery:** Old sensor topics cleaned up after platform migration (sensor -> binary_sensor) -- verify no duplicate entities
-- [ ] **MQTT Discovery:** `object_id` not used anywhere -- verify no deprecation warnings in HA 2025.10+ logs
-- [ ] **Ingress:** Dashboard loads correctly via both direct URL and HA sidebar -- verify with browser DevTools network tab
-- [ ] **Ingress:** WebSocket connects via Ingress (wss:// protocol) -- verify real-time updates work in HA sidebar
-- [ ] **Ingress:** Static assets load with relative paths -- verify no 404s in browser console
-- [ ] **Number Entities:** Command received on command_topic is validated before applying -- verify out-of-range values are rejected
-- [ ] **Number Entities:** State published back to state_topic after command processing -- verify HA UI reflects actual state, not commanded state
-- [ ] **Config Migration:** Wizard config values migrated to Supervisor options on first v1.2 startup -- verify with a fresh v1.1 -> v1.2 upgrade
-- [ ] **Config Migration:** `ems_config.json` backed up and no longer read by application -- verify removal does not break startup
-- [ ] **Translations:** Every option in `config.yaml` has an `en.yaml` entry -- verify no raw key names shown in HA add-on config page
-- [ ] **Binary Sensors:** Online/offline entities use `binary_sensor` platform, not `sensor` -- verify device_class is `connectivity` or `running`
-- [ ] **Services:** Service calls fail gracefully when hardware is offline -- verify from HA Developer Tools > Services
+- [ ] **Consumption forecaster:** Often missing actual weather integration -- verify predictions use Open-Meteo forecast, not `neutral_temp = 10.0`
+- [ ] **Self-tuning:** Often missing rollback mechanism -- verify oscillation detector can revert to defaults within 2 control cycles
+- [ ] **Anomaly detection:** Often missing confirmation period -- verify single-cycle spikes don't generate alerts
+- [ ] **Model training:** Often missing executor offload -- verify `_run_cycle()` never blocks > 100ms during training
+- [ ] **aarch64 build:** Often missing OMP thread limits -- verify `OMP_NUM_THREADS` is set in Dockerfile and run.sh
+- [ ] **Feature engineering:** Often missing train/predict distribution check -- verify all features used in `.predict()` match what was used in `.fit()` (no placeholder constants replacing real training values)
+- [ ] **Model lifecycle:** Often missing error trend monitoring -- verify `get_forecast_comparison()` runs daily and logs are actionable
+- [ ] **Dashboard ML section:** Often missing fallback state display -- verify UI shows "Learning (14/60 days)" not just "ML active"
 
 ## Recovery Strategies
 
 | Pitfall | Recovery Cost | Recovery Steps |
 |---------|---------------|----------------|
-| unique_id changed (Pitfall 1) | HIGH | Revert unique_id to old values. Users must manually re-add entities to dashboards if entity registry entries were auto-deleted. No automated recovery. |
-| Duplicate entities from platform migration (Pitfall 2) | MEDIUM | Publish empty retained payloads to old discovery topics. Users may need to manually delete stale entities from HA entity registry. |
-| Ingress broken (Pitfall 3) | LOW | Direct access still works. Fix base path configuration and rebuild frontend. No data loss. |
-| paho thread crash (Pitfall 4) | MEDIUM | Restart the add-on. Implement health check + auto-reconnect. No data loss but commands lost during outage. |
-| Wrong Number entity limits (Pitfall 5) | LOW-MEDIUM | Re-publish discovery with corrected min/max. Backend validation prevents hardware damage even if HA sends bad values. |
-| Config migration failure (Pitfall 6) | HIGH | User must manually re-enter all settings in HA add-on config page. Provide a migration fallback that reads wizard config as backup. |
-| Silent service call failure (Pitfall 7) | LOW | Add logging and error feedback. No data loss, just missed commands. |
+| Self-tuning causes oscillation | LOW | Oscillation detector triggers automatic revert to defaults; no user action needed |
+| ML training blocks control loop | MEDIUM | Restart the Add-on; add `run_in_executor()` to training path; revert deployment if needed |
+| Anomaly detection alert fatigue | LOW | Widen thresholds by 50%; reduce alert frequency to daily summary; disable Telegram for anomalies |
+| Model drift after season change | LOW | Force retrain with 30-day window; wait 7 days for model to re-adapt |
+| sklearn version incompatibility | LOW | Delete persisted model file; system retrains from scratch at next startup (< 60s) |
+| Feature leakage producing false accuracy | MEDIUM | Audit feature pipeline; implement time-series CV; retrain with corrected features; compare to seasonal baseline |
+| aarch64 build failure after sklearn update | HIGH | Pin sklearn version exactly in pyproject.toml; test aarch64 build in CI before merging |
+| Control loop missed cycles during training | LOW | Add `run_in_executor()`; set training timeout of 120s; monitor cycle timing |
 
 ## Pitfall-to-Phase Mapping
 
 | Pitfall | Prevention Phase | Verification |
 |---------|------------------|--------------|
-| unique_id preservation (P1) | MQTT Discovery Overhaul | Diff old vs. new discovery payloads; verify unique_id unchanged for all 17 existing entities |
-| Platform migration cleanup (P2) | MQTT Discovery Overhaul | After upgrade, verify HA device shows correct entity count (no duplicates) |
-| Ingress path rewriting (P3) | Ingress Support | Test dashboard loads via both `http://host:8000` and HA sidebar Ingress URL |
-| paho subscribe threading (P4) | Controllable Entities (Number/Select) | Broker restart test: kill Mosquitto, wait 30s, restart; verify entities recover within 60s |
-| Number min/max validation (P5) | Controllable Entities (Number/Select) | Send out-of-range command on MQTT; verify backend rejects and publishes correct state |
-| Config migration (P6) | Remove Setup Wizard (first phase) | Fresh v1.1 install with wizard config -> upgrade to v1.2 -> verify all settings preserved |
-| Service error handling (P7) | HA Services | Call service with Huawei driver offline; verify HA shows error or entity shows unchanged state |
-| Entity naming (UX) | MQTT Discovery Overhaul | Verify HA entity list shows clean names like "EMS Huawei Battery SOC" not "EMS Energy Management System Huawei Battery SOC" |
-| `object_id` deprecation | MQTT Discovery Overhaul | Run HA 2025.10+ and check logs for zero deprecation warnings from EMS entities |
-| `expire_after` + retained state conflict | MQTT Discovery Overhaul | Stop EMS, wait for `expire_after` timeout, verify entities show "unavailable" not stale value |
+| Cold-start worse than fallback | Forecasting improvement phase | Shadow mode log shows ML params vs defaults for 14+ days before activation |
+| Self-tuning destabilizes control loop | Self-tuning phase (first task) | Oscillation detector tested with synthetic rapid-transition scenarios |
+| Blocking control loop with ML | Any phase adding ML inference | `_run_cycle()` timing histogram shows p99 < 500ms; no stale data warnings during training |
+| Anomaly false positives | Anomaly detection phase | False positive rate < 20% after 30 days; alert count < 3/day |
+| Feature leakage | Forecasting improvement phase | Time-series CV gap between train and test accuracy < 15% |
+| Model drift | Self-tuning lifecycle phase | Error trend monitoring active; auto-retrain triggers within 5 days of drift |
+| aarch64 build/runtime issues | First phase touching ML | CI builds and tests on aarch64; `OMP_NUM_THREADS=2` verified in container |
+| Model versioning/rollback | Self-tuning lifecycle phase | Model load failure handled gracefully (retrain from scratch, no crash) |
 
 ## Sources
 
-- [HA MQTT Integration docs](https://www.home-assistant.io/integrations/mqtt/) -- discovery, availability, origin, entity_category, migrate_discovery
-- [HA MQTT Number docs](https://www.home-assistant.io/integrations/number.mqtt/) -- command_topic, state_topic, min/max, mode
-- [object_id deprecation (HA Core #153612)](https://github.com/home-assistant/core/issues/153612) -- deprecated 2025.10, removed 2026.4
-- [object_id vs default_entity_id discussion](https://community.home-assistant.io/t/mqtt-object-id-vs-default-entity-id-warning/937665)
-- [Ingress WebSocket support discussion](https://community.home-assistant.io/t/ingress-with-support-for-websocket/588542) -- WebSocket upgrade headers, proxy configuration
-- [Ingress static asset issues](https://community.home-assistant.io/t/trouble-with-static-assets-in-custom-addon-with-ingress/712298) -- base path, relative URLs
-- [X-Ingress-Path header usage](https://community.home-assistant.io/t/how-to-use-x-ingress-path-in-an-add-on/276905)
-- [paho-mqtt thread crash on reconnect (GitHub #894)](https://github.com/eclipse-paho/paho.mqtt.python/issues/894) -- BrokenPipeError in on_connect subscribe
-- [HA Supervisor Proxy and Ingress (DeepWiki)](https://deepwiki.com/home-assistant/supervisor/6.3-proxy-and-ingress)
-- [expire_after vs availability_topic discussion](https://community.home-assistant.io/t/mqtt-discovery-msg-availability-vs-expire-after/788468)
-- Direct codebase analysis: `backend/ha_mqtt_client.py`, `backend/evcc_mqtt_driver.py`, `backend/main.py`, `backend/config.py`, `backend/setup_config.py`, `ha-addon/config.yaml`, `ha-addon/run.sh`, `ha-addon/translations/en.yaml`, `frontend/vite.config.ts`
+- [scikit-learn model persistence docs](https://scikit-learn.org/stable/model_persistence.html) -- version coupling warnings, skops.io recommendation
+- [scikit-learn aarch64 performance issue #15824](https://github.com/scikit-learn/scikit-learn/issues/15824) -- slow tests on ARM, OpenMP oversubscription
+- [InfluxDB Flux query optimization](https://docs.influxdata.com/influxdb/v2/query-data/optimize-queries/) -- pushdown functions, filter ordering
+- [Anomaly detection in energy consumption (Wiley 2025)](https://onlinelibrary.wiley.com/doi/full/10.4218/etrij.2023-0155) -- false positive rates, adaptive thresholds
+- [Transfer learning for energy anomaly detection (ScienceDirect 2025)](https://www.sciencedirect.com/science/article/pii/S037877882500859X) -- 40% data subset reducing false positives
+- [Stability-preserving RL-based PID tuning](https://www.oaepublish.com/articles/ces.2021.15) -- stability guarantees lost with unconstrained ML tuning
+- [ISA PID tuning common mistakes](https://blog.isa.org/avoid-common-tuning-mistakes-pid) -- oscillation from aggressive integral parameters
+- Existing EMS codebase analysis: `backend/consumption_forecaster.py`, `backend/coordinator.py`, `backend/config.py`
 
 ---
-*Pitfalls research for: HA best practice alignment (v1.2 milestone)*
+*Pitfalls research for: ML self-tuning, anomaly detection, and forecasting in dual-battery EMS*
 *Researched: 2026-03-23*
