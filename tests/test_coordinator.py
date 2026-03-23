@@ -1372,3 +1372,140 @@ class TestExportIntegration:
         now = datetime(2026, 1, 15, 12, 0, tzinfo=ZoneInfo("Europe/Berlin"))
         result = coord._get_effective_min_soc("huawei", now)
         assert result == 100.0  # clamped
+
+
+# ===========================================================================
+# HA command handler tests
+# ===========================================================================
+
+
+class TestHaCommandHandler:
+    """Tests for _handle_ha_command — command dispatch from HA MQTT."""
+
+    def test_ha_command_min_soc_huawei(self):
+        """min_soc_huawei command updates _sys_config.huawei_min_soc_pct."""
+        coord, _, _ = _make_coordinator()
+        coord._handle_ha_command("min_soc_huawei", "25")
+        assert coord._sys_config.huawei_min_soc_pct == 25.0
+
+    def test_ha_command_min_soc_victron(self):
+        """min_soc_victron command updates _sys_config.victron_min_soc_pct."""
+        coord, _, _ = _make_coordinator()
+        coord._handle_ha_command("min_soc_victron", "30")
+        assert coord._sys_config.victron_min_soc_pct == 30.0
+
+    def test_ha_command_deadband_huawei(self):
+        """deadband_huawei command updates _huawei_deadband_w."""
+        coord, _, _ = _make_coordinator()
+        coord._handle_ha_command("deadband_huawei", "500")
+        assert coord._huawei_deadband_w == 500
+
+    def test_ha_command_deadband_victron(self):
+        """deadband_victron command updates _victron_deadband_w."""
+        coord, _, _ = _make_coordinator()
+        coord._handle_ha_command("deadband_victron", "200")
+        assert coord._victron_deadband_w == 200
+
+    def test_ha_command_ramp_rate(self):
+        """ramp_rate command updates both _huawei_ramp_w_per_cycle and _victron_ramp_w_per_cycle."""
+        coord, _, _ = _make_coordinator()
+        coord._handle_ha_command("ramp_rate", "1000")
+        assert coord._huawei_ramp_w_per_cycle == 1000
+        assert coord._victron_ramp_w_per_cycle == 1000
+
+    def test_ha_command_control_mode_hold(self):
+        """control_mode HOLD sets _mode_override."""
+        coord, _, _ = _make_coordinator()
+        coord._handle_ha_command("control_mode", "HOLD")
+        assert coord._mode_override == "HOLD"
+
+    def test_ha_command_control_mode_auto_clears(self):
+        """control_mode AUTO clears _mode_override to None."""
+        coord, _, _ = _make_coordinator()
+        coord._mode_override = "HOLD"
+        coord._handle_ha_command("control_mode", "AUTO")
+        assert coord._mode_override is None
+
+    def test_ha_command_force_grid_charge(self):
+        """force_grid_charge button sets GRID_CHARGE mode with timeout."""
+        coord, _, _ = _make_coordinator()
+        loop = asyncio.new_event_loop()
+        try:
+            coord._mode_timeout_handle = None
+            # Mock the event loop for call_later
+            with patch("asyncio.get_running_loop") as mock_loop:
+                mock_loop.return_value = loop
+                coord._handle_ha_command("force_grid_charge", "PRESS")
+        finally:
+            loop.close()
+        assert coord._mode_override == "GRID_CHARGE"
+
+    def test_ha_command_reset_to_auto(self):
+        """reset_to_auto button clears mode override and cancels timeout."""
+        coord, _, _ = _make_coordinator()
+        coord._mode_override = "GRID_CHARGE"
+        mock_handle = MagicMock()
+        coord._mode_timeout_handle = mock_handle
+        coord._handle_ha_command("reset_to_auto", "PRESS")
+        assert coord._mode_override is None
+        mock_handle.cancel.assert_called_once()
+
+    def test_ha_command_force_grid_charge_timeout(self):
+        """After 60 minutes, force_grid_charge auto-timeout clears _mode_override."""
+        coord, _, _ = _make_coordinator()
+        coord._mode_override = "GRID_CHARGE"
+        coord._clear_mode_override()
+        assert coord._mode_override is None
+
+    def test_ha_command_invalid_entity_id(self):
+        """Invalid entity_id logs warning and does nothing."""
+        coord, _, _ = _make_coordinator()
+        original_soc = coord._sys_config.huawei_min_soc_pct
+        coord._handle_ha_command("nonexistent_entity", "42")
+        assert coord._sys_config.huawei_min_soc_pct == original_soc
+
+    def test_ha_command_out_of_range_clamps(self):
+        """Out-of-range values are clamped to entity min/max."""
+        coord, _, _ = _make_coordinator()
+        coord._handle_ha_command("min_soc_huawei", "200")
+        assert coord._sys_config.huawei_min_soc_pct == 100.0  # max is 100
+
+    def test_ha_command_below_range_clamps(self):
+        """Below-range values are clamped to entity minimum."""
+        coord, _, _ = _make_coordinator()
+        coord._handle_ha_command("min_soc_huawei", "0")
+        assert coord._sys_config.huawei_min_soc_pct == 10.0  # min is 10
+
+    def test_ha_command_state_echo(self):
+        """After command, state echo triggers ha_mqtt_client.publish."""
+        coord, _, _ = _make_coordinator()
+        mock_mqtt = AsyncMock()
+        coord._ha_mqtt_client = mock_mqtt
+        coord._state = CoordinatorState(
+            combined_soc_pct=50.0, huawei_soc_pct=50.0, victron_soc_pct=50.0,
+            huawei_available=True, victron_available=True,
+            control_state="IDLE",
+            huawei_discharge_setpoint_w=0, victron_discharge_setpoint_w=0,
+            combined_power_w=0.0,
+            huawei_charge_headroom_w=0, victron_charge_headroom_w=0.0,
+            timestamp=time.monotonic(),
+        )
+        coord._handle_ha_command("min_soc_huawei", "25")
+        mock_mqtt.publish.assert_called_once()
+
+    def test_ha_command_supervisor_persistence_called(self):
+        """Supervisor options persistence called for number entity changes."""
+        coord, _, _ = _make_coordinator()
+        mock_supervisor = AsyncMock()
+        coord._supervisor_client = mock_supervisor
+        coord._handle_ha_command("min_soc_huawei", "25")
+        assert coord._sys_config.huawei_min_soc_pct == 25.0
+        # Persistence method should have been scheduled (fire-and-forget)
+
+    def test_ha_command_supervisor_none_graceful(self):
+        """If SupervisorClient is None, persistence is skipped gracefully."""
+        coord, _, _ = _make_coordinator()
+        coord._supervisor_client = None
+        # Should not raise
+        coord._handle_ha_command("min_soc_huawei", "25")
+        assert coord._sys_config.huawei_min_soc_pct == 25.0
