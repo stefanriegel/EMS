@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: unknown
-stopped_at: Completed 05-02-PLAN.md
-last_updated: "2026-03-22T12:57:28.796Z"
+status: Ready to execute
+stopped_at: Completed 06-01-PLAN.md
+last_updated: "2026-03-23T10:18:14.789Z"
 progress:
   total_phases: 6
   completed_phases: 5
-  total_plans: 13
-  completed_plans: 13
+  total_plans: 16
+  completed_plans: 14
 ---
 
 # Project State
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-22)
 
 **Core value:** Both battery systems operate independently with zero oscillation to maximize PV self-consumption
-**Current focus:** Phase 05 — dashboard
+**Current focus:** Phase 06 — deployment-hardening
 
 ## Current Position
 
-Phase: 6
-Plan: Not started
+Phase: 06 (deployment-hardening) — EXECUTING
+Plan: 2 of 3
 
 ## Performance Metrics
 
@@ -59,6 +59,7 @@ Plan: Not started
 | Phase 04 P03 | 2min | 1 tasks | 2 files |
 | Phase 05 P01 | 3min | 2 tasks | 4 files |
 | Phase 05 P02 | 3min | 3 tasks | 10 files |
+| Phase 06 P01 | 3min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -91,6 +92,9 @@ Recent decisions affecting current work:
 - [Phase 05]: Per-battery SoC arcs with separate CSS classes for independent color theming
 - [Phase 05]: Native HTML details/summary for expandable sections (no JS state management needed)
 - [Phase 05]: REST polling hooks with AbortController for non-critical data (decisions)
+- [Phase 06]: Single Dockerfile at repo root replaces both root and ha-addon/ Dockerfiles
+- [Phase 06]: Victron port default changed from 1883 (MQTT) to 502 (Modbus TCP)
+- [Phase 06]: Coordinator tuning and Modul3 tariff fields use optional schema types (int?, str?)
 
 ### Pending Todos
 
@@ -104,6 +108,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-22T12:52:24.024Z
-Stopped at: Completed 05-02-PLAN.md
+Last session: 2026-03-23T10:18:14.784Z
+Stopped at: Completed 06-01-PLAN.md
 Resume file: None

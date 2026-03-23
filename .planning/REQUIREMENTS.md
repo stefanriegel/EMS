@@ -56,8 +56,8 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Deployment
 
-- [ ] **DEP-01**: HA Add-on as primary deployment target (aarch64 + amd64)
-- [ ] **DEP-02**: Supervisor service discovery for MQTT, EVCC, InfluxDB
+- [x] **DEP-01**: HA Add-on as primary deployment target (aarch64 + amd64)
+- [x] **DEP-02**: Supervisor service discovery for MQTT, EVCC, InfluxDB
 - [ ] **DEP-03**: Setup wizard updated for dual-controller config (Victron Modbus host/port/unit IDs)
 
 ## v2 Requirements
@@ -127,8 +127,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | UI-03 | Phase 5 | Complete |
 | UI-04 | Phase 5 | Complete |
 | UI-05 | Phase 5 | Complete |
-| DEP-01 | Phase 6 | Pending |
-| DEP-02 | Phase 6 | Pending |
+| DEP-01 | Phase 6 | Complete |
+| DEP-02 | Phase 6 | Complete |
 | DEP-03 | Phase 6 | Pending |
 
 **Coverage:**
