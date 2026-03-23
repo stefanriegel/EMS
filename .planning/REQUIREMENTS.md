@@ -75,45 +75,45 @@ Requirements for Home Assistant Best Practice Alignment milestone.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| CFG-01 | TBD | Pending |
-| CFG-02 | TBD | Pending |
-| CFG-03 | TBD | Pending |
-| DISC-01 | TBD | Pending |
-| DISC-02 | TBD | Pending |
-| DISC-03 | TBD | Pending |
-| DISC-04 | TBD | Pending |
-| DISC-05 | TBD | Pending |
-| DISC-06 | TBD | Pending |
-| DISC-07 | TBD | Pending |
-| DISC-08 | TBD | Pending |
-| DISC-09 | TBD | Pending |
-| DISC-10 | TBD | Pending |
-| DISC-11 | TBD | Pending |
-| DISC-12 | TBD | Pending |
-| DISC-13 | TBD | Pending |
-| CTRL-01 | TBD | Pending |
-| CTRL-02 | TBD | Pending |
-| CTRL-03 | TBD | Pending |
-| CTRL-04 | TBD | Pending |
-| CTRL-05 | TBD | Pending |
-| CTRL-06 | TBD | Pending |
-| CTRL-07 | TBD | Pending |
-| CTRL-08 | TBD | Pending |
-| CTRL-09 | TBD | Pending |
-| CTRL-10 | TBD | Pending |
-| CTRL-11 | TBD | Pending |
-| INGR-01 | TBD | Pending |
-| INGR-02 | TBD | Pending |
-| INGR-03 | TBD | Pending |
-| INGR-04 | TBD | Pending |
-| INGR-05 | TBD | Pending |
-| INGR-06 | TBD | Pending |
+| CFG-01 | Phase 12 | Pending |
+| CFG-02 | Phase 12 | Pending |
+| CFG-03 | Phase 12 | Pending |
+| DISC-01 | Phase 13 | Pending |
+| DISC-02 | Phase 13 | Pending |
+| DISC-03 | Phase 13 | Pending |
+| DISC-04 | Phase 13 | Pending |
+| DISC-05 | Phase 13 | Pending |
+| DISC-06 | Phase 13 | Pending |
+| DISC-07 | Phase 13 | Pending |
+| DISC-08 | Phase 13 | Pending |
+| DISC-09 | Phase 13 | Pending |
+| DISC-10 | Phase 13 | Pending |
+| DISC-11 | Phase 13 | Pending |
+| DISC-12 | Phase 13 | Pending |
+| DISC-13 | Phase 13 | Pending |
+| CTRL-01 | Phase 14 | Pending |
+| CTRL-02 | Phase 14 | Pending |
+| CTRL-03 | Phase 14 | Pending |
+| CTRL-04 | Phase 14 | Pending |
+| CTRL-05 | Phase 14 | Pending |
+| CTRL-06 | Phase 14 | Pending |
+| CTRL-07 | Phase 14 | Pending |
+| CTRL-08 | Phase 14 | Pending |
+| CTRL-09 | Phase 14 | Pending |
+| CTRL-10 | Phase 14 | Pending |
+| CTRL-11 | Phase 14 | Pending |
+| INGR-01 | Phase 15 | Pending |
+| INGR-02 | Phase 15 | Pending |
+| INGR-03 | Phase 15 | Pending |
+| INGR-04 | Phase 15 | Pending |
+| INGR-05 | Phase 15 | Pending |
+| INGR-06 | Phase 15 | Pending |
 
 **Coverage:**
 - v1.2 requirements: 33 total
-- Mapped to phases: 0
-- Unmapped: 33
+- Mapped to phases: 33
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-23*
-*Last updated: 2026-03-23 after initial definition*
+*Last updated: 2026-03-23 after roadmap creation*
