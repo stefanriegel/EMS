@@ -70,41 +70,57 @@ class HuaweiConfig:
 
 @dataclass
 class VictronConfig:
-    """Connection config for the Victron Multiplus II MQTT broker.
+    """Connection config for the Victron Multiplus II via Modbus TCP.
 
     Attributes:
-        host: IP or hostname of the Venus OS MQTT broker.
-        port: TCP port (default 1883).
-        timeout_s: Per-operation timeout in seconds (default 10.0).
-        discovery_timeout_s: Maximum time to wait for portalId/instanceId
-            discovery via the MQTT keep-alive topic (default 15.0).
+        host: IP or hostname of the Venus OS GX device (Modbus TCP server).
+        port: TCP port (default 502 for Modbus TCP).
+        timeout_s: Per-operation timeout in seconds (default 5.0).
+        vebus_unit_id: Modbus unit ID for the VE.Bus inverter registers
+            (default 227).  Venus OS assigns unit IDs dynamically based
+            on connected devices.
+        system_unit_id: Modbus unit ID for system-level registers such as
+            battery SoC and total power (default 100).
+        battery_unit_id: Modbus unit ID for battery-level registers such as
+            voltage and current (default 225).
 
     Environment variables:
-        ``VICTRON_HOST`` — hostname or IP address of the MQTT broker (required).
-        ``VICTRON_PORT`` — TCP port (optional, default 1883).
+        ``VICTRON_HOST``              — hostname or IP (required).
+        ``VICTRON_PORT``              — TCP port (optional, default 502).
+        ``VICTRON_VEBUS_UNIT_ID``     — VE.Bus inverter unit ID (optional, default 227).
+        ``VICTRON_SYSTEM_UNIT_ID``    — system-level unit ID (optional, default 100).
+        ``VICTRON_BATTERY_UNIT_ID``   — battery-level unit ID (optional, default 225).
     """
 
     host: str
-    port: int = 1883
-    timeout_s: float = 10.0
-    discovery_timeout_s: float = 15.0
+    port: int = 502
+    timeout_s: float = 5.0
+    vebus_unit_id: int = 227
+    system_unit_id: int = 100
+    battery_unit_id: int = 225
 
     @classmethod
     def from_env(cls) -> "VictronConfig":
         """Construct a :class:`VictronConfig` from environment variables.
 
         Required:
-            ``VICTRON_HOST`` — hostname or IP of the Venus OS MQTT broker.
+            ``VICTRON_HOST`` — hostname or IP of the Venus OS GX device.
 
         Optional (with defaults):
-            ``VICTRON_PORT`` — TCP port (default 1883).
+            ``VICTRON_PORT``              — TCP port (default 502).
+            ``VICTRON_VEBUS_UNIT_ID``     — VE.Bus unit ID (default 227).
+            ``VICTRON_SYSTEM_UNIT_ID``    — system-level unit ID (default 100).
+            ``VICTRON_BATTERY_UNIT_ID``   — battery-level unit ID (default 225).
 
         Raises:
             KeyError: if ``VICTRON_HOST`` is not set.
         """
         return cls(
             host=_require_env("VICTRON_HOST"),
-            port=int(os.environ.get("VICTRON_PORT", "1883")),
+            port=int(os.environ.get("VICTRON_PORT", "502")),
+            vebus_unit_id=int(os.environ.get("VICTRON_VEBUS_UNIT_ID", "227")),
+            system_unit_id=int(os.environ.get("VICTRON_SYSTEM_UNIT_ID", "100")),
+            battery_unit_id=int(os.environ.get("VICTRON_BATTERY_UNIT_ID", "225")),
         )
 
 

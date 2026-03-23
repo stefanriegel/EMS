@@ -88,6 +88,7 @@ class ProbeRequest(BaseModel):
     # Modbus
     host: str = ""
     port: int = 502
+    unit_id: int = 100
 
     # HA REST (overrides port for HA which uses 8123 by default)
     url: str = ""
@@ -199,9 +200,12 @@ class SetupCompleteRequest(BaseModel):
     huawei_host: str = ""
     huawei_port: int = 502
 
-    # --- Victron MQTT ---
+    # --- Victron Modbus TCP ---
     victron_host: str = ""
-    victron_port: int = 1883
+    victron_port: int = 502
+    victron_system_unit_id: int = 100
+    victron_battery_unit_id: int = 225
+    victron_vebus_unit_id: int = 227
 
     # --- EVCC HTTP ---
     evcc_host: str = "192.168.0.10"
@@ -221,6 +225,14 @@ class SetupCompleteRequest(BaseModel):
     octopus_off_peak_end_min: int = 330
     octopus_off_peak_rate_eur_kwh: float = 0.08
     octopus_peak_rate_eur_kwh: float = 0.28
+
+    # --- Modul3 grid-fee tariff ---
+    modul3_surplus_start_min: int = 0
+    modul3_surplus_end_min: int = 0
+    modul3_deficit_start_min: int = 0
+    modul3_deficit_end_min: int = 0
+    modul3_surplus_rate_eur_kwh: float = 0.0
+    modul3_deficit_rate_eur_kwh: float = 0.0
 
     # --- SoC limits ---
     huawei_min_soc_pct: float = 10.0

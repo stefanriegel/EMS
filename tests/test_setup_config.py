@@ -23,7 +23,7 @@ def _full_config(**overrides) -> EmsSetupConfig:
         huawei_host="192.168.1.10",
         huawei_port=502,
         victron_host="192.168.1.20",
-        victron_port=1883,
+        victron_port=502,
         evcc_host="192.168.1.30",
         evcc_port=7070,
         evcc_mqtt_host="192.168.1.30",
@@ -59,7 +59,7 @@ def test_round_trip(tmp_path):
     assert loaded.huawei_host == "192.168.1.10"
     assert loaded.huawei_port == 502
     assert loaded.victron_host == "192.168.1.20"
-    assert loaded.victron_port == 1883
+    assert loaded.victron_port == 502
     assert loaded.evcc_host == "192.168.1.30"
     assert loaded.evcc_port == 7070
     assert loaded.evcc_mqtt_host == "192.168.1.30"
@@ -137,4 +137,73 @@ def test_default_fields():
     assert cfg.victron_host == ""
     assert cfg.victron_min_soc_pct == pytest.approx(15.0)
     assert cfg.huawei_port == 502
-    assert cfg.victron_port == 1883
+    assert cfg.victron_port == 502
+
+
+def test_victron_modbus_unit_id_defaults():
+    """EmsSetupConfig() has correct Victron Modbus unit ID defaults."""
+    cfg = EmsSetupConfig()
+    assert cfg.victron_system_unit_id == 100
+    assert cfg.victron_battery_unit_id == 225
+    assert cfg.victron_vebus_unit_id == 227
+
+
+def test_modul3_field_defaults():
+    """EmsSetupConfig() has correct Modul3 tariff field defaults."""
+    cfg = EmsSetupConfig()
+    assert cfg.modul3_surplus_start_min == 0
+    assert cfg.modul3_surplus_end_min == 0
+    assert cfg.modul3_deficit_start_min == 0
+    assert cfg.modul3_deficit_end_min == 0
+    assert cfg.modul3_surplus_rate_eur_kwh == pytest.approx(0.0)
+    assert cfg.modul3_deficit_rate_eur_kwh == pytest.approx(0.0)
+
+
+def test_round_trip_new_fields(tmp_path):
+    """save + load round-trips Victron Modbus and Modul3 fields."""
+    path = str(tmp_path / "ems.json")
+    cfg = _full_config(
+        victron_port=502,
+        victron_system_unit_id=101,
+        victron_battery_unit_id=226,
+        victron_vebus_unit_id=228,
+        modul3_surplus_start_min=60,
+        modul3_surplus_end_min=120,
+        modul3_deficit_start_min=180,
+        modul3_deficit_end_min=240,
+        modul3_surplus_rate_eur_kwh=0.05,
+        modul3_deficit_rate_eur_kwh=0.10,
+    )
+    save_setup_config(cfg, path)
+    loaded = load_setup_config(path)
+    assert loaded is not None
+    assert loaded.victron_port == 502
+    assert loaded.victron_system_unit_id == 101
+    assert loaded.victron_battery_unit_id == 226
+    assert loaded.victron_vebus_unit_id == 228
+    assert loaded.modul3_surplus_start_min == 60
+    assert loaded.modul3_surplus_end_min == 120
+    assert loaded.modul3_deficit_start_min == 180
+    assert loaded.modul3_deficit_end_min == 240
+    assert loaded.modul3_surplus_rate_eur_kwh == pytest.approx(0.05)
+    assert loaded.modul3_deficit_rate_eur_kwh == pytest.approx(0.10)
+
+
+def test_victron_config_battery_unit_id():
+    """VictronConfig.from_env() reads VICTRON_BATTERY_UNIT_ID env var."""
+    from backend.config import VictronConfig
+
+    # Test default
+    os.environ["VICTRON_HOST"] = "192.168.0.20"
+    os.environ.pop("VICTRON_BATTERY_UNIT_ID", None)
+    cfg = VictronConfig.from_env()
+    assert cfg.battery_unit_id == 225
+
+    # Test override
+    os.environ["VICTRON_BATTERY_UNIT_ID"] = "230"
+    cfg = VictronConfig.from_env()
+    assert cfg.battery_unit_id == 230
+
+    # Cleanup
+    os.environ.pop("VICTRON_HOST", None)
+    os.environ.pop("VICTRON_BATTERY_UNIT_ID", None)
