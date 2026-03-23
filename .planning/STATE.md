@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Advanced Optimization
-status: Ready to execute
-stopped_at: Completed 11-01-PLAN.md
-last_updated: "2026-03-23T15:17:20.373Z"
+status: Phase complete — ready for verification
+stopped_at: Completed 11-02-PLAN.md
+last_updated: "2026-03-23T15:20:50.229Z"
 progress:
   total_phases: 5
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 10
-  completed_plans: 9
+  completed_plans: 10
 ---
 
 # Project State
@@ -66,6 +66,7 @@ Plan: 2 of 2
 | Phase 10 P01 | 4min | 1 tasks | 3 files |
 | Phase 10-multi-day-scheduling P02 | 4min | 2 tasks | 3 files |
 | Phase 11-dashboard-api P01 | 3min | 2 tasks | 4 files |
+| Phase 11-dashboard-api P02 | 2min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -94,6 +95,8 @@ Recent decisions affecting current work:
 - [Phase 10-multi-day-scheduling]: check_forecast_deviation uses 20% threshold on any single day's solar
 - [Phase 10-multi-day-scheduling]: Intra-day replan loop runs every 6h with initial delay to avoid nightly overlap
 - [Phase 11-dashboard-api]: Use getattr for active_day_plans to safely handle Scheduler vs WeatherScheduler polymorphism
+- [Phase 11-dashboard-api]: ForecastCard uses T12:00:00 suffix on date parsing to avoid timezone date shift
+- [Phase 11-dashboard-api]: Day plan section uses native details/summary for expandable UI consistent with Phase 5 pattern
 
 ### Pending Todos
 
@@ -108,6 +111,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-23T15:17:20.370Z
-Stopped at: Completed 11-01-PLAN.md
+Last session: 2026-03-23T15:20:50.226Z
+Stopped at: Completed 11-02-PLAN.md
 Resume file: None
