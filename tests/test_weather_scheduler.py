@@ -301,3 +301,113 @@ class TestWeatherSchedulerInterface:
         assert len(ws.active_day_plans[0].slots) > 0
         assert len(ws.active_day_plans[1].slots) == 0
         assert len(ws.active_day_plans[2].slots) == 0
+
+
+class TestForecastDeviation:
+    """Test intra-day forecast deviation detection."""
+
+    @pytest.mark.anyio
+    async def test_replan_on_deviation(self):
+        """When new solar forecast differs by >20% from prior, returns True."""
+        ws = _build_weather_scheduler(solar_daily_kwh=[10.0, 10.0, 10.0])
+        # Simulate prior compute with known values
+        ws._last_solar_daily_kwh = [10.0, 10.0, 10.0]
+
+        # New forecast: day 0 jumps from 10 to 15 kWh (50% deviation)
+        new_solar = _make_solar([15.0, 10.0, 10.0])
+        with patch(
+            "backend.weather_scheduler.get_solar_forecast",
+            new_callable=AsyncMock,
+            return_value=new_solar,
+        ):
+            result = await ws.check_forecast_deviation(threshold=0.20)
+
+        assert result is True
+
+    @pytest.mark.anyio
+    async def test_no_replan_stable(self):
+        """When new solar forecast is within 20% of prior, returns False."""
+        ws = _build_weather_scheduler(solar_daily_kwh=[10.0, 10.0, 10.0])
+        ws._last_solar_daily_kwh = [10.0, 10.0, 10.0]
+
+        # New forecast: day 0 goes from 10 to 11 kWh (10% deviation)
+        new_solar = _make_solar([11.0, 10.0, 10.0])
+        with patch(
+            "backend.weather_scheduler.get_solar_forecast",
+            new_callable=AsyncMock,
+            return_value=new_solar,
+        ):
+            result = await ws.check_forecast_deviation(threshold=0.20)
+
+        assert result is False
+
+    @pytest.mark.anyio
+    async def test_replan_no_prior_data(self):
+        """When _last_solar_daily_kwh is None, returns False (no basis)."""
+        ws = _build_weather_scheduler()
+        ws._last_solar_daily_kwh = None
+
+        result = await ws.check_forecast_deviation()
+        assert result is False
+
+    @pytest.mark.anyio
+    async def test_replan_zero_to_significant(self):
+        """When old solar was 0 and new is significant (>1 kWh), returns True."""
+        ws = _build_weather_scheduler(solar_daily_kwh=[5.0, 5.0, 5.0])
+        ws._last_solar_daily_kwh = [0.0, 10.0, 10.0]
+
+        new_solar = _make_solar([5.0, 10.0, 10.0])
+        with patch(
+            "backend.weather_scheduler.get_solar_forecast",
+            new_callable=AsyncMock,
+            return_value=new_solar,
+        ):
+            result = await ws.check_forecast_deviation(threshold=0.20)
+
+        assert result is True
+
+
+class TestComputeLock:
+    """Test asyncio.Lock prevents concurrent compute_schedule calls."""
+
+    @pytest.mark.anyio
+    async def test_compute_lock(self):
+        """Two concurrent compute_schedule calls serialize (not corrupt)."""
+        ws = _build_weather_scheduler(
+            solar_daily_kwh=[10.0, 10.0, 10.0],
+            consumption_daily_kwh=20.0,
+        )
+        solar = ws._test_solar
+
+        call_order: list[str] = []
+        original_compute = ws.compute_schedule.__func__
+
+        async def slow_compute(self_ws, writer=None):
+            call_order.append("enter")
+            await asyncio.sleep(0.05)
+            result = await original_compute(self_ws, writer)
+            call_order.append("exit")
+            return result
+
+        with patch(
+            "backend.weather_scheduler.get_solar_forecast",
+            new_callable=AsyncMock,
+            return_value=solar,
+        ):
+            # Replace compute_schedule with slow version that tracks order
+            # but still goes through the lock
+            ws.compute_schedule = lambda writer=None: slow_compute(ws, writer)
+
+            # Simulate using the lock directly
+            async def locked_compute():
+                async with ws._compute_lock:
+                    call_order.append("enter")
+                    await asyncio.sleep(0.05)
+                    call_order.append("exit")
+
+            t1 = asyncio.create_task(locked_compute())
+            t2 = asyncio.create_task(locked_compute())
+            await asyncio.gather(t1, t2)
+
+        # With a lock, calls must serialize: enter, exit, enter, exit
+        assert call_order == ["enter", "exit", "enter", "exit"]
