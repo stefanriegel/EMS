@@ -83,7 +83,7 @@ See REQUIREMENTS.md for v1.2 milestone requirements.
 
 ## Current State
 
-**v1.2 in progress.** Phase 12 (Wizard Removal) complete — setup wizard deleted, Add-on options is sole config surface.
+**v1.2 in progress.** Phase 13 (MQTT Discovery Overhaul) complete — EntityDefinition model, 3 HA devices, LWT availability, binary sensors, origin metadata, translations.
 
 **Codebase:**
 - Backend: ~11,200 LOC Python (FastAPI, pymodbus, paho-mqtt)
@@ -144,4 +144,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 ---
-*Last updated: 2026-03-23 after Phase 12 completion*
+*Last updated: 2026-03-23 after Phase 13 completion*
