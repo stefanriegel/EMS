@@ -3,7 +3,7 @@
 Covers:
 - AuthMiddleware disabled when ADMIN_PASSWORD_HASH absent (existing tests unaffected)
 - AuthMiddleware blocks unauthenticated /api/state when ADMIN_PASSWORD_HASH set
-- Exempt paths: /api/health, /api/auth/*, /api/setup/*
+- Exempt paths: /api/health, /api/auth/*
 - POST /api/auth/login: correct password → 200 + ems_token cookie; wrong → 401
 - Authenticated request with valid ems_token cookie → passes middleware
 - get_health() degraded-mode bugfix: orchestrator=None returns 200 with status="offline"
@@ -95,7 +95,6 @@ def _build_app(mock_orch: MockOrchestrator | None = None, *, env_patch: dict | N
 
     from backend.api import api_router, get_orchestrator
     from backend.auth import AdminConfig, AuthMiddleware, auth_router
-    from backend.setup_api import setup_router
 
     env = env_patch or {}
 
@@ -105,12 +104,10 @@ def _build_app(mock_orch: MockOrchestrator | None = None, *, env_patch: dict | N
         app = FastAPI(title="EMS-test")
         app.add_middleware(AuthMiddleware, admin_cfg=admin_cfg)
         app.include_router(api_router)
-        app.include_router(setup_router)
         app.include_router(auth_router)
 
     # Inject state without lifespan.
     app.state.orchestrator = mock_orch
-    app.state.setup_config_path = "/tmp/ems-test-config.json"  # prevent AttributeError in setup_api
     app.state.scheduler = None
     app.state.metrics_reader = None
     app.state.tariff_engine = None
@@ -278,20 +275,6 @@ async def test_health_exempt_when_auth_enabled() -> None:
     assert resp.status_code == 200
     assert resp.json()["status"] == "offline"
 
-
-@pytest.mark.anyio
-async def test_setup_status_exempt_when_auth_enabled() -> None:
-    """GET /api/setup/status returns 200 (not 401) when auth is enabled."""
-    app = _build_app(
-        mock_orch=None,
-        env_patch={"ADMIN_PASSWORD_HASH": _TEST_HASH},
-    )
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.get("/api/setup/status")
-    # 200 or 422 is fine; the important thing is NOT 401.
-    assert resp.status_code != 401
 
 
 # ---------------------------------------------------------------------------
