@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Advanced Optimization
-status: Ready to plan
-stopped_at: Completed 09-01-PLAN.md
-last_updated: "2026-03-23T14:40:34.578Z"
+status: Ready to execute
+stopped_at: Completed 10-01-PLAN.md
+last_updated: "2026-03-23T14:54:08.358Z"
 progress:
   total_phases: 5
   completed_phases: 3
-  total_plans: 6
-  completed_plans: 6
+  total_plans: 8
+  completed_plans: 7
 ---
 
 # Project State
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-23)
 
 **Core value:** Both battery systems operate independently with zero oscillation to maximize PV self-consumption
-**Current focus:** Phase 09 — weather-forecast-data
+**Current focus:** Phase 10 — multi-day-scheduling
 
 ## Current Position
 
-Phase: 10
-Plan: Not started
+Phase: 10 (multi-day-scheduling) — EXECUTING
+Plan: 2 of 2
 
 ## Performance Metrics
 
@@ -63,6 +63,7 @@ Plan: Not started
 | Phase 08 P02 | 3min | 2 tasks | 3 files |
 | Phase 09 P02 | 2min | 1 tasks | 3 files |
 | Phase 09 P01 | 4min | 2 tasks | 5 files |
+| Phase 10 P01 | 4min | 1 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -86,6 +87,8 @@ Recent decisions affecting current work:
 - [Phase 08]: Higher-SoC system gets EXPORTING role (ties go to Huawei via >= comparison)
 - [Phase 09]: Hour-of-day weights for seasonal fallback: night 0.6, morning/evening 1.2, midday 1.4
 - [Phase 09]: Raw httpx over open-meteo-solar-forecast library for simpler dependency and full 72h support
+- [Phase 10]: WeatherScheduler builds slots directly to avoid double-counting solar discount
+- [Phase 10]: Headroom ceiling 15% summer / 5% winter; winter floor at 30% capacity
 
 ### Pending Todos
 
@@ -100,6 +103,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-23T14:37:25.958Z
-Stopped at: Completed 09-01-PLAN.md
+Last session: 2026-03-23T14:54:08.355Z
+Stopped at: Completed 10-01-PLAN.md
 Resume file: None

@@ -87,9 +87,9 @@ Plans:
   3. Forecast confidence is weighted by day — Day 1 at full weight, Day 2 at ~80%, Day 3 at ~60%
   4. Schedule re-runs approximately every 6 hours when actual conditions deviate significantly from the plan
   5. Grid charge targets leave headroom proportional to forecast uncertainty so unexpected PV surplus can still be absorbed
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 Plans:
-- [ ] 10-01-PLAN.md — DayPlan model + WeatherScheduler core algorithm + tests
+- [x] 10-01-PLAN.md — DayPlan model + WeatherScheduler core algorithm + tests
 - [ ] 10-02-PLAN.md — Intra-day re-planning + lifespan wiring
 
 ### Phase 11: Dashboard & API
@@ -114,5 +114,5 @@ Note: Phase 8 depends on Phase 7. Phase 9 is independent of Phases 7-8 and could
 | 7. Export Foundation | v1.1 | 0/2 | Planned | - |
 | 8. Coordinator Export Integration | v1.1 | 0/2 | Planned | - |
 | 9. Weather & Forecast Data | v1.1 | 0/2 | Planned | - |
-| 10. Multi-Day Scheduling | v1.1 | 0/2 | Planned | - |
+| 10. Multi-Day Scheduling | v1.1 | 1/2 | In Progress|  |
 | 11. Dashboard & API | v1.1 | 0/0 | Not started | - |
