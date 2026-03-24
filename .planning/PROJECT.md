@@ -69,6 +69,9 @@ Both battery systems operate independently with zero oscillation — coordinated
 - ✓ SelfTuner with adaptive dead-band/ramp/min-SoC tuning, 14-day shadow mode, bounded changes, automatic rollback — Phase 19
 - ✓ Driver dry_run flag, connectivity validation, and write-back verification on all Modbus write methods — Phase 20
 - ✓ HardwareValidationConfig with 48h read-only validation period gating in both controllers — Phase 20
+- ✓ CrossChargeDetector with 2-cycle debounce, 100W/200W thresholds, episode tracking, and automatic HOLDING mitigation — Phase 21
+- ✓ Cross-charge InfluxDB metrics (ems_cross_charge), Telegram alerts, /api/health integration — Phase 21
+- ✓ Dashboard cross-charge badge (EnergyFlowCard) and waste stats (OptimizationCard) — Phase 21
 
 ### Active
 
@@ -98,7 +101,7 @@ Both battery systems operate independently with zero oscillation — coordinated
 **Codebase:**
 - Backend: ~14,200 LOC Python (FastAPI, pymodbus, paho-mqtt, scikit-learn)
 - Frontend: ~2,600 LOC TypeScript/React (Vite, wouter)
-- Tests: ~18,800 LOC across 1,591 tests
+- Tests: ~19,400 LOC across 1,621 tests
 - 4 new ML modules: model_store, feature_pipeline, anomaly_detector, self_tuner
 
 **Hardware environment:**
@@ -164,4 +167,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 ---
-*Last updated: 2026-03-24 after Phase 20 completion*
+*Last updated: 2026-03-24 after Phase 21 completion*
