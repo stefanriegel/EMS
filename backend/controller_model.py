@@ -200,6 +200,13 @@ class CoordinatorState:
     huawei_working_mode: str = "unknown"
     """Current Huawei storage working mode (e.g. 'TIME_OF_USE_LUNA2000', 'MAXIMISE_SELF_CONSUMPTION')."""
 
+    commissioning_stage: str = "DUAL_BATTERY"
+    """Current commissioning stage (READ_ONLY, SINGLE_BATTERY, DUAL_BATTERY).
+    Default DUAL_BATTERY for backward compatibility (fully operational)."""
+
+    commissioning_shadow_mode: bool = False
+    """True when shadow mode is active (decisions logged, writes suppressed)."""
+
 
 @dataclass
 class DecisionEntry:

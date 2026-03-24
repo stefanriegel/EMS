@@ -882,3 +882,47 @@ class ModeManagerConfig:
                 os.environ.get("EMS_MODE_REAPPLY_COOLDOWN_S", "30.0")
             ),
         )
+
+
+@dataclass
+class CommissioningConfig:
+    """Configuration for the production commissioning state machine.
+
+    Controls staged rollout progression and shadow mode for safe
+    production deployment.
+
+    Environment variables:
+        ``EMS_COMMISSIONING_ENABLED``    -- enable/disable (default "true").
+        ``EMS_SHADOW_MODE``              -- shadow mode (default "true").
+        ``EMS_COMMISSIONING_STATE_PATH`` -- state file path (default "/config/ems_commissioning.json").
+        ``EMS_READ_ONLY_MIN_HOURS``      -- min hours in READ_ONLY (default 24).
+        ``EMS_SINGLE_BATTERY_MIN_HOURS`` -- min hours in SINGLE_BATTERY (default 24).
+    """
+
+    enabled: bool = True
+    shadow_mode: bool = True
+    state_file_path: str = "/config/ems_commissioning.json"
+    read_only_min_hours: float = 24.0
+    single_battery_min_hours: float = 24.0
+
+    @classmethod
+    def from_env(cls) -> "CommissioningConfig":
+        """Construct a :class:`CommissioningConfig` from environment variables.
+
+        All fields have safe defaults -- **no env vars are required**.
+        Shadow mode defaults to ``True`` for safety.
+        """
+        return cls(
+            enabled=os.environ.get("EMS_COMMISSIONING_ENABLED", "true").lower()
+            == "true",
+            shadow_mode=os.environ.get("EMS_SHADOW_MODE", "true").lower() == "true",
+            state_file_path=os.environ.get(
+                "EMS_COMMISSIONING_STATE_PATH", "/config/ems_commissioning.json"
+            ),
+            read_only_min_hours=float(
+                os.environ.get("EMS_READ_ONLY_MIN_HOURS", "24")
+            ),
+            single_battery_min_hours=float(
+                os.environ.get("EMS_SINGLE_BATTERY_MIN_HOURS", "24")
+            ),
+        )
