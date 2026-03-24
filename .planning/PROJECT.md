@@ -74,6 +74,8 @@ Both battery systems operate independently with zero oscillation — coordinated
 - ✓ Dashboard cross-charge badge (EnergyFlowCard) and waste stats (OptimizationCard) — Phase 21
 - ✓ HuaweiModeManager state machine (IDLE→CLAMPING→SWITCHING→ACTIVE) with TOU takeover, shutdown restore, crash recovery — Phase 22
 - ✓ Mode manager wired into controller, lifespan, coordinator, and HA MQTT working mode entity — Phase 22
+- ✓ CommissioningManager with staged rollout (READ_ONLY→SINGLE_BATTERY→DUAL_BATTERY), shadow mode, JSON persistence — Phase 23
+- ✓ Coordinator _execute_commands() centralization with shadow mode and stage gating, Victron 45s watchdog guard — Phase 23
 
 ### Active
 
@@ -103,7 +105,7 @@ Both battery systems operate independently with zero oscillation — coordinated
 **Codebase:**
 - Backend: ~14,200 LOC Python (FastAPI, pymodbus, paho-mqtt, scikit-learn)
 - Frontend: ~2,600 LOC TypeScript/React (Vite, wouter)
-- Tests: ~20,000 LOC across 1,658 tests
+- Tests: ~20,600 LOC across 1,689 tests
 - 4 new ML modules: model_store, feature_pipeline, anomaly_detector, self_tuner
 
 **Hardware environment:**
@@ -169,4 +171,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 ---
-*Last updated: 2026-03-24 after Phase 22 completion*
+*Last updated: 2026-03-24 after Phase 23 completion*
