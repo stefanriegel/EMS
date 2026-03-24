@@ -885,6 +885,71 @@ class ModeManagerConfig:
 
 
 @dataclass
+class VrmConfig:
+    """VRM REST API configuration.
+
+    VRM diagnostics are optional. When both token and site_id are empty,
+    the VRM client is not instantiated.
+
+    Environment variables:
+        ``VRM_TOKEN``           -- Personal Access Token (default empty -> disabled).
+        ``VRM_SITE_ID``         -- VRM installation site ID (default empty -> disabled).
+        ``VRM_POLL_INTERVAL_S`` -- Poll interval in seconds (default 300).
+    """
+
+    token: str = ""
+    site_id: str = ""
+    poll_interval_s: float = 300.0
+
+    @classmethod
+    def from_env(cls) -> "VrmConfig":
+        """Construct a :class:`VrmConfig` from environment variables.
+
+        All fields fall back to safe empty defaults -- an empty token
+        or site_id means the VRM client will not be instantiated.
+        """
+        return cls(
+            token=os.environ.get("VRM_TOKEN", ""),
+            site_id=os.environ.get("VRM_SITE_ID", ""),
+            poll_interval_s=float(os.environ.get("VRM_POLL_INTERVAL_S", "300")),
+        )
+
+
+@dataclass
+class DessConfig:
+    """Venus OS MQTT DESS schedule configuration.
+
+    Uses the same MQTT broker as EVCC (Venus OS / HA Mosquitto).
+    When portal_id is empty, DESS subscription is disabled.
+
+    Environment variables:
+        ``DESS_MQTT_HOST``  -- Venus OS MQTT host (default from VICTRON_HOST).
+        ``DESS_MQTT_PORT``  -- Venus OS MQTT port (default 1883).
+        ``DESS_PORTAL_ID``  -- Venus OS portal ID (default empty -> disabled).
+    """
+
+    host: str = ""
+    port: int = 1883
+    portal_id: str = ""
+
+    @classmethod
+    def from_env(cls) -> "DessConfig":
+        """Construct a :class:`DessConfig` from environment variables.
+
+        ``DESS_MQTT_HOST`` falls back to ``VICTRON_HOST`` when absent.
+        All fields fall back to safe defaults -- an empty host or
+        portal_id means the DESS subscriber will not be instantiated.
+        """
+        return cls(
+            host=os.environ.get(
+                "DESS_MQTT_HOST", os.environ.get("VICTRON_HOST", "")
+            ),
+            port=int(os.environ.get("DESS_MQTT_PORT", "1883")),
+            portal_id=os.environ.get("DESS_PORTAL_ID", ""),
+        )
+
+
+@dataclass
 class CommissioningConfig:
     """Configuration for the production commissioning state machine.
 
