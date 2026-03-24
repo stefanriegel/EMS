@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import AsyncMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -483,3 +483,106 @@ class TestHuaweiValidationPeriod:
 
         await ctrl.poll()
         assert ctrl._first_read_at == first
+
+
+class TestHuaweiModeManagerIntegration:
+    """Tests for mode manager integration in HuaweiController."""
+
+    @pytest.mark.anyio
+    async def test_execute_skips_during_mode_transition(self):
+        """Power writes are skipped when mode manager is transitioning."""
+        from backend.controller_model import BatteryRole, ControllerCommand
+
+        driver = AsyncMock()
+        driver.write_max_discharge_power = AsyncMock()
+
+        ctrl = _make_controller(driver)
+        mm = MagicMock()
+        mm.is_transitioning = True
+        ctrl.set_mode_manager(mm)
+
+        cmd = ControllerCommand(
+            role=BatteryRole.PRIMARY_DISCHARGE,
+            target_watts=-5000.0,
+        )
+        await ctrl.execute(cmd)
+
+        # No driver write should have been called
+        driver.write_max_discharge_power.assert_not_awaited()
+        # But role should still be set
+        assert ctrl.role == BatteryRole.PRIMARY_DISCHARGE
+
+    @pytest.mark.anyio
+    async def test_execute_normal_when_not_transitioning(self):
+        """Power writes proceed when mode manager is not transitioning."""
+        from backend.controller_model import BatteryRole, ControllerCommand
+
+        driver = AsyncMock()
+        driver.write_max_discharge_power = AsyncMock()
+
+        ctrl = _make_controller(driver)
+        mm = MagicMock()
+        mm.is_transitioning = False
+        ctrl.set_mode_manager(mm)
+
+        cmd = ControllerCommand(
+            role=BatteryRole.PRIMARY_DISCHARGE,
+            target_watts=-5000.0,
+        )
+        await ctrl.execute(cmd)
+
+        driver.write_max_discharge_power.assert_awaited_once_with(5000, dry_run=False)
+
+    @pytest.mark.anyio
+    async def test_safe_state_bypasses_mode_manager(self):
+        """Safe-state writes go through even when mode manager is transitioning."""
+        driver = AsyncMock()
+        driver.read_master = AsyncMock(side_effect=ConnectionError("timeout"))
+        driver.read_battery = AsyncMock(return_value=_make_battery())
+        driver.write_max_discharge_power = AsyncMock()
+
+        ctrl = _make_controller(driver)
+        mm = MagicMock()
+        mm.is_transitioning = True
+        ctrl.set_mode_manager(mm)
+
+        for _ in range(3):
+            snap = await ctrl.poll()
+
+        assert snap.available is False
+        driver.write_max_discharge_power.assert_awaited_with(0)
+
+    @pytest.mark.anyio
+    async def test_poll_calls_health_check(self):
+        """Successful poll triggers mode manager health check."""
+        driver = AsyncMock()
+        driver.read_master = AsyncMock(return_value=_make_master())
+        battery = _make_battery(working_mode=5)
+        driver.read_battery = AsyncMock(return_value=battery)
+
+        ctrl = _make_controller(driver)
+        mm = AsyncMock()
+        mm.is_transitioning = False
+        ctrl.set_mode_manager(mm)
+
+        await ctrl.poll()
+
+        mm.check_health.assert_awaited_once_with(5)
+
+    def test_get_working_mode_returns_none_when_no_data(self):
+        """get_working_mode returns None when no battery data has been read."""
+        driver = AsyncMock()
+        ctrl = _make_controller(driver)
+        assert ctrl.get_working_mode() is None
+
+    @pytest.mark.anyio
+    async def test_get_working_mode_returns_value_after_poll(self):
+        """get_working_mode returns the last-read working mode."""
+        driver = AsyncMock()
+        driver.read_master = AsyncMock(return_value=_make_master())
+        driver.read_battery = AsyncMock(return_value=_make_battery(working_mode=5))
+
+        ctrl = _make_controller(driver)
+        await ctrl.poll()
+
+        assert ctrl.get_working_mode() == 5

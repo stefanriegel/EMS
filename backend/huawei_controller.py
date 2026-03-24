@@ -17,6 +17,7 @@ from backend.config import HardwareValidationConfig, SystemConfig
 from backend.controller_model import BatteryRole, ControllerCommand, ControllerSnapshot
 from backend.drivers.huawei_driver import HuaweiDriver
 from backend.drivers.huawei_models import HuaweiBatteryData, HuaweiMasterData
+from backend.huawei_mode_manager import HuaweiModeManager
 
 logger = logging.getLogger(__name__)
 
@@ -54,11 +55,22 @@ class HuaweiController:
         self._last_battery: HuaweiBatteryData | None = None
         self._last_master: HuaweiMasterData | None = None
         self._last_read_time: float = 0.0
+        self._mode_manager: HuaweiModeManager | None = None
 
     @property
     def role(self) -> BatteryRole:
         """Current role assigned to this controller."""
         return self._role
+
+    def set_mode_manager(self, manager: HuaweiModeManager) -> None:
+        """Inject the mode manager for transition-safe power writes."""
+        self._mode_manager = manager
+
+    def get_working_mode(self) -> int | None:
+        """Return the last-read working mode register value, or ``None``."""
+        if self._last_battery is not None:
+            return self._last_battery.working_mode
+        return None
 
     def _in_validation_period(self) -> bool:
         """Check if this controller is still in the read-only validation period."""
@@ -131,6 +143,10 @@ class HuaweiController:
                 else 0,
             )
 
+        # Mode manager health check (interval-gated internally)
+        if self._mode_manager is not None:
+            await self._mode_manager.check_health(battery.working_mode)
+
         # Check if we crossed the failure threshold despite stale counting
         if self._consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
             return await self._handle_failure(now)
@@ -197,6 +213,14 @@ class HuaweiController:
         - HOLDING: write_max_discharge_power(0)
         """
         self._role = cmd.role
+
+        # Skip power writes during mode transitions (HCTL-04)
+        if self._mode_manager is not None and self._mode_manager.is_transitioning:
+            logger.info(
+                "Huawei: skipping power write — mode transition in progress"
+            )
+            return
+
         dry_run = self._in_validation_period()
         if dry_run:
             remaining = self._remaining_validation_hours()
