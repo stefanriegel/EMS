@@ -847,3 +847,38 @@ class AnomalyDetectorConfig:
         )
 
 
+@dataclass
+class ModeManagerConfig:
+    """Configuration for the Huawei working mode manager.
+
+    Controls whether the mode manager is active, settle delays between
+    mode transitions, and health check timing.
+
+    Environment variables:
+        ``EMS_MODE_MANAGER_ENABLED``    -- enable/disable (default "true").
+        ``EMS_MODE_SETTLE_DELAY_S``     -- settle delay in seconds (default 5.0).
+        ``EMS_MODE_HEALTH_CHECK_S``     -- health check interval (default 60.0).
+        ``EMS_MODE_REAPPLY_COOLDOWN_S`` -- cooldown after re-apply (default 30.0).
+    """
+
+    enabled: bool = True
+    settle_delay_s: float = 5.0
+    health_check_interval_s: float = 60.0
+    reapply_cooldown_s: float = 30.0
+
+    @classmethod
+    def from_env(cls) -> "ModeManagerConfig":
+        """Construct a :class:`ModeManagerConfig` from environment variables.
+
+        All fields have safe defaults -- **no env vars are required**.
+        """
+        return cls(
+            enabled=os.environ.get("EMS_MODE_MANAGER_ENABLED", "true").lower() == "true",
+            settle_delay_s=float(os.environ.get("EMS_MODE_SETTLE_DELAY_S", "5.0")),
+            health_check_interval_s=float(
+                os.environ.get("EMS_MODE_HEALTH_CHECK_S", "60.0")
+            ),
+            reapply_cooldown_s=float(
+                os.environ.get("EMS_MODE_REAPPLY_COOLDOWN_S", "30.0")
+            ),
+        )
