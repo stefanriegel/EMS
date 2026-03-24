@@ -73,7 +73,10 @@ Plans:
   1. EMS follows documented staged rollout: read-only then single-battery writes then dual-battery writes, with clear progression criteria at each gate
   2. Shadow mode logs all coordinator decisions and intended writes without executing them, verifiable via the decision log
   3. Victron 45-second emergency zero-write guard fires before the 60-second watchdog timeout, preventing uncontrolled discharge
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 23-01-PLAN.md — CommissioningManager state machine, config, persistence, tests
+- [ ] 23-02-PLAN.md — Coordinator wiring, Victron watchdog guard, API health, lifespan
 
 ### Phase 24: VRM/DESS Integration
 **Goal**: EMS reads DESS schedule and VRM diagnostics to coordinate with Victron's autonomous operation
@@ -96,5 +99,5 @@ Phases execute in numeric order: 20 -> 21 -> 22 -> 23 -> 24
 | 20. Hardware Validation | 2/2 | Complete    | 2026-03-24 |
 | 21. Cross-Charge Detection and Prevention | 3/3 | Complete    | 2026-03-24 |
 | 22. Huawei Mode Manager | 2/2 | Complete    | 2026-03-24 |
-| 23. Production Commissioning | 0/0 | Not started | - |
+| 23. Production Commissioning | 0/2 | Planning complete | - |
 | 24. VRM/DESS Integration | 0/0 | Not started | - |
