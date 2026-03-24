@@ -94,6 +94,7 @@ class Coordinator:
         self._notifier = None
         self._ha_mqtt_client = None
         self._anomaly_detector = None
+        self._self_tuner = None
 
         # Decision ring buffer (INT-04)
         self._decisions: deque[DecisionEntry] = deque(maxlen=100)
@@ -207,6 +208,10 @@ class Coordinator:
         """Inject the anomaly detector for per-cycle checks."""
         self._anomaly_detector = detector
 
+    def set_self_tuner(self, tuner) -> None:
+        """Inject the self-tuner for adaptive parameter recording."""
+        self._self_tuner = tuner
+
     # ------------------------------------------------------------------
     # HA command handling (CTRL-07..CTRL-10)
     # ------------------------------------------------------------------
@@ -263,24 +268,32 @@ class Coordinator:
         self._sys_config.huawei_min_soc_pct = val
         logger.info("HA command: huawei_min_soc_pct = %.1f", val)
         self._persist_to_supervisor("huawei_min_soc_pct", val)
+        if self._self_tuner is not None:
+            self._self_tuner.mark_ha_override("huawei_min_soc")
 
     def _cmd_min_soc_victron(self, payload: str) -> None:
         val = self._clamp_number("min_soc_victron", float(payload))
         self._sys_config.victron_min_soc_pct = val
         logger.info("HA command: victron_min_soc_pct = %.1f", val)
         self._persist_to_supervisor("victron_min_soc_pct", val)
+        if self._self_tuner is not None:
+            self._self_tuner.mark_ha_override("victron_min_soc")
 
     def _cmd_deadband_huawei(self, payload: str) -> None:
         val = int(self._clamp_number("deadband_huawei", float(payload)))
         self._huawei_deadband_w = val
         logger.info("HA command: huawei_deadband_w = %d", val)
         self._persist_to_supervisor("huawei_deadband_w", val)
+        if self._self_tuner is not None:
+            self._self_tuner.mark_ha_override("huawei_deadband_w")
 
     def _cmd_deadband_victron(self, payload: str) -> None:
         val = int(self._clamp_number("deadband_victron", float(payload)))
         self._victron_deadband_w = val
         logger.info("HA command: victron_deadband_w = %d", val)
         self._persist_to_supervisor("victron_deadband_w", val)
+        if self._self_tuner is not None:
+            self._self_tuner.mark_ha_override("victron_deadband_w")
 
     def _cmd_ramp_rate(self, payload: str) -> None:
         val = int(self._clamp_number("ramp_rate", float(payload)))
@@ -288,6 +301,8 @@ class Coordinator:
         self._victron_ramp_w_per_cycle = val
         logger.info("HA command: ramp_rate_w = %d", val)
         self._persist_to_supervisor("ramp_rate_w", val)
+        if self._self_tuner is not None:
+            self._self_tuner.mark_ha_override("ramp_rate_w")
 
     def _cmd_control_mode(self, payload: str) -> None:
         mode = payload.strip().upper()
@@ -528,6 +543,17 @@ class Coordinator:
                 raise
             except Exception as exc:
                 logger.error("Coordinator cycle error: %s", exc, exc_info=True)
+            # Self-tuner: record per-cycle data (fire-and-forget)
+            try:
+                if self._self_tuner is not None and self._state is not None:
+                    self._self_tuner.record_cycle(
+                        pool_status=self._state.pool_status,
+                        grid_power_w=getattr(
+                            self._last_v_snap, "grid_power_w", 0.0,
+                        ) or 0.0,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Self-tuner record_cycle failed: %s", exc)
             await asyncio.sleep(self._cfg.loop_interval_s)
 
     async def _run_cycle(self) -> None:
