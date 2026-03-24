@@ -637,6 +637,52 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         coordinator.set_cross_charge_detector(cross_charge_detector)
         logger.info("Coordinator: cross-charge detector wired for per-cycle safety guard")
 
+        # --- VRM client (optional — skipped if VRM_TOKEN/VRM_SITE_ID not set) ---
+        from backend.config import VrmConfig, DessConfig  # noqa: PLC0415
+
+        vrm_cfg = VrmConfig.from_env()
+        if vrm_cfg.token and vrm_cfg.site_id:
+            from backend.vrm_client import VrmClient  # noqa: PLC0415
+
+            vrm_client = VrmClient(
+                token=vrm_cfg.token,
+                site_id=int(vrm_cfg.site_id),
+                poll_interval_s=vrm_cfg.poll_interval_s,
+            )
+            await vrm_client.start()
+            coordinator.set_vrm_client(vrm_client)
+            app.state.vrm_client = vrm_client
+            logger.info(
+                "VRM client started — site_id=%s poll=%ds",
+                vrm_cfg.site_id,
+                int(vrm_cfg.poll_interval_s),
+            )
+        else:
+            app.state.vrm_client = None
+            logger.info("VRM client disabled — VRM_TOKEN/VRM_SITE_ID not set")
+
+        # --- DESS MQTT subscriber (optional — skipped if DESS_PORTAL_ID not set) ---
+        dess_cfg = DessConfig.from_env()
+        if dess_cfg.host and dess_cfg.portal_id:
+            from backend.dess_mqtt import DessMqttSubscriber  # noqa: PLC0415
+
+            dess_sub = DessMqttSubscriber(
+                host=dess_cfg.host,
+                port=dess_cfg.port,
+                portal_id=dess_cfg.portal_id,
+            )
+            await dess_sub.connect()
+            coordinator.set_dess_subscriber(dess_sub)
+            app.state.dess_subscriber = dess_sub
+            logger.info(
+                "DESS MQTT subscriber connected — host=%s portal=%s",
+                dess_cfg.host,
+                dess_cfg.portal_id,
+            )
+        else:
+            app.state.dess_subscriber = None
+            logger.info("DESS subscriber disabled — DESS_PORTAL_ID not set")
+
         # --- Export advisor (SCO-01) ---
         from backend.export_advisor import ExportAdvisor  # noqa: PLC0415
         export_advisor = ExportAdvisor(
@@ -769,6 +815,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.anomaly_detector = None
         app.state.self_tuner = None
         app.state.commissioning_manager = None
+        app.state.vrm_client = None
+        app.state.dess_subscriber = None
 
     yield  # application is running
 
@@ -789,6 +837,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         intraday_task.cancel()
         await asyncio.gather(intraday_task, return_exceptions=True)
         logger.info("intraday-replan: task cancelled")
+    if getattr(app.state, "vrm_client", None) is not None:
+        await app.state.vrm_client.stop()
+        logger.info("VRM client stopped")
+    if getattr(app.state, "dess_subscriber", None) is not None:
+        app.state.dess_subscriber.disconnect()
+        logger.info("DESS MQTT subscriber disconnected")
     if app.state.evcc_driver is not None:
         await app.state.evcc_driver.close()
     if app.state.ha_mqtt_client is not None:

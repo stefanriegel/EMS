@@ -259,6 +259,24 @@ async def get_health(
             "progression": commissioning_mgr.get_progression_status(),
         }
 
+    # DESS section (optional — omitted when not configured)
+    dess_sub = getattr(request.app.state, "dess_subscriber", None)
+    if dess_sub is not None:
+        result["dess"] = {
+            "available": dess_sub.dess_available,
+            "mode": dess_sub.schedule.mode,
+            "active_slot": None,
+        }
+        if state and state.dess_active_slot is not None:
+            result["dess"]["active_slot"] = state.dess_active_slot
+
+    # VRM section (optional — omitted when not configured)
+    vrm = getattr(request.app.state, "vrm_client", None)
+    if vrm is not None:
+        result["vrm"] = {
+            "available": vrm.available,
+        }
+
     return result
 
 
