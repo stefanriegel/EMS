@@ -75,6 +75,9 @@ class MockOrchestrator:
     def get_integration_health(self) -> dict[str, dict]:
         return {}
 
+    def get_cross_charge_status(self) -> dict[str, object] | None:
+        return {"active": False, "waste_wh": 0.0, "episode_count": 0}
+
 
 def _make_state(**overrides: Any) -> UnifiedPoolState:
     """Return a fully-populated :class:`UnifiedPoolState` with sensible defaults.
@@ -1014,6 +1017,9 @@ class MockCoordinator:
 
     def get_integration_health(self) -> dict[str, dict]:
         return self._integration_health
+
+    def get_cross_charge_status(self) -> dict[str, object] | None:
+        return {"active": False, "waste_wh": 0.0, "episode_count": 0}
 
 
 def _build_test_app_coordinator(mock_coord: MockCoordinator) -> Any:

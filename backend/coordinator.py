@@ -648,7 +648,7 @@ class Coordinator:
             h_cmd, v_cmd = self._compute_grid_charge_commands(
                 slot, h_snap, v_snap
             )
-            h_cmd, v_cmd = self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
+            h_cmd, v_cmd = await self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
             await self._huawei_ctrl.execute(h_cmd)
             await self._victron_ctrl.execute(v_cmd)
             self._grid_charge_was_active = True
@@ -660,7 +660,7 @@ class Coordinator:
         # Grid charge cleanup on slot exit
         if self._grid_charge_was_active:
             h_cmd, v_cmd = self._compute_grid_charge_cleanup()
-            h_cmd, v_cmd = self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
+            h_cmd, v_cmd = await self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
             await self._huawei_ctrl.execute(h_cmd)
             await self._victron_ctrl.execute(v_cmd)
             self._grid_charge_was_active = False
@@ -696,7 +696,7 @@ class Coordinator:
                 self._last_huawei_cmd_w = 0.0
                 self._last_victron_cmd_w = 0.0
 
-                h_cmd, v_cmd = self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
+                h_cmd, v_cmd = await self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
                 await self._huawei_ctrl.execute(h_cmd)
                 await self._victron_ctrl.execute(v_cmd)
                 self._state = self._build_state(
@@ -729,7 +729,7 @@ class Coordinator:
             self._last_huawei_cmd_w = h_target
             self._last_victron_cmd_w = v_target
 
-            h_cmd, v_cmd = self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
+            h_cmd, v_cmd = await self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
             await self._huawei_ctrl.execute(h_cmd)
             await self._victron_ctrl.execute(v_cmd)
             self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
@@ -744,7 +744,7 @@ class Coordinator:
             v_role = self._debounce_role("victron", BatteryRole.HOLDING)
             h_cmd = ControllerCommand(role=h_role, target_watts=0.0)
             v_cmd = ControllerCommand(role=v_role, target_watts=0.0)
-            h_cmd, v_cmd = self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
+            h_cmd, v_cmd = await self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
             await self._huawei_ctrl.execute(h_cmd)
             await self._victron_ctrl.execute(v_cmd)
             self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
@@ -799,7 +799,7 @@ class Coordinator:
         h_cmd = ControllerCommand(role=h_role, target_watts=h_w)
         v_cmd = ControllerCommand(role=v_role, target_watts=v_w)
 
-        h_cmd, v_cmd = self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
+        h_cmd, v_cmd = await self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
         await self._huawei_ctrl.execute(h_cmd)
         await self._victron_ctrl.execute(v_cmd)
         self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
@@ -1143,7 +1143,7 @@ class Coordinator:
     # Cross-charge guard
     # ------------------------------------------------------------------
 
-    def _apply_cross_charge_guard(
+    async def _apply_cross_charge_guard(
         self,
         h_snap: ControllerSnapshot,
         v_snap: ControllerSnapshot,
@@ -1192,14 +1192,12 @@ class Coordinator:
             # naturally aligns with episode_reset_s=300s
             if self._notifier is not None:
                 try:
-                    asyncio.get_event_loop().create_task(
-                        self._notifier.send_alert(
-                            ALERT_CROSS_CHARGE,
-                            f"Cross-charge detected: "
-                            f"{xc_state.source_system} discharging into "
-                            f"{xc_state.sink_system}. "
-                            f"Forced {xc_state.sink_system} to HOLDING.",
-                        )
+                    await self._notifier.send_alert(
+                        ALERT_CROSS_CHARGE,
+                        f"Cross-charge detected: "
+                        f"{xc_state.source_system} discharging into "
+                        f"{xc_state.sink_system}. "
+                        f"Forced {xc_state.sink_system} to HOLDING.",
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(

@@ -2,26 +2,31 @@
 
 Covers detection algorithm (threshold, debounce, opposing signs, grid check),
 mitigation (force sink to HOLDING), episode tracking (start, waste accumulation,
-cooldown reset), and CoordinatorState extension with cross-charge fields.
+cooldown reset), CoordinatorState extension with cross-charge fields, and
+integration tests for coordinator guard, decision logging, Telegram alerts,
+and API health endpoint.
 """
 from __future__ import annotations
 
 import time
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from backend.config import OrchestratorConfig, SystemConfig
 from backend.controller_model import (
     BatteryRole,
     ControllerCommand,
     ControllerSnapshot,
     CoordinatorState,
 )
+from backend.coordinator import Coordinator
 from backend.cross_charge import (
     CrossChargeDetector,
     CrossChargeEpisode,
     CrossChargeState,
 )
+from backend.notifier import ALERT_CROSS_CHARGE
 
 
 # ---------------------------------------------------------------------------
@@ -385,3 +390,188 @@ class TestCoordinatorStateFields:
         assert state.cross_charge_active is True
         assert state.cross_charge_waste_wh == 1.5
         assert state.cross_charge_episode_count == 3
+
+
+# ---------------------------------------------------------------------------
+# Coordinator integration helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_coordinator(
+    sys_config: SystemConfig | None = None,
+    orch_config: OrchestratorConfig | None = None,
+) -> tuple[Coordinator, AsyncMock, AsyncMock]:
+    """Create a Coordinator with mocked controllers."""
+    h_ctrl = AsyncMock()
+    v_ctrl = AsyncMock()
+    sys_cfg = sys_config or SystemConfig()
+    orch_cfg = orch_config or OrchestratorConfig()
+    coord = Coordinator(
+        huawei_ctrl=h_ctrl,
+        victron_ctrl=v_ctrl,
+        sys_config=sys_cfg,
+        orch_config=orch_cfg,
+    )
+    return coord, h_ctrl, v_ctrl
+
+
+# ---------------------------------------------------------------------------
+# Coordinator integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestCoordinatorCrossChargeGuard:
+    """Integration tests for cross-charge guard inside coordinator."""
+
+    async def test_coordinator_guard_modifies_discharge_path(self) -> None:
+        """Cross-charge condition during discharge forces sink to HOLDING."""
+        coord, h_ctrl, v_ctrl = _make_coordinator()
+        detector = CrossChargeDetector()
+        coord.set_cross_charge_detector(detector)
+
+        # h_snap discharging (-500W), v_snap charging (+400W), grid near 0
+        h_snap = _snap(soc=70.0, power=-500.0, grid_power_w=None)
+        v_snap = _snap(soc=40.0, power=400.0, grid_power_w=20.0)
+        h_ctrl.poll = AsyncMock(return_value=h_snap)
+        v_ctrl.poll = AsyncMock(return_value=v_snap)
+
+        # First cycle: debounce (consecutive=1), no mitigation yet
+        await coord._run_cycle()
+        # Second cycle: consecutive=2, cross-charge detected and mitigated
+        await coord._run_cycle()
+
+        # The second execute call for victron should have HOLDING role
+        last_v_cmd = v_ctrl.execute.call_args_list[-1][0][0]
+        assert last_v_cmd.role == BatteryRole.HOLDING
+        assert last_v_cmd.target_watts == 0.0
+
+    async def test_coordinator_guard_skips_evcc_hold(self) -> None:
+        """EVCC hold mode bypasses cross-charge guard entirely."""
+        coord, h_ctrl, v_ctrl = _make_coordinator()
+        detector = CrossChargeDetector()
+        coord.set_cross_charge_detector(detector)
+
+        # Cross-charge conditions but EVCC hold is active
+        h_snap = _snap(soc=70.0, power=-500.0)
+        v_snap = _snap(soc=40.0, power=400.0, grid_power_w=20.0)
+        h_ctrl.poll = AsyncMock(return_value=h_snap)
+        v_ctrl.poll = AsyncMock(return_value=v_snap)
+
+        # Set EVCC hold mode
+        evcc_mock = MagicMock()
+        evcc_mock.evcc_battery_mode = "hold"
+        coord.set_evcc_monitor(evcc_mock)
+
+        await coord._run_cycle()
+        await coord._run_cycle()
+
+        # Both controllers should get HOLDING from EVCC hold, not cross-charge guard
+        last_h_cmd = h_ctrl.execute.call_args_list[-1][0][0]
+        last_v_cmd = v_ctrl.execute.call_args_list[-1][0][0]
+        assert last_h_cmd.role == BatteryRole.HOLDING
+        assert last_v_cmd.role == BatteryRole.HOLDING
+        assert last_h_cmd.evcc_hold is True
+
+        # Detector should NOT have been triggered (check was not called)
+        assert detector.active is False
+
+    async def test_coordinator_decision_entry_logged(self) -> None:
+        """Cross-charge detection logs a DecisionEntry with correct trigger."""
+        coord, h_ctrl, v_ctrl = _make_coordinator()
+        detector = CrossChargeDetector()
+        coord.set_cross_charge_detector(detector)
+
+        h_snap = _snap(soc=70.0, power=-500.0, grid_power_w=None)
+        v_snap = _snap(soc=40.0, power=400.0, grid_power_w=20.0)
+        h_ctrl.poll = AsyncMock(return_value=h_snap)
+        v_ctrl.poll = AsyncMock(return_value=v_snap)
+
+        # Two cycles to trigger detection
+        await coord._run_cycle()
+        await coord._run_cycle()
+
+        # Find the cross_charge_prevention decision
+        xc_decisions = [
+            d for d in coord._decisions if d.trigger == "cross_charge_prevention"
+        ]
+        assert len(xc_decisions) >= 1
+        entry = xc_decisions[0]
+        assert "Cross-charge detected" in entry.reasoning
+        assert "huawei" in entry.reasoning
+        assert "victron" in entry.reasoning
+
+    async def test_coordinator_state_has_cross_charge_fields(self) -> None:
+        """After detection, coordinator state reports cross_charge_active."""
+        coord, h_ctrl, v_ctrl = _make_coordinator()
+        detector = CrossChargeDetector()
+        coord.set_cross_charge_detector(detector)
+
+        h_snap = _snap(soc=70.0, power=-500.0, grid_power_w=None)
+        v_snap = _snap(soc=40.0, power=400.0, grid_power_w=20.0)
+        h_ctrl.poll = AsyncMock(return_value=h_snap)
+        v_ctrl.poll = AsyncMock(return_value=v_snap)
+
+        await coord._run_cycle()
+        await coord._run_cycle()
+
+        state = coord.get_state()
+        assert state is not None
+        assert state.cross_charge_active is True
+
+    async def test_telegram_alert_called_on_first_detection(self) -> None:
+        """Notifier.send_alert called with ALERT_CROSS_CHARGE on detection."""
+        coord, h_ctrl, v_ctrl = _make_coordinator()
+        detector = CrossChargeDetector()
+        coord.set_cross_charge_detector(detector)
+
+        notifier = AsyncMock()
+        coord.set_notifier(notifier)
+
+        h_snap = _snap(soc=70.0, power=-500.0, grid_power_w=None)
+        v_snap = _snap(soc=40.0, power=400.0, grid_power_w=20.0)
+        h_ctrl.poll = AsyncMock(return_value=h_snap)
+        v_ctrl.poll = AsyncMock(return_value=v_snap)
+
+        await coord._run_cycle()  # debounce cycle
+        await coord._run_cycle()  # detection + alert
+
+        # send_alert should have been called via asyncio task
+        # Give the task a moment to be created; check the notifier mock
+        alert_calls = [
+            c for c in notifier.send_alert.call_args_list
+            if c[0][0] == ALERT_CROSS_CHARGE
+        ]
+        assert len(alert_calls) >= 1
+        assert "Cross-charge detected" in alert_calls[0][0][1]
+
+    async def test_api_health_cross_charge_response(self) -> None:
+        """get_cross_charge_status() returns structured dict with correct keys."""
+        coord, h_ctrl, v_ctrl = _make_coordinator()
+        detector = CrossChargeDetector()
+        coord.set_cross_charge_detector(detector)
+
+        # Before any detection
+        status = coord.get_cross_charge_status()
+        assert status is not None
+        assert status["active"] is False
+        assert status["waste_wh"] == 0.0
+        assert status["episode_count"] == 0
+
+        # Trigger detection
+        h_snap = _snap(soc=70.0, power=-500.0, grid_power_w=None)
+        v_snap = _snap(soc=40.0, power=400.0, grid_power_w=20.0)
+        h_ctrl.poll = AsyncMock(return_value=h_snap)
+        v_ctrl.poll = AsyncMock(return_value=v_snap)
+
+        await coord._run_cycle()
+        await coord._run_cycle()
+
+        status = coord.get_cross_charge_status()
+        assert status["active"] is True
+        assert isinstance(status["waste_wh"], float)
+        assert isinstance(status["episode_count"], int)
+
+    async def test_api_health_cross_charge_none_without_detector(self) -> None:
+        """get_cross_charge_status() returns None when no detector wired."""
+        coord, _, _ = _make_coordinator()
+        assert coord.get_cross_charge_status() is None
