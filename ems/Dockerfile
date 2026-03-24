@@ -14,10 +14,8 @@ ENV OMP_NUM_THREADS=2
 ENV OPENBLAS_NUM_THREADS=2
 
 # Frontend build
-COPY frontend/package*.json frontend/
-RUN cd frontend && npm ci
 COPY frontend/ frontend/
-RUN cd frontend && npm run build
+RUN cd frontend && npm ci && npm run build && rm -rf node_modules src
 
 # Python dependencies
 COPY pyproject.toml .
@@ -26,12 +24,7 @@ RUN pip install --no-cache-dir .
 # Application source
 COPY backend/ backend/
 
-# Move built frontend to final location and clean up Node.js artifacts
-RUN mv frontend/dist frontend_dist && \
-    rm -rf frontend node_modules && \
-    mv frontend_dist frontend/dist
-
-# Remove Node.js build tools (not needed at runtime)
+# Remove build-time tools (not needed at runtime)
 RUN apk del nodejs npm
 
 # Entrypoint
