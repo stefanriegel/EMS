@@ -215,9 +215,9 @@ class TestVictronControllerExecute:
 
         # Equal split: -5001/3 = -1667 per phase
         expected = [
-            call(1, pytest.approx(-1667.0, abs=1)),
-            call(2, pytest.approx(-1667.0, abs=1)),
-            call(3, pytest.approx(-1667.0, abs=1)),
+            call(1, pytest.approx(-1667.0, abs=1), dry_run=False),
+            call(2, pytest.approx(-1667.0, abs=1), dry_run=False),
+            call(3, pytest.approx(-1667.0, abs=1), dry_run=False),
         ]
         driver.write_ac_power_setpoint.assert_has_awaits(expected)
 
@@ -248,9 +248,9 @@ class TestVictronControllerExecute:
 
         # With per-phase grid: write -grid_lN_power_w
         expected = [
-            call(1, -200.0),
-            call(2, -150.0),
-            call(3, -100.0),
+            call(1, -200.0, dry_run=False),
+            call(2, -150.0, dry_run=False),
+            call(3, -100.0, dry_run=False),
         ]
         driver.write_ac_power_setpoint.assert_has_awaits(expected)
 
@@ -275,9 +275,9 @@ class TestVictronControllerExecute:
 
         # Positive watts split across 3 phases
         expected = [
-            call(1, 1000.0),
-            call(2, 1000.0),
-            call(3, 1000.0),
+            call(1, 1000.0, dry_run=False),
+            call(2, 1000.0, dry_run=False),
+            call(3, 1000.0, dry_run=False),
         ]
         driver.write_ac_power_setpoint.assert_has_awaits(expected)
 
@@ -300,7 +300,7 @@ class TestVictronControllerExecute:
         )
         await ctrl.execute(cmd)
 
-        expected = [call(1, 0.0), call(2, 0.0), call(3, 0.0)]
+        expected = [call(1, 0.0, dry_run=False), call(2, 0.0, dry_run=False), call(3, 0.0, dry_run=False)]
         driver.write_ac_power_setpoint.assert_has_awaits(expected)
 
     @pytest.mark.anyio

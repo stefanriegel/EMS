@@ -215,8 +215,8 @@ class TestHuaweiControllerExecute:
         )
         await ctrl.execute(cmd)
 
-        # Huawei uses positive watts for discharge limit
-        driver.write_max_discharge_power.assert_awaited_once_with(5000)
+        # Huawei uses positive watts for discharge limit (no validation config → dry_run=False)
+        driver.write_max_discharge_power.assert_awaited_once_with(5000, dry_run=False)
 
     @pytest.mark.anyio
     async def test_execute_charging(self):
@@ -234,8 +234,8 @@ class TestHuaweiControllerExecute:
         )
         await ctrl.execute(cmd)
 
-        driver.write_ac_charging.assert_awaited_once_with(True)
-        driver.write_max_charge_power.assert_awaited_once_with(3000)
+        driver.write_ac_charging.assert_awaited_once_with(True, dry_run=False)
+        driver.write_max_charge_power.assert_awaited_once_with(3000, dry_run=False)
 
     @pytest.mark.anyio
     async def test_execute_holding(self):
@@ -252,7 +252,7 @@ class TestHuaweiControllerExecute:
         )
         await ctrl.execute(cmd)
 
-        driver.write_max_discharge_power.assert_awaited_once_with(0)
+        driver.write_max_discharge_power.assert_awaited_once_with(0, dry_run=False)
 
     @pytest.mark.anyio
     async def test_execute_grid_charge(self):
@@ -270,8 +270,8 @@ class TestHuaweiControllerExecute:
         )
         await ctrl.execute(cmd)
 
-        driver.write_ac_charging.assert_awaited_once_with(True)
-        driver.write_max_charge_power.assert_awaited_once_with(4000)
+        driver.write_ac_charging.assert_awaited_once_with(True, dry_run=False)
+        driver.write_max_charge_power.assert_awaited_once_with(4000, dry_run=False)
 
     @pytest.mark.anyio
     async def test_execute_stores_role(self):

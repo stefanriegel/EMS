@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import time
 
-from backend.config import SystemConfig
+from backend.config import HardwareValidationConfig, SystemConfig
 from backend.controller_model import BatteryRole, ControllerCommand, ControllerSnapshot
 from backend.drivers.huawei_driver import HuaweiDriver
 from backend.drivers.huawei_models import HuaweiBatteryData, HuaweiMasterData
@@ -41,10 +41,13 @@ class HuaweiController:
         driver: HuaweiDriver,
         sys_config: SystemConfig,
         loop_interval_s: float = 5.0,
+        validation_config: HardwareValidationConfig | None = None,
     ) -> None:
         self._driver = driver
         self._sys_config = sys_config
         self._loop_interval_s = loop_interval_s
+        self._validation_config = validation_config
+        self._first_read_at: float | None = None
 
         self._role: BatteryRole = BatteryRole.HOLDING
         self._consecutive_failures: int = 0
@@ -56,6 +59,24 @@ class HuaweiController:
     def role(self) -> BatteryRole:
         """Current role assigned to this controller."""
         return self._role
+
+    def _in_validation_period(self) -> bool:
+        """Check if this controller is still in the read-only validation period."""
+        if self._validation_config is None:
+            return False
+        if self._validation_config.dry_run:
+            return True  # forced dry-run always active
+        if self._first_read_at is None:
+            return True  # haven't read successfully yet
+        elapsed_hours = (time.time() - self._first_read_at) / 3600.0
+        return elapsed_hours < self._validation_config.validation_period_hours
+
+    def _remaining_validation_hours(self) -> float:
+        """Return hours remaining in validation period."""
+        if self._validation_config is None or self._first_read_at is None:
+            return 0.0
+        elapsed = (time.time() - self._first_read_at) / 3600.0
+        return max(0.0, self._validation_config.validation_period_hours - elapsed)
 
     async def poll(self) -> ControllerSnapshot:
         """Read driver state and return a typed snapshot.
@@ -99,6 +120,16 @@ class HuaweiController:
         self._last_battery = battery
         self._last_master = master
         self._last_read_time = now
+
+        # Track first successful read for validation period (wall-clock time)
+        if self._first_read_at is None:
+            self._first_read_at = time.time()
+            logger.info(
+                "Huawei: first successful read — validation period started (%.0fh)",
+                self._validation_config.validation_period_hours
+                if self._validation_config
+                else 0,
+            )
 
         # Check if we crossed the failure threshold despite stale counting
         if self._consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
@@ -166,20 +197,29 @@ class HuaweiController:
         - HOLDING: write_max_discharge_power(0)
         """
         self._role = cmd.role
+        dry_run = self._in_validation_period()
+        if dry_run:
+            remaining = self._remaining_validation_hours()
+            logger.info(
+                "Huawei: validation period active (%.1fh remaining) — dry_run=True",
+                remaining,
+            )
 
         if cmd.role in (BatteryRole.PRIMARY_DISCHARGE, BatteryRole.SECONDARY_DISCHARGE):
             # Discharge: coordinator sends negative watts, Huawei wants positive
-            await self._driver.write_max_discharge_power(int(abs(cmd.target_watts)))
+            await self._driver.write_max_discharge_power(
+                int(abs(cmd.target_watts)), dry_run=dry_run
+            )
 
         elif cmd.role in (BatteryRole.CHARGING, BatteryRole.GRID_CHARGE):
             # Charge: coordinator sends positive watts
             watts = int(cmd.target_watts)
-            await self._driver.write_ac_charging(True)
-            await self._driver.write_max_charge_power(watts)
+            await self._driver.write_ac_charging(True, dry_run=dry_run)
+            await self._driver.write_max_charge_power(watts, dry_run=dry_run)
 
         elif cmd.role == BatteryRole.HOLDING:
             # Hold: zero discharge
-            await self._driver.write_max_discharge_power(0)
+            await self._driver.write_max_discharge_power(0, dry_run=dry_run)
 
         else:
             logger.warning("Unhandled role %s for Huawei controller", cmd.role)
