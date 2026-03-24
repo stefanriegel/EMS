@@ -39,7 +39,7 @@ Requirements for Production Deployment & Cross-Charge Prevention. Each maps to r
 
 ### Production Commissioning
 
-- [ ] **PROD-01**: Staged rollout: read-only → single-battery writes → dual-battery writes with documented progression criteria
+- [ ] **PROD-01**: Staged rollout: read-only -> single-battery writes -> dual-battery writes with documented progression criteria
 - [ ] **PROD-02**: Shadow mode logs all coordinator decisions and intended writes without executing them
 - [ ] **PROD-03**: Victron 45s emergency zero-write guard prevents 60s watchdog timeout from causing uncontrolled state
 
@@ -70,33 +70,33 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| HWVAL-01 | — | Pending |
-| HWVAL-02 | — | Pending |
-| HWVAL-03 | — | Pending |
-| HWVAL-04 | — | Pending |
-| HCTL-01 | — | Pending |
-| HCTL-02 | — | Pending |
-| HCTL-03 | — | Pending |
-| HCTL-04 | — | Pending |
-| XCHG-01 | — | Pending |
-| XCHG-02 | — | Pending |
-| XCHG-03 | — | Pending |
-| XCHG-04 | — | Pending |
-| XCHG-05 | — | Pending |
-| XCHG-06 | — | Pending |
-| DESS-01 | — | Pending |
-| DESS-02 | — | Pending |
-| DESS-03 | — | Pending |
-| DESS-04 | — | Pending |
-| PROD-01 | — | Pending |
-| PROD-02 | — | Pending |
-| PROD-03 | — | Pending |
+| HWVAL-01 | Phase 20 | Pending |
+| HWVAL-02 | Phase 20 | Pending |
+| HWVAL-03 | Phase 20 | Pending |
+| HWVAL-04 | Phase 20 | Pending |
+| HCTL-01 | Phase 22 | Pending |
+| HCTL-02 | Phase 22 | Pending |
+| HCTL-03 | Phase 22 | Pending |
+| HCTL-04 | Phase 22 | Pending |
+| XCHG-01 | Phase 21 | Pending |
+| XCHG-02 | Phase 21 | Pending |
+| XCHG-03 | Phase 21 | Pending |
+| XCHG-04 | Phase 21 | Pending |
+| XCHG-05 | Phase 21 | Pending |
+| XCHG-06 | Phase 21 | Pending |
+| DESS-01 | Phase 24 | Pending |
+| DESS-02 | Phase 24 | Pending |
+| DESS-03 | Phase 24 | Pending |
+| DESS-04 | Phase 24 | Pending |
+| PROD-01 | Phase 23 | Pending |
+| PROD-02 | Phase 23 | Pending |
+| PROD-03 | Phase 23 | Pending |
 
 **Coverage:**
 - v1.4 requirements: 21 total
-- Mapped to phases: 0
-- Unmapped: 21
+- Mapped to phases: 21
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-24*
-*Last updated: 2026-03-24 after initial definition*
+*Last updated: 2026-03-24 after roadmap creation*

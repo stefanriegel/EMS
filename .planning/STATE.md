@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Production Deployment & Cross-Charge Prevention
-status: Defining requirements
+status: Ready to plan
 stopped_at: null
-last_updated: "2026-03-24T09:00:00.000Z"
+last_updated: "2026-03-24T10:00:00.000Z"
 progress:
-  total_phases: 0
+  total_phases: 5
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -19,14 +19,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-24)
 
 **Core value:** Both battery systems operate independently with zero oscillation to maximize PV self-consumption
-**Current focus:** v1.4 — Production Deployment & Cross-Charge Prevention
+**Current focus:** Phase 20 - Hardware Validation
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-03-24 — Milestone v1.4 started
+Phase: 20 of 24 (Hardware Validation)
+Plan: 0 of 0 in current phase
+Status: Ready to plan
+Last activity: 2026-03-24 — Roadmap created for v1.4 Production Deployment & Cross-Charge Prevention
+
+Progress: [░░░░░░░░░░] 0%
 
 ## Performance Metrics
 
@@ -49,22 +51,14 @@ Last activity: 2026-03-24 — Milestone v1.4 started
 
 *Updated after each plan completion*
 
-**v1.0-v1.2 historical velocity (35 plans across 15 phases):**
+**v1.0-v1.3 historical velocity (44 plans across 19 phases):**
 
 | Phase | Plans | Avg/Plan |
 |-------|-------|----------|
 | Phase 01-06 | 16 | 3.7 min |
 | Phase 07-11 | 10 | 3.3 min |
 | Phase 12-15 | 9 | 2.9 min |
-| Phase 16 P02 | 2min | 1 tasks | 2 files |
-| Phase 16 P01 | 3min | 1 tasks | 3 files |
-| Phase 16 P03 | 5min | 2 tasks | 5 files |
-| Phase 17 P01 | 8min | 2 tasks | 3 files |
-| Phase 17 P02 | 8min | 2 tasks | 5 files |
-| Phase 18 P01 | 8min | 1 tasks | 3 files |
-| Phase 18 P02 | 7min | 2 tasks | 5 files |
-| Phase 19 P01 | 4min | 1 tasks | 2 files |
-| Phase 19 P02 | 4min | 2 tasks | 3 files |
+| Phase 16-19 | 9 | 5.4 min |
 
 ## Accumulated Context
 
@@ -73,30 +67,11 @@ Last activity: 2026-03-24 — Milestone v1.4 started
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
-- [v1.3 roadmap]: Strict 4-phase dependency chain: infra (16) -> forecast (17) -> anomaly (18) -> self-tuning (19)
-- [v1.3 roadmap]: Self-tuning activation gated on MAPE < 25% and 60+ days data
-- [v1.3 roadmap]: All sklearn .fit() calls use run_in_executor; per-cycle anomaly checks use pre-computed thresholds only
-- [v1.3 roadmap]: No new core dependencies needed; entire ML feature set built on existing scikit-learn + numpy
-- [Phase 16]: FeaturePipeline uses ems.feature_pipeline logger name; DHW entity optional matching HaStatisticsConfig
-- [Phase 16]: Used joblib (bundled with sklearn) for model serialisation -- no new dependency
-- [Phase 16]: sklearn version mismatch triggers silent discard and retrain, not error
-- [Phase 16]: Used anyio.to_thread.run_sync for executor offloading matching existing codebase pattern
-- [Phase 16]: ModelStore save calls fire-and-forget with try/except to avoid blocking training on persistence failures
-- [Phase 17]: Used params= instead of fit_params= for cross_val_score (sklearn 1.8+ API)
-- [Phase 17]: HistGBR with native NaN handling for lag features; no imputation needed
-- [Phase 17]: Last outdoor temp from training stored as prediction fallback
-- [Phase 17]: MAPE filters hours where actual < 0.1 kWh to avoid explosion on near-zero values
-- [Phase 17]: MAPE computed fire-and-forget in retrain_if_stale; retrain always proceeds even if MAPE fails
-- [Phase 18]: Check deviation BEFORE updating EMA baseline to prevent anomalous values from contaminating thresholds
-- [Phase 18]: Use composite keys (comm_loss:huawei) for per-system escalation and cooldown tracking
-- [Phase 18]: IsolationForest training requires at least 10 hourly baseline samples to avoid degenerate fits
-- [Phase 18]: Use send_alert(category, message) matching existing notifier API for anomaly Telegram alerts
-- [Phase 18]: Anomaly category map as class-level dict on Coordinator for clean per-type Telegram dispatch
-- [Phase 19]: Oscillation thresholds >6/hr increase, <2/hr decrease dead-band using 7-day rolling avg
-- [Phase 19]: Grid spikes only counted on state transition coincidence to avoid EV/heat pump false positives
-- [Phase 19]: Min-SoC profile: 6 four-hour blocks, 20% for above-avg consumption, 10% for below
-- [Phase 19]: SelfTuner constructed before nightly loop task; bidirectional wiring deferred until coordinator exists
-- [Phase 19]: record_cycle() fire-and-forget in _loop() with own try/except outside main cycle error handler
+- [v1.4 research]: Hybrid operating mode — DESS manages Victron, EMS controls Huawei via TOU mode
+- [v1.4 research]: Zero new pip dependencies — httpx, huawei-solar, pymodbus already installed
+- [v1.4 research]: Cross-charge detection is pure coordinator logic, no hardware deps, can parallel Phase 20
+- [v1.4 research]: Huawei power limits are ceilings not setpoints — Victron must absorb slack
+- [v1.4 research]: Forcible charge/discharge (Option B) preferred over TOU period writes initially
 
 ### Pending Todos
 
@@ -104,11 +79,12 @@ None yet.
 
 ### Blockers/Concerns
 
+- Huawei SDongle single Modbus TCP connection — must decide Modbus Proxy vs sole-client before hardware work
+- Venus OS MQTT DESS topic paths need field validation on real Venus OS
 - Victron Venus OS Modbus register addresses need verification against actual firmware (v3.20+)
-- MAPE threshold (25%) for self-tuning gate is a heuristic -- calibrate against real data in Phase 17
 
 ## Session Continuity
 
-Last session: 2026-03-24T07:57:43.292Z
-Stopped at: Completed 19-02-PLAN.md
+Last session: 2026-03-24
+Stopped at: Roadmap created for v1.4, ready to plan Phase 20
 Resume file: None
