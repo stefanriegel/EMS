@@ -28,7 +28,7 @@ Requirements for Production Deployment & Cross-Charge Prevention. Each maps to r
 - [x] **XCHG-03**: Cross-charge detection uses 2-cycle debounce and 100W minimum threshold to avoid false positives
 - [ ] **XCHG-04**: First detection per episode triggers Telegram alert
 - [ ] **XCHG-05**: Cumulative cross-charge waste energy tracked in InfluxDB
-- [ ] **XCHG-06**: Dashboard displays cross-charge status indicator
+- [x] **XCHG-06**: Dashboard displays cross-charge status indicator
 
 ### VRM/DESS Integration
 
@@ -83,7 +83,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | XCHG-03 | Phase 21 | Complete |
 | XCHG-04 | Phase 21 | Pending |
 | XCHG-05 | Phase 21 | Pending |
-| XCHG-06 | Phase 21 | Pending |
+| XCHG-06 | Phase 21 | Complete |
 | DESS-01 | Phase 24 | Pending |
 | DESS-02 | Phase 24 | Pending |
 | DESS-03 | Phase 24 | Pending |
