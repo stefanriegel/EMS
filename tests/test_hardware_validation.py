@@ -78,8 +78,17 @@ def _huawei_driver_with_mock() -> HuaweiDriver:
 # ---------------------------------------------------------------------------
 
 def _victron_driver_with_mock() -> VictronDriver:
-    """Create a VictronDriver with a mocked _client."""
-    driver = VictronDriver("localhost")
+    """Create a VictronDriver with a mocked _client.
+
+    Uses object.__new__ to bypass __init__ which requires a running event loop
+    for the real AsyncModbusTcpClient.
+    """
+    driver = object.__new__(VictronDriver)
+    driver.host = "localhost"
+    driver.port = 502
+    driver.timeout_s = 5.0
+    driver._system_unit_id = 100
+    driver._vebus_unit_id = 227
     driver._client = AsyncMock()
     return driver
 

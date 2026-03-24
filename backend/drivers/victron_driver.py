@@ -345,7 +345,7 @@ class VictronDriver:
     # ------------------------------------------------------------------
 
     async def write_ac_power_setpoint(
-        self, phase: int, watts: float
+        self, phase: int, watts: float, *, dry_run: bool = False
     ) -> None:
         """Write a per-phase AC power setpoint to the Hub4 register.
 
@@ -359,6 +359,8 @@ class VictronDriver:
 
             Sign convention matches canonical EMS convention (positive=charge)
             and Victron's native Modbus convention -- no conversion needed.
+        dry_run:
+            If ``True``, log the intended write but do not execute it.
 
         Raises
         ------
@@ -373,6 +375,15 @@ class VictronDriver:
         value = int(watts) & 0xFFFF
 
         async def _do() -> None:
+            if dry_run:
+                logger.info(
+                    "DRY RUN: would set L%d setpoint=%dW (reg %d, unit %d)",
+                    phase,
+                    int(watts),
+                    reg,
+                    self._vebus_unit_id,
+                )
+                return
             await self._client.write_register(
                 address=reg,
                 value=value,
@@ -389,3 +400,68 @@ class VictronDriver:
             )
 
         await self._with_reconnect(_do)
+
+    # ------------------------------------------------------------------
+    # Connectivity validation
+    # ------------------------------------------------------------------
+
+    async def validate_connectivity(self) -> bool:
+        """Perform a full read cycle to validate Modbus TCP connectivity.
+
+        Returns ``True`` if ``read_system_state()`` succeeds.
+        """
+        try:
+            state = await self.read_system_state()
+            logger.info(
+                "Victron connectivity validated: SoC=%.1f%% power=%.0fW "
+                "grid=%.0fW",
+                state.battery_soc_pct,
+                state.battery_power_w,
+                state.grid_power_w,
+            )
+            return True
+        except Exception as exc:
+            logger.error("Victron connectivity validation failed: %s", exc)
+            return False
+
+    # ------------------------------------------------------------------
+    # Write-back verification
+    # ------------------------------------------------------------------
+
+    async def verify_write_ac_power_setpoint(
+        self, phase: int, watts: float
+    ) -> bool:
+        """Write AC power setpoint and verify by reading back the register.
+
+        Returns ``True`` if the read-back value matches the written value.
+        """
+        reg = _PHASE_SETPOINT_REG.get(phase)
+        if reg is None:
+            raise ValueError(f"Invalid phase {phase}: must be 1, 2, or 3")
+        await self.write_ac_power_setpoint(phase, watts)
+
+        async def _read_back() -> bool:
+            result = await self._client.read_holding_registers(
+                address=reg,
+                count=1,
+                slave=self._vebus_unit_id,
+            )
+            read_back = _signed16(result.registers[0])
+            expected = int(watts)
+            match = read_back == expected
+            if not match:
+                logger.warning(
+                    "Write-back mismatch L%d: wrote %d, read %d",
+                    phase,
+                    expected,
+                    read_back,
+                )
+            else:
+                logger.info(
+                    "Write-back verified L%d: setpoint=%d matches",
+                    phase,
+                    expected,
+                )
+            return match
+
+        return await self._with_reconnect(_read_back)

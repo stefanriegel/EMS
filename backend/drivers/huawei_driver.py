@@ -358,7 +358,9 @@ class HuaweiDriver:
     # Write methods
     # ------------------------------------------------------------------
 
-    async def write_battery_mode(self, mode: StorageWorkingModesC) -> None:
+    async def write_battery_mode(
+        self, mode: StorageWorkingModesC, *, dry_run: bool = False
+    ) -> None:
         """Set the battery storage working mode.
 
         Parameters
@@ -366,10 +368,19 @@ class HuaweiDriver:
         mode:
             A ``StorageWorkingModesC`` enum member (e.g.
             ``StorageWorkingModesC.MAXIMISE_SELF_CONSUMPTION``).
+        dry_run:
+            If ``True``, log the intended write but do not execute it.
         """
 
         async def _do() -> None:
             assert self._client is not None, "Driver not connected — call connect() first"
+            if dry_run:
+                logger.info(
+                    "DRY RUN: would set storage_working_mode_settings=%r slave_id=%d",
+                    mode,
+                    self.master_slave_id,
+                )
+                return
             logger.debug(
                 "set storage_working_mode_settings=%r slave_id=%d",
                 mode,
@@ -383,17 +394,28 @@ class HuaweiDriver:
 
         await self._with_reconnect(_do)
 
-    async def write_ac_charging(self, enabled: bool) -> None:
+    async def write_ac_charging(
+        self, enabled: bool, *, dry_run: bool = False
+    ) -> None:
         """Enable or disable charging from the AC grid.
 
         Parameters
         ----------
         enabled:
             ``True`` to allow charging from the grid; ``False`` to forbid it.
+        dry_run:
+            If ``True``, log the intended write but do not execute it.
         """
 
         async def _do() -> None:
             assert self._client is not None, "Driver not connected — call connect() first"
+            if dry_run:
+                logger.info(
+                    "DRY RUN: would set storage_charge_from_grid_function=%r slave_id=%d",
+                    enabled,
+                    self.master_slave_id,
+                )
+                return
             logger.debug(
                 "set storage_charge_from_grid_function=%r slave_id=%d",
                 enabled,
@@ -407,17 +429,28 @@ class HuaweiDriver:
 
         await self._with_reconnect(_do)
 
-    async def write_max_charge_power(self, watts: int) -> None:
+    async def write_max_charge_power(
+        self, watts: int, *, dry_run: bool = False
+    ) -> None:
         """Set the maximum battery charge power limit.
 
         Parameters
         ----------
         watts:
             Maximum charge power in watts.
+        dry_run:
+            If ``True``, log the intended write but do not execute it.
         """
 
         async def _do() -> None:
             assert self._client is not None, "Driver not connected — call connect() first"
+            if dry_run:
+                logger.info(
+                    "DRY RUN: would set storage_maximum_charging_power=%d slave_id=%d",
+                    watts,
+                    self.master_slave_id,
+                )
+                return
             logger.debug(
                 "set storage_maximum_charging_power=%d slave_id=%d",
                 watts,
@@ -431,17 +464,96 @@ class HuaweiDriver:
 
         await self._with_reconnect(_do)
 
-    async def write_max_discharge_power(self, watts: int) -> None:
+    # ------------------------------------------------------------------
+    # Connectivity validation
+    # ------------------------------------------------------------------
+
+    async def validate_connectivity(self) -> bool:
+        """Perform a full read cycle to validate Modbus TCP connectivity.
+
+        Returns ``True`` if all expected registers (master, battery, slave)
+        are readable.
+        """
+        try:
+            master = await self.read_master()
+            battery = await self.read_battery()
+            slave = await self.read_slave()
+            logger.info(
+                "Huawei connectivity validated: master_power=%dW SoC=%.1f%% "
+                "slave_power=%dW",
+                master.active_power_w,
+                battery.total_soc_pct,
+                slave.active_power_w,
+            )
+            return True
+        except Exception as exc:
+            logger.error("Huawei connectivity validation failed: %s", exc)
+            return False
+
+    # ------------------------------------------------------------------
+    # Write-back verification
+    # ------------------------------------------------------------------
+
+    async def verify_write_max_charge_power(self, watts: int) -> bool:
+        """Write max charge power and verify by reading back the limit register.
+
+        Returns ``True`` if the read-back value matches the written value.
+        """
+        await self.write_max_charge_power(watts)
+        battery = await self.read_battery()
+        actual = battery.max_charge_power_w
+        match = actual == watts
+        if not match:
+            logger.warning(
+                "Write-back mismatch: wrote max_charge=%d, read back=%d",
+                watts,
+                actual,
+            )
+        else:
+            logger.info("Write-back verified: max_charge=%d matches", watts)
+        return match
+
+    async def verify_write_max_discharge_power(self, watts: int) -> bool:
+        """Write max discharge power and verify by reading back the limit register.
+
+        Returns ``True`` if the read-back value matches the written value.
+        """
+        await self.write_max_discharge_power(watts)
+        battery = await self.read_battery()
+        actual = battery.max_discharge_power_w
+        match = actual == watts
+        if not match:
+            logger.warning(
+                "Write-back mismatch: wrote max_discharge=%d, read back=%d",
+                watts,
+                actual,
+            )
+        else:
+            logger.info("Write-back verified: max_discharge=%d matches", watts)
+        return match
+
+    async def write_max_discharge_power(
+        self, watts: int, *, dry_run: bool = False
+    ) -> None:
         """Set the maximum battery discharge power limit.
 
         Parameters
         ----------
         watts:
             Maximum discharge power in watts.
+        dry_run:
+            If ``True``, log the intended write but do not execute it.
         """
 
         async def _do() -> None:
             assert self._client is not None, "Driver not connected — call connect() first"
+            if dry_run:
+                logger.info(
+                    "DRY RUN: would set storage_maximum_discharging_power=%d slave_id=%d",
+                    watts,
+                    self.master_slave_id,
+                )
+                return
             logger.debug(
                 "set storage_maximum_discharging_power=%d slave_id=%d",
                 watts,
