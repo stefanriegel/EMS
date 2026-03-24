@@ -611,9 +611,6 @@ class ConsumptionForecaster:
         # ------------------------------------------------------------------
         y_hp = [hp_map[ts] for ts in timestamps]
 
-        def _train_hp() -> None:
-            pass  # placeholder, actual work in closure below
-
         def _cv_and_fit_hp():
             hp_model = HistGradientBoostingRegressor(
                 max_iter=100,
