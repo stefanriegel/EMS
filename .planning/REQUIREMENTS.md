@@ -23,9 +23,9 @@ Requirements for Production Deployment & Cross-Charge Prevention. Each maps to r
 
 ### Cross-Charge Prevention
 
-- [ ] **XCHG-01**: Coordinator detects cross-charging (opposing battery power signs + near-zero grid) within 2 control cycles
-- [ ] **XCHG-02**: On detection, coordinator forces the charging battery to HOLDING role to stop energy transfer
-- [ ] **XCHG-03**: Cross-charge detection uses 2-cycle debounce and 100W minimum threshold to avoid false positives
+- [x] **XCHG-01**: Coordinator detects cross-charging (opposing battery power signs + near-zero grid) within 2 control cycles
+- [x] **XCHG-02**: On detection, coordinator forces the charging battery to HOLDING role to stop energy transfer
+- [x] **XCHG-03**: Cross-charge detection uses 2-cycle debounce and 100W minimum threshold to avoid false positives
 - [ ] **XCHG-04**: First detection per episode triggers Telegram alert
 - [ ] **XCHG-05**: Cumulative cross-charge waste energy tracked in InfluxDB
 - [ ] **XCHG-06**: Dashboard displays cross-charge status indicator
@@ -78,9 +78,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | HCTL-02 | Phase 22 | Pending |
 | HCTL-03 | Phase 22 | Pending |
 | HCTL-04 | Phase 22 | Pending |
-| XCHG-01 | Phase 21 | Pending |
-| XCHG-02 | Phase 21 | Pending |
-| XCHG-03 | Phase 21 | Pending |
+| XCHG-01 | Phase 21 | Complete |
+| XCHG-02 | Phase 21 | Complete |
+| XCHG-03 | Phase 21 | Complete |
 | XCHG-04 | Phase 21 | Pending |
 | XCHG-05 | Phase 21 | Pending |
 | XCHG-06 | Phase 21 | Pending |
