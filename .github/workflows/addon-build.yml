@@ -41,5 +41,5 @@ jobs:
           args: |
             --${{ matrix.arch }} \
             --target /data/ems \
-            --docker-hub "ghcr.io/${{ github.repository_owner }}" \
+            --image "ghcr.io/${{ github.repository_owner }}/{arch}-ems" \
             --addon
