@@ -771,3 +771,53 @@ class ModelStoreConfig:
         )
 
 
+@dataclass
+class AnomalyDetectorConfig:
+    """Configuration for the anomaly detection engine.
+
+    Governs thresholds, cooldowns, and persistence paths for the three
+    detection domains: communication loss, consumption spikes, and
+    battery health drift.
+
+    Environment variables:
+        ``EMS_MODEL_DIR``          -- base directory (default ``/config/ems_models``).
+        ``EMS_ANOMALY_ENABLED``    -- ``"true"`` / ``"false"`` (default ``"true"``).
+    """
+
+    enabled: bool = True
+    model_dir: str = "/config/ems_models"
+    events_path: str = "/config/ems_models/anomaly_events.json"
+    baselines_path: str = "/config/ems_models/anomaly_baselines.json"
+    consumption_threshold_sigma: float = 3.0
+    soc_rate_threshold_sigma: float = 3.0
+    efficiency_threshold_pct: float = 85.0
+    minimum_consumption_hours: int = 168
+    minimum_battery_days: int = 14
+    comm_loss_window_s: float = 3600.0
+    comm_loss_min_windows: int = 3
+    comm_loss_gap_s: float = 30.0
+    warning_cooldown_s: float = 3600.0
+    alert_cooldown_s: float = 14400.0
+    max_events: int = 500
+    max_event_age_days: int = 90
+    isolation_forest_contamination: float = 0.05
+    isolation_forest_n_estimators: int = 100
+    isolation_forest_max_samples: int = 256
+
+    @classmethod
+    def from_env(cls) -> "AnomalyDetectorConfig":
+        """Construct from environment variables.
+
+        Only ``EMS_MODEL_DIR`` and ``EMS_ANOMALY_ENABLED`` are read;
+        all other fields use safe defaults.
+        """
+        model_dir = os.environ.get("EMS_MODEL_DIR", "/config/ems_models")
+        enabled = os.environ.get("EMS_ANOMALY_ENABLED", "true").lower() == "true"
+        return cls(
+            enabled=enabled,
+            model_dir=model_dir,
+            events_path=f"{model_dir}/anomaly_events.json",
+            baselines_path=f"{model_dir}/anomaly_baselines.json",
+        )
+
+
