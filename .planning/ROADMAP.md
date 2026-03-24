@@ -13,7 +13,7 @@ This milestone transitions EMS v2 from a tested, packaged system into live produ
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 20: Hardware Validation** - Validate Modbus connectivity, write-back verification, and dry-run infrastructure on real hardware (completed 2026-03-24)
-- [ ] **Phase 21: Cross-Charge Detection and Prevention** - Detect and prevent battery-to-battery energy transfer through the AC bus
+- [x] **Phase 21: Cross-Charge Detection and Prevention** - Detect and prevent battery-to-battery energy transfer through the AC bus (completed 2026-03-24)
 - [ ] **Phase 22: Huawei Mode Manager** - Take authoritative TOU mode control of Huawei for real setpoint command
 - [ ] **Phase 23: Production Commissioning** - Staged rollout from read-only to dual-battery writes with safety guards
 - [ ] **Phase 24: VRM/DESS Integration** - Read DESS schedule and VRM diagnostics for hybrid operating mode coordination
@@ -44,10 +44,10 @@ Plans:
   3. False positives are avoided via 2-cycle debounce and 100W minimum threshold
   4. First detection per episode sends a Telegram alert and cumulative waste energy is tracked in InfluxDB
   5. Dashboard displays a cross-charge status indicator showing current state and historical episodes
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 Plans:
 - [x] 21-01-PLAN.md — CrossChargeDetector module, CoordinatorState extension, TDD tests
-- [ ] 21-02-PLAN.md — Coordinator wiring, InfluxDB metrics, Telegram alerting, API health
+- [x] 21-02-PLAN.md — Coordinator wiring, InfluxDB metrics, Telegram alerting, API health
 - [x] 21-03-PLAN.md — Frontend cross-charge badge and waste stats dashboard
 **UI hint**: yes
 
@@ -91,7 +91,7 @@ Phases execute in numeric order: 20 -> 21 -> 22 -> 23 -> 24
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 20. Hardware Validation | 2/2 | Complete    | 2026-03-24 |
-| 21. Cross-Charge Detection and Prevention | 2/3 | In Progress|  |
+| 21. Cross-Charge Detection and Prevention | 3/3 | Complete   | 2026-03-24 |
 | 22. Huawei Mode Manager | 0/0 | Not started | - |
 | 23. Production Commissioning | 0/0 | Not started | - |
 | 24. VRM/DESS Integration | 0/0 | Not started | - |
