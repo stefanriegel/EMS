@@ -772,6 +772,32 @@ class ModelStoreConfig:
 
 
 @dataclass
+@dataclass
+class HardwareValidationConfig:
+    """Configuration for the hardware validation phase.
+
+    Controls dry-run mode and the read-only validation period that must
+    elapse before the EMS enables write operations on each battery system.
+
+    Environment variables:
+        ``EMS_VALIDATION_PERIOD_HOURS`` -- hours before writes enabled (default 48).
+        ``EMS_DRY_RUN``                -- force dry-run mode (default "false").
+    """
+
+    validation_period_hours: float = 48.0
+    dry_run: bool = False
+
+    @classmethod
+    def from_env(cls) -> "HardwareValidationConfig":
+        return cls(
+            validation_period_hours=float(
+                os.environ.get("EMS_VALIDATION_PERIOD_HOURS", "48")
+            ),
+            dry_run=os.environ.get("EMS_DRY_RUN", "false").lower() == "true",
+        )
+
+
+@dataclass
 class AnomalyDetectorConfig:
     """Configuration for the anomaly detection engine.
 

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, call, patch
 
 import pytest
 
+from backend.config import HardwareValidationConfig
 from backend.drivers.victron_models import VictronPhaseData, VictronSystemData
 
 
@@ -367,3 +368,238 @@ class TestVictronControllerExecute:
         await ctrl.execute(cmd)
 
         assert ctrl.role == BatteryRole.PRIMARY_DISCHARGE
+
+
+def _make_controller_with_validation(driver_mock, validation_config=None, loop_interval_s=5.0):
+    from backend.config import SystemConfig
+    from backend.victron_controller import VictronController
+
+    return VictronController(
+        driver=driver_mock,
+        sys_config=SystemConfig(),
+        loop_interval_s=loop_interval_s,
+        validation_config=validation_config,
+    )
+
+
+class TestVictronDryRun:
+    """Tests that execute() passes dry_run during validation period."""
+
+    @pytest.mark.anyio
+    async def test_execute_passes_dry_run_true_during_validation_period(self):
+        from backend.controller_model import BatteryRole, ControllerCommand
+
+        driver = AsyncMock()
+        driver.read_system_state = AsyncMock(
+            return_value=_make_victron_data(ess_mode=2)
+        )
+        driver.write_ac_power_setpoint = AsyncMock()
+
+        cfg = HardwareValidationConfig(validation_period_hours=48.0)
+        ctrl = _make_controller_with_validation(driver, validation_config=cfg)
+        ctrl._first_read_at = time.time()
+        await ctrl.poll()
+
+        cmd = ControllerCommand(role=BatteryRole.HOLDING, target_watts=0.0)
+        await ctrl.execute(cmd)
+
+        # All 3 phase writes should have dry_run=True
+        for c in driver.write_ac_power_setpoint.call_args_list:
+            # Skip calls from poll (there shouldn't be any)
+            if c.kwargs.get("dry_run") is not None or "dry_run" in c.kwargs:
+                assert c.kwargs["dry_run"] is True
+
+    @pytest.mark.anyio
+    async def test_execute_passes_dry_run_false_after_validation_period(self):
+        from backend.controller_model import BatteryRole, ControllerCommand
+
+        driver = AsyncMock()
+        driver.read_system_state = AsyncMock(
+            return_value=_make_victron_data(ess_mode=2)
+        )
+        driver.write_ac_power_setpoint = AsyncMock()
+
+        cfg = HardwareValidationConfig(validation_period_hours=48.0)
+        ctrl = _make_controller_with_validation(driver, validation_config=cfg)
+        ctrl._first_read_at = time.time() - (49 * 3600)
+        await ctrl.poll()
+
+        cmd = ControllerCommand(role=BatteryRole.HOLDING, target_watts=0.0)
+        await ctrl.execute(cmd)
+
+        # All writes after period should have dry_run=False
+        for c in driver.write_ac_power_setpoint.call_args_list:
+            if "dry_run" in c.kwargs:
+                assert c.kwargs["dry_run"] is False
+
+    @pytest.mark.anyio
+    async def test_execute_charging_passes_dry_run(self):
+        from backend.controller_model import BatteryRole, ControllerCommand
+
+        driver = AsyncMock()
+        driver.read_system_state = AsyncMock(
+            return_value=_make_victron_data(ess_mode=2)
+        )
+        driver.write_ac_power_setpoint = AsyncMock()
+
+        cfg = HardwareValidationConfig(validation_period_hours=48.0)
+        ctrl = _make_controller_with_validation(driver, validation_config=cfg)
+        ctrl._first_read_at = time.time()
+        await ctrl.poll()
+
+        cmd = ControllerCommand(role=BatteryRole.CHARGING, target_watts=3000.0)
+        await ctrl.execute(cmd)
+
+        # Each phase write should have dry_run=True
+        for c in driver.write_ac_power_setpoint.call_args_list:
+            if "dry_run" in c.kwargs:
+                assert c.kwargs["dry_run"] is True
+
+    @pytest.mark.anyio
+    async def test_execute_discharge_passes_dry_run(self):
+        from backend.controller_model import BatteryRole, ControllerCommand
+
+        driver = AsyncMock()
+        driver.read_system_state = AsyncMock(
+            return_value=_make_victron_data(
+                ess_mode=2,
+                grid_l1_power_w=200.0,
+                grid_l2_power_w=150.0,
+                grid_l3_power_w=100.0,
+            )
+        )
+        driver.write_ac_power_setpoint = AsyncMock()
+
+        cfg = HardwareValidationConfig(validation_period_hours=48.0)
+        ctrl = _make_controller_with_validation(driver, validation_config=cfg)
+        ctrl._first_read_at = time.time()
+        await ctrl.poll()
+
+        cmd = ControllerCommand(role=BatteryRole.PRIMARY_DISCHARGE, target_watts=-5000.0)
+        await ctrl.execute(cmd)
+
+        for c in driver.write_ac_power_setpoint.call_args_list:
+            if "dry_run" in c.kwargs:
+                assert c.kwargs["dry_run"] is True
+
+    @pytest.mark.anyio
+    async def test_forced_dry_run_always_passes_true(self):
+        from backend.controller_model import BatteryRole, ControllerCommand
+
+        driver = AsyncMock()
+        driver.read_system_state = AsyncMock(
+            return_value=_make_victron_data(ess_mode=2)
+        )
+        driver.write_ac_power_setpoint = AsyncMock()
+
+        cfg = HardwareValidationConfig(validation_period_hours=48.0, dry_run=True)
+        ctrl = _make_controller_with_validation(driver, validation_config=cfg)
+        ctrl._first_read_at = time.time() - (100 * 3600)
+        await ctrl.poll()
+
+        cmd = ControllerCommand(role=BatteryRole.HOLDING, target_watts=0.0)
+        await ctrl.execute(cmd)
+
+        for c in driver.write_ac_power_setpoint.call_args_list:
+            if "dry_run" in c.kwargs:
+                assert c.kwargs["dry_run"] is True
+
+    @pytest.mark.anyio
+    async def test_no_validation_config_never_passes_dry_run_true(self):
+        from backend.controller_model import BatteryRole, ControllerCommand
+
+        driver = AsyncMock()
+        driver.read_system_state = AsyncMock(
+            return_value=_make_victron_data(ess_mode=2)
+        )
+        driver.write_ac_power_setpoint = AsyncMock()
+
+        ctrl = _make_controller_with_validation(driver, validation_config=None)
+        await ctrl.poll()
+
+        cmd = ControllerCommand(role=BatteryRole.HOLDING, target_watts=0.0)
+        await ctrl.execute(cmd)
+
+        for c in driver.write_ac_power_setpoint.call_args_list:
+            if "dry_run" in c.kwargs:
+                assert c.kwargs["dry_run"] is False
+
+
+class TestVictronValidationPeriod:
+    """Tests for validation period timing and boundary conditions."""
+
+    def test_in_validation_period_true_when_first_read_none(self):
+        driver = AsyncMock()
+        cfg = HardwareValidationConfig(validation_period_hours=48.0)
+        ctrl = _make_controller_with_validation(driver, validation_config=cfg)
+        assert ctrl._in_validation_period() is True
+
+    def test_in_validation_period_true_when_within_48h(self):
+        driver = AsyncMock()
+        cfg = HardwareValidationConfig(validation_period_hours=48.0)
+        ctrl = _make_controller_with_validation(driver, validation_config=cfg)
+        ctrl._first_read_at = time.time() - (24 * 3600)
+        assert ctrl._in_validation_period() is True
+
+    def test_in_validation_period_false_when_past_48h(self):
+        driver = AsyncMock()
+        cfg = HardwareValidationConfig(validation_period_hours=48.0)
+        ctrl = _make_controller_with_validation(driver, validation_config=cfg)
+        ctrl._first_read_at = time.time() - (49 * 3600)
+        assert ctrl._in_validation_period() is False
+
+    def test_in_validation_period_false_when_no_config(self):
+        driver = AsyncMock()
+        ctrl = _make_controller_with_validation(driver, validation_config=None)
+        assert ctrl._in_validation_period() is False
+
+    @pytest.mark.anyio
+    async def test_handle_failure_does_not_pass_dry_run(self):
+        """Safe-state writes must bypass validation period gate."""
+        driver = AsyncMock()
+        driver.read_system_state = AsyncMock(
+            side_effect=ConnectionError("timeout")
+        )
+        driver.write_ac_power_setpoint = AsyncMock()
+
+        cfg = HardwareValidationConfig(validation_period_hours=48.0)
+        ctrl = _make_controller_with_validation(driver, validation_config=cfg)
+        ctrl._first_read_at = time.time()
+
+        for _ in range(3):
+            await ctrl.poll()
+
+        # Safe state calls should NOT have dry_run keyword
+        for c in driver.write_ac_power_setpoint.call_args_list:
+            assert "dry_run" not in c.kwargs
+
+    @pytest.mark.anyio
+    async def test_poll_sets_first_read_at(self):
+        driver = AsyncMock()
+        driver.read_system_state = AsyncMock(
+            return_value=_make_victron_data()
+        )
+
+        cfg = HardwareValidationConfig(validation_period_hours=48.0)
+        ctrl = _make_controller_with_validation(driver, validation_config=cfg)
+        assert ctrl._first_read_at is None
+
+        await ctrl.poll()
+        assert ctrl._first_read_at is not None
+        assert isinstance(ctrl._first_read_at, float)
+
+    @pytest.mark.anyio
+    async def test_poll_does_not_overwrite_first_read_at(self):
+        driver = AsyncMock()
+        driver.read_system_state = AsyncMock(
+            return_value=_make_victron_data()
+        )
+
+        cfg = HardwareValidationConfig(validation_period_hours=48.0)
+        ctrl = _make_controller_with_validation(driver, validation_config=cfg)
+
+        await ctrl.poll()
+        first = ctrl._first_read_at
+
+        await ctrl.poll()
+        assert ctrl._first_read_at == first
