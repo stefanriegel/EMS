@@ -22,7 +22,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 16: ML Infrastructure** - Foundation layer for model persistence, feature extraction, and safe sklearn execution (completed 2026-03-23)
 - [x] **Phase 17: Consumption Forecaster Upgrade** - Weather-aware forecasting with accuracy tracking and proper validation (completed 2026-03-23)
 - [x] **Phase 18: Anomaly Detection** - Nightly anomaly model training with lightweight per-cycle checks and tiered alerts (completed 2026-03-24)
-- [ ] **Phase 19: Self-Tuning Control** - Data-driven parameter adjustment with shadow mode, bounded changes, and automatic rollback
+- [x] **Phase 19: Self-Tuning Control** - Data-driven parameter adjustment with shadow mode, bounded changes, and automatic rollback (completed 2026-03-24)
 
 ## Phase Details
 
@@ -85,7 +85,7 @@ Plans:
 **Plans**: 2 plans
 Plans:
 - [x] 19-01-PLAN.md — SelfTuner core module with all tuning logic, safety gates, and unit tests
-- [ ] 19-02-PLAN.md — Coordinator wiring, nightly loop integration, and API extension
+- [x] 19-02-PLAN.md — Coordinator wiring, nightly loop integration, and API extension
 
 ## Progress
 
@@ -97,4 +97,4 @@ Phases execute in numeric order: 16 -> 17 -> 18 -> 19
 | 16. ML Infrastructure | 2/3 | Complete    | 2026-03-23 |
 | 17. Consumption Forecaster Upgrade | 2/2 | Complete    | 2026-03-23 |
 | 18. Anomaly Detection | 2/2 | Complete    | 2026-03-24 |
-| 19. Self-Tuning Control | 1/2 | In Progress|  |
+| 19. Self-Tuning Control | 2/2 | Complete   | 2026-03-24 |
