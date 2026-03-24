@@ -29,7 +29,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. EMS performs write-then-read-back verification and reports match/mismatch before trusting any setpoint
   3. All driver write methods accept a dry_run flag that logs intended writes to the decision log without executing them
   4. EMS enforces a configurable read-only validation period (default 48h) per battery before enabling writes
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 20-01-PLAN.md — Driver dry_run flag, connectivity validation, and write-back verification
+- [ ] 20-02-PLAN.md — HardwareValidationConfig, controller validation period gating, startup wiring
 
 ### Phase 21: Cross-Charge Detection and Prevention
 **Goal**: Coordinator detects and stops battery-to-battery energy transfer in real time
@@ -83,7 +86,7 @@ Phases execute in numeric order: 20 -> 21 -> 22 -> 23 -> 24
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 20. Hardware Validation | 0/0 | Not started | - |
+| 20. Hardware Validation | 0/2 | Not started | - |
 | 21. Cross-Charge Detection and Prevention | 0/0 | Not started | - |
 | 22. Huawei Mode Manager | 0/0 | Not started | - |
 | 23. Production Commissioning | 0/0 | Not started | - |
