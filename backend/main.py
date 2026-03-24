@@ -71,7 +71,7 @@ from backend.scheduler import Scheduler
 from backend.weather_scheduler import WeatherScheduler
 from backend.tariff import CompositeTariffEngine
 from backend.anomaly_detector import AnomalyDetector
-from backend.config import AnomalyDetectorConfig, ModeManagerConfig
+from backend.config import AnomalyDetectorConfig, CommissioningConfig, ModeManagerConfig
 from backend.huawei_mode_manager import HuaweiModeManager
 from backend.self_tuner import SelfTuner
 from influxdb_client.client.influxdb_client_async import InfluxDBClientAsync
@@ -580,6 +580,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             )
         app.state.mode_manager = mode_manager
 
+        # --- Victron watchdog guard (45s zero-write safety net) ---
+        victron_ctrl.start_watchdog_guard()
+        logger.info("Victron watchdog guard started")
+
         coordinator = Coordinator(
             huawei_ctrl=huawei_ctrl,
             victron_ctrl=victron_ctrl,
@@ -588,6 +592,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             writer=metrics_writer,
             tariff_engine=tariff_engine,
         )
+
+        # --- Commissioning manager (staged rollout with shadow mode) ---
+        commissioning_cfg = CommissioningConfig.from_env()
+        if commissioning_cfg.enabled:
+            try:
+                from backend.commissioning import CommissioningManager  # noqa: PLC0415
+
+                commissioning_mgr = CommissioningManager(commissioning_cfg)
+                commissioning_mgr.load_or_init()
+                coordinator.set_commissioning_manager(commissioning_mgr)
+                app.state.commissioning_manager = commissioning_mgr
+                logger.info(
+                    "Commissioning manager: stage=%s shadow_mode=%s",
+                    commissioning_mgr.stage.value,
+                    commissioning_mgr.shadow_mode,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Commissioning manager failed to initialize: %s", exc)
+                app.state.commissioning_manager = None
+        else:
+            app.state.commissioning_manager = None
+            logger.info("Commissioning manager disabled")
+
         await coordinator.start()
         logger.info("Coordinator control loop started (replaces Orchestrator)")
         coordinator.set_scheduler(weather_scheduler)
@@ -741,6 +768,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.forecast_comparison = None
         app.state.anomaly_detector = None
         app.state.self_tuner = None
+        app.state.commissioning_manager = None
 
     yield  # application is running
 
@@ -771,6 +799,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # influx_client and drivers are only created in the non-degraded path
         if influx_client is not None:
             await influx_client.close()
+        await victron_ctrl.stop_watchdog_guard()
         logger.info("Disconnecting Victron driver")
         await victron.close()
         logger.info("Disconnecting Huawei driver")

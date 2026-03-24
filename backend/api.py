@@ -235,7 +235,7 @@ async def get_health(
         ha_entities_count = len(all_values)
         ha_entities_available = any(v is not None for v in all_values.values())
 
-    return {
+    result = {
         "status": _health_status(state),
         "huawei_available": state.huawei_available if state else False,
         "victron_available": state.victron_available if state else False,
@@ -248,6 +248,18 @@ async def get_health(
         "integrations": orchestrator.get_integration_health() if orchestrator is not None else {},
         "cross_charge": orchestrator.get_cross_charge_status() if orchestrator is not None else None,
     }
+
+    # Commissioning section (optional — omitted when not configured)
+    commissioning_mgr = getattr(request.app.state, "commissioning_manager", None)
+    if commissioning_mgr is not None:
+        result["commissioning"] = {
+            "stage": commissioning_mgr.stage.value,
+            "shadow_mode": commissioning_mgr.shadow_mode,
+            "stage_entered_at": commissioning_mgr.stage_entered_at_iso,
+            "progression": commissioning_mgr.get_progression_status(),
+        }
+
+    return result
 
 
 @api_router.get("/decisions")

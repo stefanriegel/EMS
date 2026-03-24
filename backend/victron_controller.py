@@ -14,6 +14,7 @@ honour AcPowerSetpoint).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 
@@ -56,6 +57,7 @@ class VictronController:
         self._role: BatteryRole = BatteryRole.HOLDING
         self._consecutive_failures: int = 0
         self._last_data: VictronSystemData | None = None
+        self._watchdog_guard_task: asyncio.Task | None = None
 
     @property
     def role(self) -> BatteryRole:
@@ -263,3 +265,59 @@ class VictronController:
                 await self._driver.write_ac_power_setpoint(
                     phase, per_phase, dry_run=dry_run
                 )
+
+    # ------------------------------------------------------------------
+    # Watchdog guard (45s zero-write safety net)
+    # ------------------------------------------------------------------
+
+    def start_watchdog_guard(self) -> None:
+        """Start the 45s watchdog guard background task.
+
+        No-op if the guard is already running.  The guard writes 0W to all
+        3 phases every 45 seconds as a safety net, skipping writes while
+        the controller is in its validation period.
+        """
+        if self._watchdog_guard_task is not None and not self._watchdog_guard_task.done():
+            return
+        self._watchdog_guard_task = asyncio.create_task(
+            self._watchdog_guard_loop(), name="victron-watchdog-guard"
+        )
+        logger.info("Victron watchdog guard started (45s interval)")
+
+    async def stop_watchdog_guard(self) -> None:
+        """Cancel the watchdog guard task and wait for it to finish."""
+        if self._watchdog_guard_task is None:
+            return
+        self._watchdog_guard_task.cancel()
+        try:
+            await self._watchdog_guard_task
+        except asyncio.CancelledError:
+            pass
+        self._watchdog_guard_task = None
+        logger.info("Victron watchdog guard stopped")
+
+    async def _watchdog_guard_loop(self) -> None:
+        """Infinite loop that writes 0W to all 3 phases every 45 seconds.
+
+        Skips writes when the controller is in its validation period.
+        Catches and logs write failures without breaking the loop.
+        """
+        while True:
+            await asyncio.sleep(45)
+
+            if self._in_validation_period():
+                logger.debug(
+                    "Victron watchdog guard: skipped — validation period active"
+                )
+                continue
+
+            for phase in (1, 2, 3):
+                try:
+                    await self._driver.write_ac_power_setpoint(phase, 0.0)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Victron watchdog guard: phase %d write failed: %s",
+                        phase,
+                        exc,
+                    )
+            logger.debug("Victron watchdog guard: wrote 0W to all phases")
