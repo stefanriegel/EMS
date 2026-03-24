@@ -477,10 +477,20 @@ def get_anomaly_detector(request: Request):
     return getattr(request.app.state, "anomaly_detector", None)
 
 
+def get_self_tuner(request: Request):
+    """FastAPI dependency that returns the running :class:`SelfTuner`.
+
+    Reads ``request.app.state.self_tuner`` via :func:`getattr` so
+    it gracefully returns ``None`` if the attribute was never set.
+    """
+    return getattr(request.app.state, "self_tuner", None)
+
+
 @api_router.get("/ml/status")
 async def get_ml_status(
     forecaster=Depends(get_forecaster),
     anomaly_detector=Depends(get_anomaly_detector),
+    self_tuner=Depends(get_self_tuner),
 ) -> dict[str, Any]:
     """Return ML model status, training info, MAPE history, and battery health."""
     if forecaster is None:
@@ -488,6 +498,8 @@ async def get_ml_status(
     result = forecaster.get_ml_status()
     if anomaly_detector is not None:
         result["battery_health"] = anomaly_detector.get_battery_health()
+    if self_tuner is not None:
+        result["self_tuning"] = self_tuner.get_tuning_status()
     return result
 
 

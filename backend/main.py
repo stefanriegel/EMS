@@ -72,6 +72,7 @@ from backend.weather_scheduler import WeatherScheduler
 from backend.tariff import CompositeTariffEngine
 from backend.anomaly_detector import AnomalyDetector
 from backend.config import AnomalyDetectorConfig
+from backend.self_tuner import SelfTuner
 from influxdb_client.client.influxdb_client_async import InfluxDBClientAsync
 
 logger = logging.getLogger(__name__)
@@ -107,6 +108,7 @@ async def _nightly_scheduler_loop(
     *,
     consumption_forecaster=None,
     anomaly_detector=None,
+    self_tuner=None,
     app=None,
 ) -> None:
     """Asyncio task that calls ``scheduler.compute_schedule()`` once per night.
@@ -130,6 +132,9 @@ async def _nightly_scheduler_loop(
     anomaly_detector:
         Optional :class:`~backend.anomaly_detector.AnomalyDetector`
         whose nightly IsolationForest training is triggered here.
+    self_tuner:
+        Optional :class:`~backend.self_tuner.SelfTuner` whose nightly
+        parameter computation is triggered after anomaly training.
     app:
         Optional :class:`~fastapi.FastAPI` instance for setting
         ``app.state.forecast_comparison``.
@@ -167,6 +172,13 @@ async def _nightly_scheduler_loop(
                     logger.info("nightly-scheduler: anomaly detector trained")
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("nightly-scheduler: anomaly training failed: %s", exc)
+
+            if self_tuner is not None:
+                try:
+                    await self_tuner.nightly_tune(consumption_forecaster)
+                    logger.info("nightly-scheduler: self-tuner completed")
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("nightly-scheduler: self-tuner failed: %s", exc)
 
             await scheduler.compute_schedule(writer)
             logger.info("nightly-scheduler: compute_schedule complete")
@@ -476,6 +488,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             sched_cfg.grid_charge_end_min,
         )
 
+        # --- Self-tuner (adaptive parameter tuning — constructed early for nightly loop) ---
+        self_tuner = SelfTuner()
+        app.state.self_tuner = self_tuner
+
         # --- Start nightly scheduler loop ---
         sched_task = asyncio.create_task(
             _nightly_scheduler_loop(
@@ -484,6 +500,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 sched_cfg.run_hour,
                 consumption_forecaster=consumption_forecaster,
                 anomaly_detector=anomaly_detector,
+                self_tuner=self_tuner,
                 app=app,
             ),
             name="nightly-scheduler",
@@ -517,6 +534,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         if anomaly_detector is not None:
             coordinator.set_anomaly_detector(anomaly_detector)
             logger.info("Coordinator: anomaly detector wired for per-cycle checks")
+
+        # --- Self-tuner: bidirectional coordinator wiring ---
+        coordinator.set_self_tuner(self_tuner)
+        self_tuner.set_coordinator(coordinator)
+        logger.info("Coordinator: self-tuner wired for adaptive parameter tuning")
 
         # --- Export advisor (SCO-01) ---
         from backend.export_advisor import ExportAdvisor  # noqa: PLC0415
@@ -648,6 +670,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.weather_client = None
         app.state.forecast_comparison = None
         app.state.anomaly_detector = None
+        app.state.self_tuner = None
 
     yield  # application is running
 
