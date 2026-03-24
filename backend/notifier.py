@@ -34,6 +34,9 @@ ALERT_ANOMALY_CONSUMPTION = "anomaly_consumption_spike"
 ALERT_ANOMALY_SOC = "anomaly_soc_curve"
 ALERT_ANOMALY_EFFICIENCY = "anomaly_efficiency"
 
+# Cross-charge detection category
+ALERT_CROSS_CHARGE = "cross_charge"
+
 
 class TelegramNotifier:
     """Sends alert messages to a Telegram chat with per-category cooldown.

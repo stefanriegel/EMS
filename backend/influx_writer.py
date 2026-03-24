@@ -240,6 +240,31 @@ class InfluxMetricsWriter:
         except Exception as exc:  # noqa: BLE001
             logger.warning("influx write failed: %s", exc)
 
+    async def write_cross_charge_point(
+        self, active: bool, waste_wh: float, episode_count: int
+    ) -> None:
+        """Write a single ``ems_cross_charge`` Point.
+
+        Fire-and-forget: any ``Exception`` is caught, logged as WARNING,
+        and swallowed.
+
+        Args:
+            active: Whether cross-charge is currently detected.
+            waste_wh: Cumulative waste energy in Wh.
+            episode_count: Total number of cross-charge episodes.
+        """
+        try:
+            point = (
+                Point("ems_cross_charge")
+                .field("active", active)
+                .field("waste_wh", float(waste_wh))
+                .field("episode_count", int(episode_count))
+                .time(datetime.now(tz=timezone.utc))
+            )
+            await self._write_api.write(bucket=self._bucket, record=point)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("influx cross-charge write failed: %s", exc)
+
     async def write_charge_schedule(self, schedule: "ChargeSchedule") -> None:
         """Write a single ``ems_schedule`` Point from *schedule*.
 

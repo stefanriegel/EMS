@@ -582,6 +582,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         self_tuner.set_coordinator(coordinator)
         logger.info("Coordinator: self-tuner wired for adaptive parameter tuning")
 
+        # --- Cross-charge detector ---
+        from backend.cross_charge import CrossChargeDetector  # noqa: PLC0415
+
+        cross_charge_detector = CrossChargeDetector()
+        coordinator.set_cross_charge_detector(cross_charge_detector)
+        logger.info("Coordinator: cross-charge detector wired for per-cycle safety guard")
+
         # --- Export advisor (SCO-01) ---
         from backend.export_advisor import ExportAdvisor  # noqa: PLC0415
         export_advisor = ExportAdvisor(

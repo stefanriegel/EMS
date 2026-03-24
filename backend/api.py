@@ -246,6 +246,7 @@ async def get_health(
         "ha_entities_count": ha_entities_count,
         "ha_entities_available": ha_entities_available,
         "integrations": orchestrator.get_integration_health() if orchestrator is not None else {},
+        "cross_charge": orchestrator.get_cross_charge_status() if orchestrator is not None else None,
     }
 
 

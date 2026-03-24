@@ -35,11 +35,13 @@ from backend.controller_model import (
     PoolStatus,
 )
 
+from backend.cross_charge import CrossChargeDetector, CrossChargeState
 from backend.notifier import (
     ALERT_ANOMALY_COMM,
     ALERT_ANOMALY_CONSUMPTION,
     ALERT_ANOMALY_EFFICIENCY,
     ALERT_ANOMALY_SOC,
+    ALERT_CROSS_CHARGE,
 )
 
 if TYPE_CHECKING:
@@ -95,6 +97,7 @@ class Coordinator:
         self._ha_mqtt_client = None
         self._anomaly_detector = None
         self._self_tuner = None
+        self._cross_charge_detector: CrossChargeDetector | None = None
 
         # Decision ring buffer (INT-04)
         self._decisions: deque[DecisionEntry] = deque(maxlen=100)
@@ -211,6 +214,20 @@ class Coordinator:
     def set_self_tuner(self, tuner) -> None:
         """Inject the self-tuner for adaptive parameter recording."""
         self._self_tuner = tuner
+
+    def set_cross_charge_detector(self, detector: CrossChargeDetector) -> None:
+        """Inject the cross-charge detector for per-cycle safety guard."""
+        self._cross_charge_detector = detector
+
+    def get_cross_charge_status(self) -> dict[str, object] | None:
+        """Return cross-charge status dict for /api/health, or None."""
+        if self._cross_charge_detector is None:
+            return None
+        return {
+            "active": self._cross_charge_detector.active,
+            "waste_wh": self._cross_charge_detector.total_waste_wh,
+            "episode_count": self._cross_charge_detector.total_episodes,
+        }
 
     # ------------------------------------------------------------------
     # HA command handling (CTRL-07..CTRL-10)
@@ -631,6 +648,7 @@ class Coordinator:
             h_cmd, v_cmd = self._compute_grid_charge_commands(
                 slot, h_snap, v_snap
             )
+            h_cmd, v_cmd = self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
             await self._huawei_ctrl.execute(h_cmd)
             await self._victron_ctrl.execute(v_cmd)
             self._grid_charge_was_active = True
@@ -642,6 +660,7 @@ class Coordinator:
         # Grid charge cleanup on slot exit
         if self._grid_charge_was_active:
             h_cmd, v_cmd = self._compute_grid_charge_cleanup()
+            h_cmd, v_cmd = self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
             await self._huawei_ctrl.execute(h_cmd)
             await self._victron_ctrl.execute(v_cmd)
             self._grid_charge_was_active = False
@@ -677,6 +696,7 @@ class Coordinator:
                 self._last_huawei_cmd_w = 0.0
                 self._last_victron_cmd_w = 0.0
 
+                h_cmd, v_cmd = self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
                 await self._huawei_ctrl.execute(h_cmd)
                 await self._victron_ctrl.execute(v_cmd)
                 self._state = self._build_state(
@@ -709,6 +729,7 @@ class Coordinator:
             self._last_huawei_cmd_w = h_target
             self._last_victron_cmd_w = v_target
 
+            h_cmd, v_cmd = self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
             await self._huawei_ctrl.execute(h_cmd)
             await self._victron_ctrl.execute(v_cmd)
             self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
@@ -723,6 +744,7 @@ class Coordinator:
             v_role = self._debounce_role("victron", BatteryRole.HOLDING)
             h_cmd = ControllerCommand(role=h_role, target_watts=0.0)
             v_cmd = ControllerCommand(role=v_role, target_watts=0.0)
+            h_cmd, v_cmd = self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
             await self._huawei_ctrl.execute(h_cmd)
             await self._victron_ctrl.execute(v_cmd)
             self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
@@ -777,6 +799,7 @@ class Coordinator:
         h_cmd = ControllerCommand(role=h_role, target_watts=h_w)
         v_cmd = ControllerCommand(role=v_role, target_watts=v_w)
 
+        h_cmd, v_cmd = self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
         await self._huawei_ctrl.execute(h_cmd)
         await self._victron_ctrl.execute(v_cmd)
         self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
@@ -1117,6 +1140,74 @@ class Coordinator:
         return base
 
     # ------------------------------------------------------------------
+    # Cross-charge guard
+    # ------------------------------------------------------------------
+
+    def _apply_cross_charge_guard(
+        self,
+        h_snap: ControllerSnapshot,
+        v_snap: ControllerSnapshot,
+        h_cmd: ControllerCommand,
+        v_cmd: ControllerCommand,
+    ) -> tuple[ControllerCommand, ControllerCommand]:
+        """Check for cross-charge and mitigate if detected."""
+        if self._cross_charge_detector is None:
+            return h_cmd, v_cmd
+        xc_state = self._cross_charge_detector.check(h_snap, v_snap)
+        if xc_state.detected:
+            h_cmd, v_cmd = self._cross_charge_detector.mitigate(
+                xc_state, h_cmd, v_cmd
+            )
+            # Log decision entry
+            entry = DecisionEntry(
+                timestamp=datetime.now(tz=timezone.utc).isoformat(),
+                trigger="cross_charge_prevention",
+                huawei_role=h_cmd.role.value,
+                victron_role=v_cmd.role.value,
+                p_target_w=0.0,
+                huawei_allocation_w=h_cmd.target_watts,
+                victron_allocation_w=v_cmd.target_watts,
+                pool_status=(
+                    self._state.pool_status if self._state else "NORMAL"
+                ),
+                reasoning=(
+                    f"Cross-charge detected: {xc_state.source_system} "
+                    f"discharging ({xc_state.source_power_w:.0f}W) into "
+                    f"{xc_state.sink_system} ({xc_state.sink_power_w:.0f}W), "
+                    f"grid={xc_state.net_grid_power_w:.0f}W. "
+                    f"Forced {xc_state.sink_system} to HOLDING."
+                ),
+            )
+            self._decisions.append(entry)
+            logger.warning(
+                "cross-charge detected: %s->%s, waste=%.0fW, grid=%.0fW "
+                "— forced %s to HOLDING",
+                xc_state.source_system,
+                xc_state.sink_system,
+                min(xc_state.source_power_w, xc_state.sink_power_w),
+                xc_state.net_grid_power_w,
+                xc_state.sink_system,
+            )
+            # Telegram alert — per-category 300s cooldown in TelegramNotifier
+            # naturally aligns with episode_reset_s=300s
+            if self._notifier is not None:
+                try:
+                    asyncio.get_event_loop().create_task(
+                        self._notifier.send_alert(
+                            ALERT_CROSS_CHARGE,
+                            f"Cross-charge detected: "
+                            f"{xc_state.source_system} discharging into "
+                            f"{xc_state.sink_system}. "
+                            f"Forced {xc_state.sink_system} to HOLDING.",
+                        )
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "cross-charge telegram alert failed: %s", exc
+                    )
+        return h_cmd, v_cmd
+
+    # ------------------------------------------------------------------
     # Hysteresis (CTRL-03, D-06)
     # ------------------------------------------------------------------
 
@@ -1381,6 +1472,20 @@ class Coordinator:
                 except Exception as exc:
                     logger.warning("influx decision write failed: %s", exc)
 
+            # Cross-charge InfluxDB write (during active episodes)
+            if (
+                self._cross_charge_detector is not None
+                and self._cross_charge_detector.active
+            ):
+                try:
+                    await self._writer.write_cross_charge_point(
+                        active=True,
+                        waste_wh=self._cross_charge_detector.total_waste_wh,
+                        episode_count=self._cross_charge_detector.total_episodes,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("influx cross-charge write failed: %s", exc)
+
         # HA MQTT publish
         if self._ha_mqtt_client is not None:
             try:
@@ -1468,6 +1573,15 @@ class Coordinator:
         h_eff_min = self._get_effective_min_soc("huawei", now_local)
         v_eff_min = self._get_effective_min_soc("victron", now_local)
 
+        # Cross-charge detector state
+        xc_active = False
+        xc_waste = 0.0
+        xc_episodes = 0
+        if self._cross_charge_detector is not None:
+            xc_active = self._cross_charge_detector.active
+            xc_waste = self._cross_charge_detector.total_waste_wh
+            xc_episodes = self._cross_charge_detector.total_episodes
+
         return CoordinatorState(
             combined_soc_pct=combined_soc,
             huawei_soc_pct=h_soc,
@@ -1489,4 +1603,7 @@ class Coordinator:
             pool_status=pool_status,
             huawei_effective_min_soc_pct=h_eff_min,
             victron_effective_min_soc_pct=v_eff_min,
+            cross_charge_active=xc_active,
+            cross_charge_waste_wh=xc_waste,
+            cross_charge_episode_count=xc_episodes,
         )
