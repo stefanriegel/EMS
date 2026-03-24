@@ -67,6 +67,8 @@ Both battery systems operate independently with zero oscillation — coordinated
 - ✓ AnomalyDetector with 3 detection domains, tiered alert escalation, nightly IsolationForest — Phase 18
 - ✓ Anomaly REST API (/api/anomaly/events) and Telegram notifications — Phase 18
 - ✓ SelfTuner with adaptive dead-band/ramp/min-SoC tuning, 14-day shadow mode, bounded changes, automatic rollback — Phase 19
+- ✓ Driver dry_run flag, connectivity validation, and write-back verification on all Modbus write methods — Phase 20
+- ✓ HardwareValidationConfig with 48h read-only validation period gating in both controllers — Phase 20
 
 ### Active
 
@@ -96,7 +98,7 @@ Both battery systems operate independently with zero oscillation — coordinated
 **Codebase:**
 - Backend: ~14,200 LOC Python (FastAPI, pymodbus, paho-mqtt, scikit-learn)
 - Frontend: ~2,600 LOC TypeScript/React (Vite, wouter)
-- Tests: ~18,300 LOC across 1,509 tests
+- Tests: ~18,800 LOC across 1,591 tests
 - 4 new ML modules: model_store, feature_pipeline, anomaly_detector, self_tuner
 
 **Hardware environment:**
@@ -162,4 +164,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 ---
-*Last updated: 2026-03-24 after v1.4 milestone start*
+*Last updated: 2026-03-24 after Phase 20 completion*
