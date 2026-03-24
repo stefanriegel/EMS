@@ -60,9 +60,9 @@ Plans:
   2. EMS restores Huawei to self-consumption mode on shutdown, even after a crash (idempotent recovery)
   3. EMS detects if Huawei reverts from TOU mode and re-applies the mode automatically
   4. Mode transitions clamp power to zero before switching and wait for settle before resuming setpoints
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 Plans:
-- [ ] 22-01-PLAN.md — HuaweiModeManager state machine, ModeManagerConfig, TDD tests
+- [x] 22-01-PLAN.md — HuaweiModeManager state machine, ModeManagerConfig, TDD tests
 - [ ] 22-02-PLAN.md — Controller integration, lifespan wiring, coordinator exposure, HA MQTT entity
 
 ### Phase 23: Production Commissioning
@@ -95,6 +95,6 @@ Phases execute in numeric order: 20 -> 21 -> 22 -> 23 -> 24
 |-------|----------------|--------|-----------|
 | 20. Hardware Validation | 2/2 | Complete    | 2026-03-24 |
 | 21. Cross-Charge Detection and Prevention | 3/3 | Complete    | 2026-03-24 |
-| 22. Huawei Mode Manager | 0/2 | In progress | - |
+| 22. Huawei Mode Manager | 1/2 | In Progress|  |
 | 23. Production Commissioning | 0/0 | Not started | - |
 | 24. VRM/DESS Integration | 0/0 | Not started | - |

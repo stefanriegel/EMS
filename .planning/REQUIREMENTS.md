@@ -16,10 +16,10 @@ Requirements for Production Deployment & Cross-Charge Prevention. Each maps to r
 
 ### Huawei Control
 
-- [ ] **HCTL-01**: EMS switches Huawei to TOU working mode (register 47086) on startup for authoritative charge/discharge control
-- [ ] **HCTL-02**: EMS restores Huawei to self-consumption mode on shutdown (idempotent, handles crash recovery)
-- [ ] **HCTL-03**: EMS periodically verifies Huawei is still in TOU mode and re-applies if reverted
-- [ ] **HCTL-04**: Mode transitions clamp power to zero before switching and wait for settle before resuming setpoints
+- [x] **HCTL-01**: EMS switches Huawei to TOU working mode (register 47086) on startup for authoritative charge/discharge control
+- [x] **HCTL-02**: EMS restores Huawei to self-consumption mode on shutdown (idempotent, handles crash recovery)
+- [x] **HCTL-03**: EMS periodically verifies Huawei is still in TOU mode and re-applies if reverted
+- [x] **HCTL-04**: Mode transitions clamp power to zero before switching and wait for settle before resuming setpoints
 
 ### Cross-Charge Prevention
 
@@ -74,10 +74,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | HWVAL-02 | Phase 20 | Complete |
 | HWVAL-03 | Phase 20 | Complete |
 | HWVAL-04 | Phase 20 | Complete |
-| HCTL-01 | Phase 22 | Pending |
-| HCTL-02 | Phase 22 | Pending |
-| HCTL-03 | Phase 22 | Pending |
-| HCTL-04 | Phase 22 | Pending |
+| HCTL-01 | Phase 22 | Complete |
+| HCTL-02 | Phase 22 | Complete |
+| HCTL-03 | Phase 22 | Complete |
+| HCTL-04 | Phase 22 | Complete |
 | XCHG-01 | Phase 21 | Complete |
 | XCHG-02 | Phase 21 | Complete |
 | XCHG-03 | Phase 21 | Complete |
