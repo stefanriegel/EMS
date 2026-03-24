@@ -1,13 +1,4 @@
-# Stage 1: Frontend build
-FROM node:20-alpine AS frontend-build
-WORKDIR /app/frontend
-COPY frontend/package*.json ./
-RUN npm ci
-COPY frontend/ ./
-RUN npm run build
-
-# Stage 2: Python runtime (HA Add-on base)
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-python:3.12-alpine3.21
+ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
 ARG BUILD_ARCH
@@ -15,13 +6,18 @@ ARG BUILD_VERSION
 
 WORKDIR /app
 
-# System deps: build-base + libffi-dev for bcrypt, gfortran + openblas-dev for sklearn, jq for run.sh
-RUN apk add --no-cache build-base libffi-dev gfortran openblas-dev jq
+# System deps: build tools for bcrypt/sklearn, Node.js for frontend build, jq for run.sh
+RUN apk add --no-cache build-base libffi-dev gfortran openblas-dev jq nodejs npm
 
 # Limit OpenMP/BLAS threads to avoid oversubscription in Docker containers
-# (sklearn/numpy default to nproc which sees host CPUs, not cgroup limits)
 ENV OMP_NUM_THREADS=2
 ENV OPENBLAS_NUM_THREADS=2
+
+# Frontend build
+COPY frontend/package*.json frontend/
+RUN cd frontend && npm ci
+COPY frontend/ frontend/
+RUN cd frontend && npm run build
 
 # Python dependencies
 COPY pyproject.toml .
@@ -29,7 +25,14 @@ RUN pip install --no-cache-dir .
 
 # Application source
 COPY backend/ backend/
-COPY --from=frontend-build /app/frontend/dist frontend/dist
+
+# Move built frontend to final location and clean up Node.js artifacts
+RUN mv frontend/dist frontend_dist && \
+    rm -rf frontend node_modules && \
+    mv frontend_dist frontend/dist
+
+# Remove Node.js build tools (not needed at runtime)
+RUN apk del nodejs npm
 
 # Entrypoint
 COPY run.sh /run.sh
