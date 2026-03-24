@@ -45,7 +45,7 @@ Requirements for Intelligent Self-Tuning milestone.
 - [x] **ANOM-05**: Efficiency degradation tracking — monitor round-trip efficiency trends over weeks
 - [x] **ANOM-06**: Nightly Isolation Forest training on InfluxDB metrics for multi-dimensional anomaly scoring
 - [x] **ANOM-07**: Per-cycle anomaly check uses pre-computed statistical thresholds only (no sklearn predict in 5s loop)
-- [ ] **ANOM-08**: Anomaly events exposed via REST API and Telegram notifications
+- [x] **ANOM-08**: Anomaly events exposed via REST API and Telegram notifications
 
 ## Future Requirements
 
@@ -89,7 +89,7 @@ Requirements for Intelligent Self-Tuning milestone.
 | ANOM-05 | Phase 18 | Complete |
 | ANOM-06 | Phase 18 | Complete |
 | ANOM-07 | Phase 18 | Complete |
-| ANOM-08 | Phase 18 | Pending |
+| ANOM-08 | Phase 18 | Complete |
 | TUNE-01 | Phase 19 | Pending |
 | TUNE-02 | Phase 19 | Pending |
 | TUNE-03 | Phase 19 | Pending |

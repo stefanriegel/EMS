@@ -21,7 +21,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 16: ML Infrastructure** - Foundation layer for model persistence, feature extraction, and safe sklearn execution (completed 2026-03-23)
 - [x] **Phase 17: Consumption Forecaster Upgrade** - Weather-aware forecasting with accuracy tracking and proper validation (completed 2026-03-23)
-- [ ] **Phase 18: Anomaly Detection** - Nightly anomaly model training with lightweight per-cycle checks and tiered alerts
+- [x] **Phase 18: Anomaly Detection** - Nightly anomaly model training with lightweight per-cycle checks and tiered alerts (completed 2026-03-24)
 - [ ] **Phase 19: Self-Tuning Control** - Data-driven parameter adjustment with shadow mode, bounded changes, and automatic rollback
 
 ## Phase Details
@@ -70,7 +70,7 @@ Plans:
 **Plans**: 2 plans
 Plans:
 - [x] 18-01-PLAN.md — AnomalyDetector core module with all 3 detection domains, tiered alerts, IsolationForest training, and unit tests
-- [ ] 18-02-PLAN.md — Coordinator wiring, nightly training schedule, REST API endpoints, Telegram notifications
+- [x] 18-02-PLAN.md — Coordinator wiring, nightly training schedule, REST API endpoints, Telegram notifications
 
 ### Phase 19: Self-Tuning Control
 **Goal**: Control parameters (dead-bands, ramp rates, min-SoC profiles) automatically adjust based on real usage data -- with strict safety gates ensuring tuning only activates when the system has proven forecast accuracy and sufficient historical data
@@ -93,5 +93,5 @@ Phases execute in numeric order: 16 -> 17 -> 18 -> 19
 |-------|----------------|--------|-----------|
 | 16. ML Infrastructure | 2/3 | Complete    | 2026-03-23 |
 | 17. Consumption Forecaster Upgrade | 2/2 | Complete    | 2026-03-23 |
-| 18. Anomaly Detection | 1/2 | In Progress|  |
+| 18. Anomaly Detection | 2/2 | Complete   | 2026-03-24 |
 | 19. Self-Tuning Control | 0/? | Not started | - |
