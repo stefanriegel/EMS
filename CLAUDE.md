@@ -57,9 +57,9 @@ scripts/uat_docker.sh                       # run UAT smoke tests in Docker
 
 **Frontend** (`frontend/src/`): Components — `EnergyFlowCard.tsx`, `BatteryStatus.tsx`, `DeviceDetail.tsx`, `TariffCard.tsx`, `OptimizationCard.tsx`, `ForecastCard.tsx`, `EvccCard.tsx`, `LoadsCard.tsx`, `DecisionLog.tsx`, `PoolOverview.tsx` · Hooks — `useEmsSocket.ts` (WebSocket), `useEmsState.ts` (polling fallback), `useDecisions.ts`, `useForecast.ts` · Pages — `Login.tsx` · Types — `types.ts` · Routing — `wouter` in `App.tsx`
 
-**Config**: `backend/config.py` (dataclass configs with `from_env()` classmethods) · `ha-addon/config.yaml` (HA Add-on options/schema) · `ha-addon/run.sh` (env mapping) · `.env.example`, `docker-compose.yml`
+**Config**: `backend/config.py` (dataclass configs with `from_env()` classmethods) · `ems/config.yaml` (HA Add-on options/schema) · `ems/run.sh` (env mapping) · `.env.example`, `docker-compose.yml`
 
-**Deployment**: `Dockerfile` (multi-stage: Node build → Python runtime) · `ha-addon/build.yaml` (aarch64/amd64) · `scripts/deploy_ha_addon.sh` · `grafana/` (dashboards + provisioning)
+**Deployment**: `ems/Dockerfile` (multi-stage: Node build → Python runtime) · `ems/build.yaml` (aarch64/amd64) · `scripts/deploy_ha_addon.sh` · `grafana/` (dashboards + provisioning)
 
 **CI/CD & Tooling**: `.github/workflows/` (GitHub Actions pipelines) · `.planning/` (project roadmap — `PROJECT.md`, `MILESTONES.md`, phase plans in `phases/`, codebase analysis in `codebase/`, research notes in `research/`) · `.artifacts/browser/` (Playwright browser binaries) · `.bg-shell/manifest.json` (background shell configuration) · `ems.egg-info/` (Python sdist metadata — `PKG-INFO`, `SOURCES.txt`) · `.pytest_cache/` (test runner cache)
 
@@ -86,7 +86,7 @@ scripts/uat_docker.sh                       # run UAT smoke tests in Docker
 - `frontend/vite.config.ts` — dev proxy `/api` → `:8000`
 - `frontend/eslint.config.js` — ESLint 9 + typescript-eslint + react-hooks
 - `frontend/playwright.config.ts` — baseURL `:4173`, 375×812 viewport
-- `ha-addon/translations/en.yaml`, `de.yaml` — HA config UI strings
+- `ems/translations/en.yaml`, `de.yaml` — HA config UI strings
 - `repository.yaml` — HA Add-on Store metadata
 
 ## GSD Workflow

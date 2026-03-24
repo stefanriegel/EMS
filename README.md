@@ -194,7 +194,7 @@ The add-on uses the Home Assistant `/config` directory (mapped read-write) to pe
 
 The add-on defaults to bridge networking. If your Huawei Modbus proxy or Victron Cerbo GX is on a LAN subnet that is unreachable from the HA OS bridge network (e.g. hardware on `192.168.1.x` and HA on a separate VLAN), enable host networking:
 
-1. In `ha-addon/config.yaml`, change `host_network: false` to `host_network: true`.
+1. In `ems/config.yaml`, change `host_network: false` to `host_network: true`.
 2. Rebuild and reinstall the add-on.
 
 With host networking, the add-on shares the Home Assistant host's network interface and can reach all LAN addresses directly.

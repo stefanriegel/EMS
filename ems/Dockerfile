@@ -32,7 +32,7 @@ COPY backend/ backend/
 COPY --from=frontend-build /app/frontend/dist frontend/dist
 
 # Entrypoint
-COPY ha-addon/run.sh /run.sh
+COPY run.sh /run.sh
 RUN chmod +x /run.sh
 
 LABEL \

@@ -48,11 +48,11 @@ fi
 echo "[3/5] Copying add-on files..."
 mkdir -p "$MOUNT_POINT/ems"
 # Core add-on files
-cp "$REPO_ROOT/ha-addon/Dockerfile"  "$MOUNT_POINT/ems/"
-cp "$REPO_ROOT/ha-addon/config.yaml" "$MOUNT_POINT/ems/"
-cp "$REPO_ROOT/ha-addon/build.yaml"  "$MOUNT_POINT/ems/"
-cp "$REPO_ROOT/ha-addon/run.sh"      "$MOUNT_POINT/ems/"
-# Source required for build (build context = add-on dir)
+cp "$REPO_ROOT/ems/Dockerfile"       "$MOUNT_POINT/ems/"
+cp "$REPO_ROOT/ems/config.yaml"      "$MOUNT_POINT/ems/"
+cp "$REPO_ROOT/ems/build.yaml"       "$MOUNT_POINT/ems/"
+cp "$REPO_ROOT/ems/run.sh"           "$MOUNT_POINT/ems/"
+# Source required for build (additional_context in build.yaml)
 cp "$REPO_ROOT/pyproject.toml"       "$MOUNT_POINT/ems/"
 cp -r "$REPO_ROOT/backend"           "$MOUNT_POINT/ems/"
 cp -r "$REPO_ROOT/frontend/dist"     "$MOUNT_POINT/ems/dist"
