@@ -51,7 +51,7 @@ from starlette.staticfiles import StaticFiles
 from backend.api import api_router
 from backend.auth import AdminConfig, AuthMiddleware, auth_router, ensure_jwt_secret
 from backend.ingress import IngressMiddleware
-from backend.config import HuaweiConfig, InfluxConfig, ModelStoreConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig, EvccConfig, SchedulerConfig, EvccMqttConfig, HaMqttConfig, TelegramConfig, HaRestConfig, HaStatisticsConfig, MultiEntityHaConfig, LiveTariffConfig, OpenMeteoConfig
+from backend.config import HardwareValidationConfig, HuaweiConfig, InfluxConfig, ModelStoreConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig, EvccConfig, SchedulerConfig, EvccMqttConfig, HaMqttConfig, TelegramConfig, HaRestConfig, HaStatisticsConfig, MultiEntityHaConfig, LiveTariffConfig, OpenMeteoConfig
 from backend.weather_client import OpenMeteoClient
 from backend.supervisor_client import SupervisorClient
 from backend.ha_rest_client import HomeAssistantClient, MultiEntityHaClient
@@ -359,6 +359,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         except Exception as exc:  # noqa: BLE001
             logger.warning("Victron driver failed to connect — running without Victron: %s", exc)
 
+        # --- Startup connectivity validation ---
+        huawei_validated = await huawei.validate_connectivity()
+        if huawei_validated:
+            logger.info("Huawei: startup connectivity validation PASSED")
+        else:
+            logger.warning(
+                "Huawei: startup connectivity validation FAILED — continuing in degraded mode"
+            )
+
+        victron_validated = await victron.validate_connectivity()
+        if victron_validated:
+            logger.info("Victron: startup connectivity validation PASSED")
+        else:
+            logger.warning(
+                "Victron: startup connectivity validation FAILED — continuing in degraded mode"
+            )
+
         # --- Instantiate EVCC client and scheduler (needs sys_cfg / orch_cfg) ---
         evcc_cfg = EvccConfig.from_env()
         sched_cfg = SchedulerConfig.from_env()
@@ -523,9 +540,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
         app.state.intraday_task = intraday_task
 
+        # --- Hardware validation config ---
+        validation_cfg = HardwareValidationConfig.from_env()
+        logger.info(
+            "Hardware validation config: period=%.0fh dry_run=%s",
+            validation_cfg.validation_period_hours,
+            validation_cfg.dry_run,
+        )
+
         # --- Start coordinator (replaces Orchestrator) ---
-        huawei_ctrl = HuaweiController(huawei, sys_cfg, loop_interval_s=orch_cfg.loop_interval_s)
-        victron_ctrl = VictronController(victron, sys_cfg, loop_interval_s=orch_cfg.loop_interval_s)
+        huawei_ctrl = HuaweiController(
+            huawei, sys_cfg,
+            loop_interval_s=orch_cfg.loop_interval_s,
+            validation_config=validation_cfg,
+        )
+        victron_ctrl = VictronController(
+            victron, sys_cfg,
+            loop_interval_s=orch_cfg.loop_interval_s,
+            validation_config=validation_cfg,
+        )
         coordinator = Coordinator(
             huawei_ctrl=huawei_ctrl,
             victron_ctrl=victron_ctrl,

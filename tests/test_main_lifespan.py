@@ -28,6 +28,7 @@ def _make_mock_huawei():
     d.close = AsyncMock()
     d.read_master = AsyncMock(return_value=None)
     d.read_battery = AsyncMock(return_value=None)
+    d.validate_connectivity = AsyncMock(return_value=True)
     return d
 
 
@@ -36,6 +37,7 @@ def _make_mock_victron():
     d.connect = AsyncMock()
     d.close = AsyncMock()
     d.read_system_state = MagicMock(return_value=None)
+    d.validate_connectivity = AsyncMock(return_value=True)
     return d
 
 
