@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 21: Cross-Charge Detection and Prevention** - Detect and prevent battery-to-battery energy transfer through the AC bus (completed 2026-03-24)
 - [x] **Phase 22: Huawei Mode Manager** - Take authoritative TOU mode control of Huawei for real setpoint command (completed 2026-03-24)
 - [x] **Phase 23: Production Commissioning** - Staged rollout from read-only to dual-battery writes with safety guards (completed 2026-03-24)
-- [ ] **Phase 24: VRM/DESS Integration** - Read DESS schedule and VRM diagnostics for hybrid operating mode coordination
+- [x] **Phase 24: VRM/DESS Integration** - Read DESS schedule and VRM diagnostics for hybrid operating mode coordination (completed 2026-03-24)
 
 ## Phase Details
 
@@ -87,10 +87,10 @@ Plans:
   2. EMS reads the DESS planned charge/discharge schedule from Venus OS MQTT broker
   3. Coordinator avoids issuing Huawei discharge during DESS Victron charge windows (and vice versa)
   4. VRM/DESS integration degrades gracefully when VRM credentials are missing or Venus MQTT is unavailable
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 Plans:
 - [x] 24-01-PLAN.md — VRM client, DESS MQTT subscriber, data models, config dataclasses
-- [ ] 24-02-PLAN.md — Coordinator DESS guard, lifespan wiring, health API extension
+- [x] 24-02-PLAN.md — Coordinator DESS guard, lifespan wiring, health API extension
 
 ## Progress
 
@@ -103,4 +103,4 @@ Phases execute in numeric order: 20 -> 21 -> 22 -> 23 -> 24
 | 21. Cross-Charge Detection and Prevention | 3/3 | Complete    | 2026-03-24 |
 | 22. Huawei Mode Manager | 2/2 | Complete    | 2026-03-24 |
 | 23. Production Commissioning | 2/2 | Complete    | 2026-03-24 |
-| 24. VRM/DESS Integration | 1/2 | In Progress|  |
+| 24. VRM/DESS Integration | 2/2 | Complete   | 2026-03-24 |
