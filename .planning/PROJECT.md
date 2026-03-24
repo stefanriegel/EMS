@@ -82,16 +82,7 @@ Both battery systems operate independently with zero oscillation — coordinated
 
 ### Active
 
-## Current Milestone: v1.4 Production Deployment & Cross-Charge Prevention
-
-**Goal:** Take the EMS from code-complete to live production control of both battery systems, eliminating cross-charging between Huawei and Victron.
-
-**Target features:**
-- Validate EMS Modbus control on real Huawei hardware (remote takeover from internal EMS)
-- Investigate operating modes: full EMS control vs Victron DESS + EMS-controlled Huawei
-- VRM API integration to read DESS schedule/calculations
-- Cross-charge detection and prevention logic in the coordinator
-- Production deployment on HA with both batteries under coordinated control
+(No active milestone — planning next)
 
 ### Out of Scope
 
@@ -100,16 +91,20 @@ Both battery systems operate independently with zero oscillation — coordinated
 - Cloud connectivity — fully local operation
 - Third-party battery brands — Huawei + Victron only for v1
 - Victron MQTT control — replaced by Modbus TCP
+- VRM cloud API for schedule writes — violates local-only constraint
+- Bidirectional DESS schedule manipulation — creates dual-controller oscillation
+- Register 47589 remote control mode — disables all Huawei internal safety
+- Real-time cross-inverter AC power balancing — different response times guarantee oscillation
 
 ## Current State
 
-**v1.3 shipped 2026-03-24.** Intelligent Self-Tuning: ML infrastructure (ModelStore, FeaturePipeline, executor offloading), upgraded consumption forecaster (HistGBR, weather features, MAPE tracking), anomaly detection (3 domains, tiered alerts, IsolationForest), and self-tuning control parameters (shadow mode, bounded changes, automatic rollback).
+**v1.4 shipped 2026-03-24.** Production Deployment & Cross-Charge Prevention: Hardware validation with dry_run and 48h read-only period, cross-charge detection and prevention with dashboard indicators, Huawei TOU mode manager with crash recovery, staged commissioning with shadow mode, and VRM/DESS integration for hybrid operating mode coordination.
 
 **Codebase:**
-- Backend: ~14,200 LOC Python (FastAPI, pymodbus, paho-mqtt, scikit-learn)
-- Frontend: ~2,600 LOC TypeScript/React (Vite, wouter)
+- Backend: ~15,200 LOC Python (FastAPI, pymodbus, paho-mqtt, scikit-learn, httpx)
+- Frontend: ~2,800 LOC TypeScript/React (Vite, wouter)
 - Tests: ~21,200 LOC across 1,725 tests
-- 4 new ML modules: model_store, feature_pipeline, anomaly_detector, self_tuner
+- 5 new v1.4 modules: cross_charge, huawei_mode_manager, commissioning, vrm_client, dess_mqtt
 
 **Hardware environment:**
 - Huawei SUN2000 inverter with LUNA2000 battery (30 kWh) — Modbus TCP on port 502
@@ -117,14 +112,15 @@ Both battery systems operate independently with zero oscillation — coordinated
 - EVCC for EV charging optimization (co-installed HA add-on)
 - Home Assistant OS as the host platform
 
-**Architecture:** Each battery system has a dedicated controller (HuaweiController, VictronController) receiving instructions from a Coordinator. SoC-based role assignment (PRIMARY_DISCHARGE, SECONDARY_DISCHARGE, CHARGING, HOLDING, GRID_CHARGE) with per-system hysteresis, ramp limiting, and failure isolation. PV surplus distributed by SoC headroom weighting. Solar-aware grid charge target reduction.
+**Architecture:** Each battery system has a dedicated controller (HuaweiController, VictronController) receiving instructions from a Coordinator. Hybrid operating mode: DESS manages Victron scheduling, EMS controls Huawei via TOU mode, DESS guard prevents cross-charging. CommissioningManager gates writes through staged rollout (READ_ONLY → SINGLE_BATTERY → DUAL_BATTERY). CrossChargeDetector provides real-time detection with automatic HOLDING mitigation.
 
 **Known areas needing field validation:**
 - Victron Venus OS Modbus register addresses vs. actual firmware (v3.20+)
-- Unit ID assignments need probing or manual config on real hardware
-- Self-tuner shadow mode needs 14+ days of production data before live parameter adjustment
-- Anomaly detection thresholds may need real-world calibration
-- MAPE activation gate (25% threshold, 60 days) needs production validation
+- Huawei TOU mode settling time and actual vs commanded power deviation on real hardware
+- Venus OS MQTT DESS topic paths need validation on real Venus OS
+- VRM API idDataAttribute values need live discovery
+- Self-tuner shadow mode needs 14+ days of production data
+- Commissioning stage progression criteria need real-world calibration
 
 ## Constraints
 
@@ -154,6 +150,12 @@ Both battery systems operate independently with zero oscillation — coordinated
 | JSON file persistence for ML state (/config/ems_models/) | No DB dependency; survives container restarts; consistent across ModelStore/MAPE/anomaly/tuning | ✓ Validated Phase 16-19 |
 | Pre-computed thresholds for per-cycle anomaly checks | No sklearn predict in 5s loop; float comparisons only; IsolationForest runs nightly | ✓ Validated Phase 18 |
 | 14-day shadow mode before live self-tuning | Prevents premature parameter changes; logs recommended vs actual for confidence building | ✓ Validated Phase 19 |
+| Hybrid operating mode (DESS + EMS) | DESS manages Victron scheduling, EMS controls Huawei via TOU mode — eliminates dual-controller conflict | ✓ Validated Phase 24 |
+| CrossChargeDetector as coordinator guard | Pure logic module injected into coordinator, checks after command computation, before execute — matches EVCC hold pattern | ✓ Validated Phase 21 |
+| Huawei TOU mode via HuaweiModeManager | State machine with zero-clamp before switching, settle delay, periodic health check — safer than forcible mode | ✓ Validated Phase 22 |
+| Centralized _execute_commands() | Single method gates all controller writes through shadow mode + commissioning stage — no leaked direct execute() calls | ✓ Validated Phase 23 |
+| Victron 45s watchdog guard as independent task | asyncio task writes 0W every 45s regardless of control loop state — prevents 60s watchdog timeout | ✓ Validated Phase 23 |
+| dry_run flag on all write methods | Keyword-only parameter, placed inside _do() after assert-connected, before hardware write — safe-state bypasses it | ✓ Validated Phase 20 |
 
 ## Evolution
 
@@ -173,5 +175,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
----
-*Last updated: 2026-03-24 after Phase 24 completion*
+*Last updated: 2026-03-24 after v1.4 milestone completion*

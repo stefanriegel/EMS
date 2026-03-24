@@ -1,5 +1,24 @@
 # Milestones
 
+## v1.4 Production Deployment & Cross-Charge Prevention (Shipped: 2026-03-24)
+
+**Phases completed:** 5 phases, 11 plans, 17 tasks
+
+**Key accomplishments:**
+
+- dry_run flag on all 5 Modbus write methods, connectivity validation, and write-back verification for both Huawei and Victron drivers
+- HardwareValidationConfig with 48h read-only validation period gating on both controllers, startup connectivity checks, and safe-state bypass
+- CrossChargeDetector with 2-cycle debounce, 100W/200W thresholds, HOLDING mitigation, and episode waste tracking
+- Cross-charge detector wired into coordinator with async guard in 6 dispatch paths, InfluxDB metrics, Telegram alerts, and API health status
+- Red pulsing SVG cross-charge badge on EnergyFlowCard with conditional waste stats in OptimizationCard and Playwright E2E tests
+- HuaweiModeManager state machine with TOU mode activation, shutdown restore, health check re-apply, and crash recovery via working mode read-back
+- HuaweiModeManager wired into EMS lifecycle with transition-safe execute(), periodic health checks, coordinator working mode exposure, and HA MQTT sensor entity
+- CommissioningManager state machine with READ_ONLY/SINGLE_BATTERY/DUAL_BATTERY staged rollout, shadow mode write suppression, and atomic JSON persistence
+- Central _execute_commands() with shadow mode gating, Victron 45s watchdog guard, commissioning API health section, and main.py lifespan wiring
+- DESS-aware discharge gating suppresses Huawei discharge during Victron DESS charge windows, with VRM/DESS lifespan wiring and health API visibility
+
+---
+
 ## v1.3 Intelligent Self-Tuning (Shipped: 2026-03-24)
 
 **Phases completed:** 4 phases, 9 plans, 14 tasks
