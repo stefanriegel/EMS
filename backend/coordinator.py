@@ -35,6 +35,13 @@ from backend.controller_model import (
     PoolStatus,
 )
 
+from backend.notifier import (
+    ALERT_ANOMALY_COMM,
+    ALERT_ANOMALY_CONSUMPTION,
+    ALERT_ANOMALY_EFFICIENCY,
+    ALERT_ANOMALY_SOC,
+)
+
 if TYPE_CHECKING:
     from backend.export_advisor import ExportAdvisor
 
@@ -86,6 +93,7 @@ class Coordinator:
         self._evcc_monitor = None
         self._notifier = None
         self._ha_mqtt_client = None
+        self._anomaly_detector = None
 
         # Decision ring buffer (INT-04)
         self._decisions: deque[DecisionEntry] = deque(maxlen=100)
@@ -194,6 +202,10 @@ class Coordinator:
     def set_supervisor_client(self, client) -> None:
         """Inject the HA Supervisor client for options persistence."""
         self._supervisor_client = client
+
+    def set_anomaly_detector(self, detector) -> None:
+        """Inject the anomaly detector for per-cycle checks."""
+        self._anomaly_detector = detector
 
     # ------------------------------------------------------------------
     # HA command handling (CTRL-07..CTRL-10)
@@ -511,6 +523,7 @@ class Coordinator:
             try:
                 await self._run_cycle()
                 await self._run_export_advisory()
+                await self._run_anomaly_check()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -804,6 +817,45 @@ class Coordinator:
                 )
         except Exception:
             logger.warning("ExportAdvisor.advise() failed", exc_info=True)
+
+    # ------------------------------------------------------------------
+    # Anomaly detection (fire-and-forget per cycle)
+    # ------------------------------------------------------------------
+
+    _ANOMALY_CATEGORY_MAP: dict[str, str] = {
+        "comm_loss": ALERT_ANOMALY_COMM,
+        "consumption_spike": ALERT_ANOMALY_CONSUMPTION,
+        "soc_curve": ALERT_ANOMALY_SOC,
+        "efficiency": ALERT_ANOMALY_EFFICIENCY,
+    }
+
+    async def _run_anomaly_check(self) -> None:
+        """Run anomaly detection on latest snapshots (fire-and-forget).
+
+        Failures are logged at WARNING and never block the control loop.
+        """
+        if self._anomaly_detector is None:
+            return
+        try:
+            events = self._anomaly_detector.check_cycle(
+                self._last_h_snap, self._last_v_snap
+            )
+            for event in events:
+                if (
+                    event.severity in ("warning", "alert")
+                    and self._notifier is not None
+                ):
+                    cat = self._ANOMALY_CATEGORY_MAP.get(
+                        event.anomaly_type, "anomaly_unknown"
+                    )
+                    try:
+                        await self._notifier.send_alert(cat, event.message)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "anomaly notification failed: %s", exc
+                        )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("anomaly check failed: %s", exc)
 
     # ------------------------------------------------------------------
     # P_target computation

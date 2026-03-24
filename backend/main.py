@@ -70,6 +70,8 @@ from backend.victron_controller import VictronController
 from backend.scheduler import Scheduler
 from backend.weather_scheduler import WeatherScheduler
 from backend.tariff import CompositeTariffEngine
+from backend.anomaly_detector import AnomalyDetector
+from backend.config import AnomalyDetectorConfig
 from influxdb_client.client.influxdb_client_async import InfluxDBClientAsync
 
 logger = logging.getLogger(__name__)
@@ -104,6 +106,7 @@ async def _nightly_scheduler_loop(
     run_hour: int,
     *,
     consumption_forecaster=None,
+    anomaly_detector=None,
     app=None,
 ) -> None:
     """Asyncio task that calls ``scheduler.compute_schedule()`` once per night.
@@ -124,6 +127,9 @@ async def _nightly_scheduler_loop(
     consumption_forecaster:
         Optional :class:`~backend.consumption_forecaster.ConsumptionForecaster`
         that is retrained each night.
+    anomaly_detector:
+        Optional :class:`~backend.anomaly_detector.AnomalyDetector`
+        whose nightly IsolationForest training is triggered here.
     app:
         Optional :class:`~fastapi.FastAPI` instance for setting
         ``app.state.forecast_comparison``.
@@ -154,6 +160,13 @@ async def _nightly_scheduler_loop(
                     logger.info("nightly-scheduler: consumption forecaster retrained")
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("nightly-scheduler: retrain failed: %s", exc)
+
+            if anomaly_detector is not None:
+                try:
+                    await anomaly_detector.nightly_train()
+                    logger.info("nightly-scheduler: anomaly detector trained")
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("nightly-scheduler: anomaly training failed: %s", exc)
 
             await scheduler.compute_schedule(writer)
             logger.info("nightly-scheduler: compute_schedule complete")
@@ -414,6 +427,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # Wire forecaster to app.state for API access
         app.state.consumption_forecaster = consumption_forecaster
 
+        # --- Anomaly Detector (optional — graceful degradation) ---
+        anomaly_detector = None
+        try:
+            anomaly_cfg = AnomalyDetectorConfig.from_env()
+            if anomaly_cfg.enabled:
+                anomaly_detector = AnomalyDetector(anomaly_cfg, model_store=model_store)
+                logger.info("Anomaly detector enabled")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Anomaly detector init failed: %s", exc)
+        app.state.anomaly_detector = anomaly_detector
+
         # Use ML forecaster as the consumption reader for the scheduler if available
         effective_consumption_reader = consumption_forecaster if consumption_forecaster is not None else metrics_reader
 
@@ -459,6 +483,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 metrics_writer,
                 sched_cfg.run_hour,
                 consumption_forecaster=consumption_forecaster,
+                anomaly_detector=anomaly_detector,
                 app=app,
             ),
             name="nightly-scheduler",
@@ -488,6 +513,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         coordinator.set_scheduler(weather_scheduler)
         coordinator.set_supervisor_client(supervisor)
         logger.info("Coordinator: scheduler wired for GRID_CHARGE slot detection")
+
+        if anomaly_detector is not None:
+            coordinator.set_anomaly_detector(anomaly_detector)
+            logger.info("Coordinator: anomaly detector wired for per-cycle checks")
 
         # --- Export advisor (SCO-01) ---
         from backend.export_advisor import ExportAdvisor  # noqa: PLC0415
@@ -618,6 +647,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.ha_rest_client = None
         app.state.weather_client = None
         app.state.forecast_comparison = None
+        app.state.anomaly_detector = None
 
     yield  # application is running
 

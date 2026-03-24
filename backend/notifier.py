@@ -28,6 +28,12 @@ ALERT_COMM_FAILURE = "comm_failure"
 ALERT_DISCHARGE_LOCKED = "discharge_locked"
 ALERT_DISCHARGE_RELEASED = "discharge_released"
 
+# Anomaly detection categories
+ALERT_ANOMALY_COMM = "anomaly_comm_loss"
+ALERT_ANOMALY_CONSUMPTION = "anomaly_consumption_spike"
+ALERT_ANOMALY_SOC = "anomaly_soc_curve"
+ALERT_ANOMALY_EFFICIENCY = "anomaly_efficiency"
+
 
 class TelegramNotifier:
     """Sends alert messages to a Telegram chat with per-category cooldown.
