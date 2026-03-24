@@ -86,7 +86,7 @@ Phases execute in numeric order: 20 -> 21 -> 22 -> 23 -> 24
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 20. Hardware Validation | 2/2 | Complete   | 2026-03-24 |
+| 20. Hardware Validation | 2/2 | Complete    | 2026-03-24 |
 | 21. Cross-Charge Detection and Prevention | 0/0 | Not started | - |
 | 22. Huawei Mode Manager | 0/0 | Not started | - |
 | 23. Production Commissioning | 0/0 | Not started | - |
