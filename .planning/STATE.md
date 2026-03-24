@@ -1,15 +1,15 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.4
-milestone_name: Production Deployment & Cross-Charge Prevention
-status: Ready to plan
-stopped_at: null
-last_updated: "2026-03-24T10:00:00.000Z"
+milestone_name: milestone
+status: Ready to execute
+stopped_at: Completed 20-01-PLAN.md
+last_updated: "2026-03-24T10:59:13.646Z"
 progress:
   total_phases: 5
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  total_plans: 2
+  completed_plans: 1
 ---
 
 # Project State
@@ -19,16 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-24)
 
 **Core value:** Both battery systems operate independently with zero oscillation to maximize PV self-consumption
-**Current focus:** Phase 20 - Hardware Validation
+**Current focus:** Phase 20 — Hardware Validation
 
 ## Current Position
 
-Phase: 20 of 24 (Hardware Validation)
-Plan: 0 of 0 in current phase
-Status: Ready to plan
-Last activity: 2026-03-24 — Roadmap created for v1.4 Production Deployment & Cross-Charge Prevention
-
-Progress: [░░░░░░░░░░] 0%
+Phase: 20 (Hardware Validation) — EXECUTING
+Plan: 2 of 2
 
 ## Performance Metrics
 
@@ -59,6 +55,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 07-11 | 10 | 3.3 min |
 | Phase 12-15 | 9 | 2.9 min |
 | Phase 16-19 | 9 | 5.4 min |
+| Phase 20 P01 | 4min | 1 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -72,6 +69,7 @@ Recent decisions affecting current work:
 - [v1.4 research]: Cross-charge detection is pure coordinator logic, no hardware deps, can parallel Phase 20
 - [v1.4 research]: Huawei power limits are ceilings not setpoints — Victron must absorb slack
 - [v1.4 research]: Forcible charge/discharge (Option B) preferred over TOU period writes initially
+- [Phase 20]: dry_run check inside _do() inner function for consistency with _with_reconnect wrapper
 
 ### Pending Todos
 
@@ -85,6 +83,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-24
-Stopped at: Roadmap created for v1.4, ready to plan Phase 20
+Last session: 2026-03-24T10:59:13.644Z
+Stopped at: Completed 20-01-PLAN.md
 Resume file: None
