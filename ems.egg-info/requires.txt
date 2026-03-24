@@ -8,6 +8,8 @@ httpx
 python-jose[cryptography]
 passlib[bcrypt]
 bcrypt<4
+scikit-learn<2,>=1.4
+numpy<3,>=1.25
 
 [dev]
 pytest>=8

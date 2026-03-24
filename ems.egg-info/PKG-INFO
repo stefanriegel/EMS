@@ -12,6 +12,8 @@ Requires-Dist: httpx
 Requires-Dist: python-jose[cryptography]
 Requires-Dist: passlib[bcrypt]
 Requires-Dist: bcrypt<4
+Requires-Dist: scikit-learn<2,>=1.4
+Requires-Dist: numpy<3,>=1.25
 Provides-Extra: dev
 Requires-Dist: pytest>=8; extra == "dev"
 Requires-Dist: anyio[trio]; extra == "dev"

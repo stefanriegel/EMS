@@ -27,3 +27,6 @@ vendor/
 coverage/
 .cache/
 tmp/
+
+# Caliber local state
+.caliber/
