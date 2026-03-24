@@ -32,10 +32,10 @@ Requirements for Production Deployment & Cross-Charge Prevention. Each maps to r
 
 ### VRM/DESS Integration
 
-- [ ] **DESS-01**: VRM client reads battery/system diagnostics via REST API with Personal Access Token auth
-- [ ] **DESS-02**: EMS reads DESS planned charge/discharge schedule from Venus OS MQTT broker
+- [x] **DESS-01**: VRM client reads battery/system diagnostics via REST API with Personal Access Token auth
+- [x] **DESS-02**: EMS reads DESS planned charge/discharge schedule from Venus OS MQTT broker
 - [ ] **DESS-03**: Coordinator avoids issuing Huawei discharge during DESS Victron charge windows (and vice versa)
-- [ ] **DESS-04**: VRM/DESS integration degrades gracefully when VRM credentials missing or Venus MQTT unavailable
+- [x] **DESS-04**: VRM/DESS integration degrades gracefully when VRM credentials missing or Venus MQTT unavailable
 
 ### Production Commissioning
 
@@ -84,10 +84,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | XCHG-04 | Phase 21 | Complete |
 | XCHG-05 | Phase 21 | Complete |
 | XCHG-06 | Phase 21 | Complete |
-| DESS-01 | Phase 24 | Pending |
-| DESS-02 | Phase 24 | Pending |
+| DESS-01 | Phase 24 | Complete |
+| DESS-02 | Phase 24 | Complete |
 | DESS-03 | Phase 24 | Pending |
-| DESS-04 | Phase 24 | Pending |
+| DESS-04 | Phase 24 | Complete |
 | PROD-01 | Phase 23 | Complete |
 | PROD-02 | Phase 23 | Complete |
 | PROD-03 | Phase 23 | Complete |
