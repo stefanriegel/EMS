@@ -44,7 +44,11 @@ Plans:
   3. False positives are avoided via 2-cycle debounce and 100W minimum threshold
   4. First detection per episode sends a Telegram alert and cumulative waste energy is tracked in InfluxDB
   5. Dashboard displays a cross-charge status indicator showing current state and historical episodes
-**Plans**: TBD
+**Plans:** 3 plans
+Plans:
+- [ ] 21-01-PLAN.md — CrossChargeDetector module, CoordinatorState extension, TDD tests
+- [ ] 21-02-PLAN.md — Coordinator wiring, InfluxDB metrics, Telegram alerting, API health
+- [ ] 21-03-PLAN.md — Frontend cross-charge badge and waste stats dashboard
 **UI hint**: yes
 
 ### Phase 22: Huawei Mode Manager
@@ -87,7 +91,7 @@ Phases execute in numeric order: 20 -> 21 -> 22 -> 23 -> 24
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 20. Hardware Validation | 2/2 | Complete    | 2026-03-24 |
-| 21. Cross-Charge Detection and Prevention | 0/0 | Not started | - |
+| 21. Cross-Charge Detection and Prevention | 0/3 | Planning complete | - |
 | 22. Huawei Mode Manager | 0/0 | Not started | - |
 | 23. Production Commissioning | 0/0 | Not started | - |
 | 24. VRM/DESS Integration | 0/0 | Not started | - |
