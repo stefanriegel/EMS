@@ -210,6 +210,21 @@ export function EnergyFlowCard({ pool, devices }: Props) {
           </text>
         </g>
 
+        {/* -- Cross-charge warning badge (between battery nodes) -- */}
+        {pool?.cross_charge_active && (
+          <g data-testid="cross-charge-badge">
+            <rect x={135} y={170} width={130} height={24} rx={12}
+                  fill="#dc2626" opacity={0.9}>
+              <animate attributeName="opacity" values="0.7;1;0.7"
+                       dur="2s" repeatCount="indefinite" />
+            </rect>
+            <text x={200} y={186} textAnchor="middle" fill="white"
+                  fontSize={11} fontWeight={600}>
+              Cross-Charge
+            </text>
+          </g>
+        )}
+
         {/* -- Victron SoC arc -- */}
         <g data-testid="ef-victron-node" opacity={victronOpacity}>
           {/* Background track */}

@@ -33,6 +33,9 @@ export interface PoolState {
   pool_status: string;
   huawei_effective_min_soc_pct: number;
   victron_effective_min_soc_pct: number;
+  cross_charge_active: boolean;
+  cross_charge_waste_wh: number;
+  cross_charge_episode_count: number;
 }
 
 // ---------------------------------------------------------------------------
