@@ -27,6 +27,13 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Copy source into add-on build context
+        run: |
+          cp -r backend ems/backend
+          cp -r frontend ems/frontend
+          cp pyproject.toml ems/pyproject.toml
+          find ems/backend -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
+
       - name: Login to GHCR
         if: github.event_name == 'push'
         uses: docker/login-action@v3
