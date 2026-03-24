@@ -72,6 +72,8 @@ Both battery systems operate independently with zero oscillation — coordinated
 - ✓ CrossChargeDetector with 2-cycle debounce, 100W/200W thresholds, episode tracking, and automatic HOLDING mitigation — Phase 21
 - ✓ Cross-charge InfluxDB metrics (ems_cross_charge), Telegram alerts, /api/health integration — Phase 21
 - ✓ Dashboard cross-charge badge (EnergyFlowCard) and waste stats (OptimizationCard) — Phase 21
+- ✓ HuaweiModeManager state machine (IDLE→CLAMPING→SWITCHING→ACTIVE) with TOU takeover, shutdown restore, crash recovery — Phase 22
+- ✓ Mode manager wired into controller, lifespan, coordinator, and HA MQTT working mode entity — Phase 22
 
 ### Active
 
@@ -101,7 +103,7 @@ Both battery systems operate independently with zero oscillation — coordinated
 **Codebase:**
 - Backend: ~14,200 LOC Python (FastAPI, pymodbus, paho-mqtt, scikit-learn)
 - Frontend: ~2,600 LOC TypeScript/React (Vite, wouter)
-- Tests: ~19,400 LOC across 1,621 tests
+- Tests: ~20,000 LOC across 1,658 tests
 - 4 new ML modules: model_store, feature_pipeline, anomaly_detector, self_tuner
 
 **Hardware environment:**
@@ -167,4 +169,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 ---
-*Last updated: 2026-03-24 after Phase 21 completion*
+*Last updated: 2026-03-24 after Phase 22 completion*
