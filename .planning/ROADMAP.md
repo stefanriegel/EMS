@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 20: Hardware Validation** - Validate Modbus connectivity, write-back verification, and dry-run infrastructure on real hardware (completed 2026-03-24)
 - [x] **Phase 21: Cross-Charge Detection and Prevention** - Detect and prevent battery-to-battery energy transfer through the AC bus (completed 2026-03-24)
-- [ ] **Phase 22: Huawei Mode Manager** - Take authoritative TOU mode control of Huawei for real setpoint command
+- [x] **Phase 22: Huawei Mode Manager** - Take authoritative TOU mode control of Huawei for real setpoint command (completed 2026-03-24)
 - [ ] **Phase 23: Production Commissioning** - Staged rollout from read-only to dual-battery writes with safety guards
 - [ ] **Phase 24: VRM/DESS Integration** - Read DESS schedule and VRM diagnostics for hybrid operating mode coordination
 
@@ -60,10 +60,10 @@ Plans:
   2. EMS restores Huawei to self-consumption mode on shutdown, even after a crash (idempotent recovery)
   3. EMS detects if Huawei reverts from TOU mode and re-applies the mode automatically
   4. Mode transitions clamp power to zero before switching and wait for settle before resuming setpoints
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 Plans:
 - [x] 22-01-PLAN.md — HuaweiModeManager state machine, ModeManagerConfig, TDD tests
-- [ ] 22-02-PLAN.md — Controller integration, lifespan wiring, coordinator exposure, HA MQTT entity
+- [x] 22-02-PLAN.md — Controller integration, lifespan wiring, coordinator exposure, HA MQTT entity
 
 ### Phase 23: Production Commissioning
 **Goal**: Both batteries operate under live EMS control with staged rollout and safety guards
@@ -95,6 +95,6 @@ Phases execute in numeric order: 20 -> 21 -> 22 -> 23 -> 24
 |-------|----------------|--------|-----------|
 | 20. Hardware Validation | 2/2 | Complete    | 2026-03-24 |
 | 21. Cross-Charge Detection and Prevention | 3/3 | Complete    | 2026-03-24 |
-| 22. Huawei Mode Manager | 1/2 | In Progress|  |
+| 22. Huawei Mode Manager | 2/2 | Complete   | 2026-03-24 |
 | 23. Production Commissioning | 0/0 | Not started | - |
 | 24. VRM/DESS Integration | 0/0 | Not started | - |
