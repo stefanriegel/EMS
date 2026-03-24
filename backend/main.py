@@ -71,7 +71,8 @@ from backend.scheduler import Scheduler
 from backend.weather_scheduler import WeatherScheduler
 from backend.tariff import CompositeTariffEngine
 from backend.anomaly_detector import AnomalyDetector
-from backend.config import AnomalyDetectorConfig
+from backend.config import AnomalyDetectorConfig, ModeManagerConfig
+from backend.huawei_mode_manager import HuaweiModeManager
 from backend.self_tuner import SelfTuner
 from influxdb_client.client.influxdb_client_async import InfluxDBClientAsync
 
@@ -559,6 +560,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             loop_interval_s=orch_cfg.loop_interval_s,
             validation_config=validation_cfg,
         )
+
+        # --- Huawei mode manager ---
+        mode_cfg = ModeManagerConfig.from_env()
+        mode_manager: HuaweiModeManager | None = None
+        if mode_cfg.enabled:
+            mode_manager = HuaweiModeManager(huawei, mode_cfg)
+            huawei_ctrl.set_mode_manager(mode_manager)
+            # Read current mode for crash recovery detection
+            try:
+                battery_data = await huawei.read_battery()
+                current_mode = battery_data.working_mode
+            except Exception:
+                current_mode = None
+            await mode_manager.activate(current_working_mode=current_mode)
+            logger.info(
+                "Huawei mode manager: activated (state=%s)",
+                mode_manager.state.value,
+            )
+        app.state.mode_manager = mode_manager
+
         coordinator = Coordinator(
             huawei_ctrl=huawei_ctrl,
             victron_ctrl=victron_ctrl,
@@ -724,6 +745,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield  # application is running
 
     # --- Shutdown ---
+    mode_manager = getattr(app.state, "mode_manager", None)
+    if mode_manager is not None:
+        await mode_manager.restore()
+        logger.info("Huawei mode manager: restored to self-consumption")
     if app.state.orchestrator is not None:
         logger.info("EMS shutting down — stopping coordinator")
         await app.state.orchestrator.stop()

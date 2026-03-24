@@ -36,6 +36,7 @@ from backend.controller_model import (
 )
 
 from backend.cross_charge import CrossChargeDetector, CrossChargeState
+from backend.drivers.huawei_driver import StorageWorkingModesC
 from backend.notifier import (
     ALERT_ANOMALY_COMM,
     ALERT_ANOMALY_CONSUMPTION,
@@ -441,13 +442,18 @@ class Coordinator:
         return None
 
     def get_working_mode(self) -> int | None:
-        """Return the Huawei working mode, or None if not available.
+        """Return the Huawei working mode from the controller, or None."""
+        return self._huawei_ctrl.get_working_mode()
 
-        The Coordinator does not track working mode directly (the
-        HuaweiController/HuaweiDriver handles mode internally).  Returns
-        None for backward compatibility with the API /health endpoint.
-        """
-        return None
+    def _resolve_working_mode_name(self) -> str:
+        """Return the human-readable name for the current Huawei working mode."""
+        value = self.get_working_mode()
+        if value is None:
+            return "unknown"
+        try:
+            return StorageWorkingModesC(value).name
+        except ValueError:
+            return f"unknown({value})"
 
     def get_device_snapshot(self) -> dict:
         """Return a per-device telemetry snapshot for the /api/devices endpoint.
@@ -1604,4 +1610,5 @@ class Coordinator:
             cross_charge_active=xc_active,
             cross_charge_waste_wh=xc_waste,
             cross_charge_episode_count=xc_episodes,
+            huawei_working_mode=self._resolve_working_mode_name(),
         )

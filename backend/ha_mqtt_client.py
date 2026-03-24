@@ -133,6 +133,7 @@ SENSOR_ENTITIES: list[EntityDefinition] = [
     EntityDefinition("huawei_setpoint", "Discharge Setpoint", "sensor", "W", "power", "measurement", None, "huawei_discharge_setpoint_w", "huawei"),
     EntityDefinition("huawei_power", "Battery Power", "sensor", "W", "power", "measurement", None, "huawei_power_w", "huawei"),
     EntityDefinition("huawei_role", "Battery Role", "sensor", None, "enum", None, "diagnostic", "huawei_role", "huawei"),
+    EntityDefinition("huawei_working_mode", "Working Mode", "sensor", None, "enum", None, "diagnostic", "huawei_working_mode", "huawei"),
     # --- Victron device (7 sensor entities) ---
     EntityDefinition("victron_soc", "Battery SoC", "sensor", "%", "battery", "measurement", None, "victron_soc_pct", "victron"),
     EntityDefinition("victron_setpoint", "AC Setpoint", "sensor", "W", "power", "measurement", None, "victron_discharge_setpoint_w", "victron"),

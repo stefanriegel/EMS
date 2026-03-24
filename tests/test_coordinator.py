@@ -693,7 +693,7 @@ class TestCtrl02NoDriverAccess:
         # Verify only poll and execute were called on controllers
         h_called = {name for name, _, _ in h_ctrl.method_calls}
         v_called = {name for name, _, _ in v_ctrl.method_calls}
-        allowed = {"poll", "execute"}
+        allowed = {"poll", "execute", "get_working_mode"}
         assert h_called.issubset(allowed), f"Unexpected Huawei calls: {h_called - allowed}"
         assert v_called.issubset(allowed), f"Unexpected Victron calls: {v_called - allowed}"
 

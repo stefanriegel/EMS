@@ -29,6 +29,9 @@ def _make_mock_huawei():
     d.read_master = AsyncMock(return_value=None)
     d.read_battery = AsyncMock(return_value=None)
     d.validate_connectivity = AsyncMock(return_value=True)
+    d.write_max_charge_power = AsyncMock()
+    d.write_max_discharge_power = AsyncMock()
+    d.write_battery_mode = AsyncMock()
     return d
 
 

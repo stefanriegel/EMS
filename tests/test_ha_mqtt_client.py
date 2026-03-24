@@ -133,8 +133,8 @@ class TestEntityDefinition:
             e.entity_id = "changed"  # type: ignore[misc]
 
     def test_sensor_entities_count(self):
-        """SENSOR_ENTITIES contains 15 sensor entities (online sensors migrated to binary_sensor)."""
-        assert len(SENSOR_ENTITIES) == 15
+        """SENSOR_ENTITIES contains 16 sensor entities (online sensors migrated to binary_sensor)."""
+        assert len(SENSOR_ENTITIES) == 16
 
     def test_sensor_entities_are_entity_definitions(self):
         """All entries in SENSOR_ENTITIES are EntityDefinition instances."""
@@ -500,7 +500,7 @@ class TestThreeDeviceGrouping:
         huawei_ids = {e.entity_id for e in SENSOR_ENTITIES if e.device_group == "huawei"}
         assert huawei_ids == {
             "huawei_soc", "huawei_setpoint", "huawei_power",
-            "huawei_role",
+            "huawei_role", "huawei_working_mode",
         }
 
     def test_victron_entities(self):

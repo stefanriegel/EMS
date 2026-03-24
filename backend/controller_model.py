@@ -197,6 +197,9 @@ class CoordinatorState:
     cross_charge_episode_count: int = 0
     """Total number of cross-charge episodes detected."""
 
+    huawei_working_mode: str = "unknown"
+    """Current Huawei storage working mode (e.g. 'TIME_OF_USE_LUNA2000', 'MAXIMISE_SELF_CONSUMPTION')."""
+
 
 @dataclass
 class DecisionEntry:
