@@ -70,7 +70,16 @@ Both battery systems operate independently with zero oscillation — coordinated
 
 ### Active
 
-(No active milestone — planning next)
+## Current Milestone: v1.4 Production Deployment & Cross-Charge Prevention
+
+**Goal:** Take the EMS from code-complete to live production control of both battery systems, eliminating cross-charging between Huawei and Victron.
+
+**Target features:**
+- Validate EMS Modbus control on real Huawei hardware (remote takeover from internal EMS)
+- Investigate operating modes: full EMS control vs Victron DESS + EMS-controlled Huawei
+- VRM API integration to read DESS schedule/calculations
+- Cross-charge detection and prevention logic in the coordinator
+- Production deployment on HA with both batteries under coordinated control
 
 ### Out of Scope
 
@@ -153,4 +162,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 ---
-*Last updated: 2026-03-24 after v1.3 milestone completion*
+*Last updated: 2026-03-24 after v1.4 milestone start*
