@@ -39,8 +39,8 @@ Requirements for Production Deployment & Cross-Charge Prevention. Each maps to r
 
 ### Production Commissioning
 
-- [ ] **PROD-01**: Staged rollout: read-only -> single-battery writes -> dual-battery writes with documented progression criteria
-- [ ] **PROD-02**: Shadow mode logs all coordinator decisions and intended writes without executing them
+- [x] **PROD-01**: Staged rollout: read-only -> single-battery writes -> dual-battery writes with documented progression criteria
+- [x] **PROD-02**: Shadow mode logs all coordinator decisions and intended writes without executing them
 - [ ] **PROD-03**: Victron 45s emergency zero-write guard prevents 60s watchdog timeout from causing uncontrolled state
 
 ## Future Requirements
@@ -88,8 +88,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DESS-02 | Phase 24 | Pending |
 | DESS-03 | Phase 24 | Pending |
 | DESS-04 | Phase 24 | Pending |
-| PROD-01 | Phase 23 | Pending |
-| PROD-02 | Phase 23 | Pending |
+| PROD-01 | Phase 23 | Complete |
+| PROD-02 | Phase 23 | Complete |
 | PROD-03 | Phase 23 | Pending |
 
 **Coverage:**
