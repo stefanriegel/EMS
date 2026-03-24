@@ -1,7 +1,6 @@
 """Tests for HuaweiModeManager -- TOU mode lifecycle state machine."""
 from __future__ import annotations
 
-import asyncio
 import time
 from unittest.mock import AsyncMock, call
 
@@ -225,14 +224,11 @@ class TestTransitionSafety:
         # Record states during activation
         states_seen: list[ModeState] = []
 
-        original_sleep = asyncio.sleep
-
         async def recording_sleep(delay):
             states_seen.append(mgr.state)
-            await original_sleep(0.001)  # fast for test
 
         import unittest.mock
-        with unittest.mock.patch("backend.huawei_mode_manager.asyncio.sleep", side_effect=recording_sleep):
+        with unittest.mock.patch("backend.huawei_mode_manager.anyio.sleep", side_effect=recording_sleep):
             await mgr.activate()
 
         # During transition, should have seen CLAMPING and/or SWITCHING
@@ -268,7 +264,7 @@ class TestTransitionSafety:
             sleep_calls.append(delay)
 
         import unittest.mock
-        with unittest.mock.patch("backend.huawei_mode_manager.asyncio.sleep", side_effect=track_sleep):
+        with unittest.mock.patch("backend.huawei_mode_manager.anyio.sleep", side_effect=track_sleep):
             await mgr.activate()
 
         # Should have at least 2 settle sleeps (after clamp, after switch)
