@@ -99,6 +99,7 @@ class Coordinator:
         self._anomaly_detector = None
         self._self_tuner = None
         self._cross_charge_detector: CrossChargeDetector | None = None
+        self._commissioning_manager = None  # CommissioningManager | None
 
         # Decision ring buffer (INT-04)
         self._decisions: deque[DecisionEntry] = deque(maxlen=100)
@@ -215,6 +216,10 @@ class Coordinator:
     def set_self_tuner(self, tuner) -> None:
         """Inject the self-tuner for adaptive parameter recording."""
         self._self_tuner = tuner
+
+    def set_commissioning_manager(self, manager) -> None:
+        """Inject the commissioning manager for shadow mode and stage gating."""
+        self._commissioning_manager = manager
 
     def set_cross_charge_detector(self, detector: CrossChargeDetector) -> None:
         """Inject the cross-charge detector for per-cycle safety guard."""
@@ -579,6 +584,66 @@ class Coordinator:
                 logger.warning("Self-tuner record_cycle failed: %s", exc)
             await asyncio.sleep(self._cfg.loop_interval_s)
 
+    async def _execute_commands(
+        self,
+        h_cmd: ControllerCommand,
+        v_cmd: ControllerCommand,
+    ) -> None:
+        """Execute controller commands with commissioning gating.
+
+        If a commissioning manager is present:
+        - Shadow mode: log a DecisionEntry with trigger="shadow_mode" and
+          suppress all writes.
+        - Stage gating: check can_write_huawei()/can_write_victron() before
+          calling execute on each controller.
+
+        If no commissioning manager is set (backward compat), both controllers
+        execute normally.
+        """
+        mgr = self._commissioning_manager
+        if mgr is None:
+            # No commissioning manager — backward compat, execute both
+            await self._huawei_ctrl.execute(h_cmd)
+            await self._victron_ctrl.execute(v_cmd)
+            return
+
+        if mgr.shadow_mode:
+            entry = DecisionEntry(
+                timestamp=datetime.now(tz=timezone.utc).isoformat(),
+                trigger="shadow_mode",
+                huawei_role=h_cmd.role.value,
+                victron_role=v_cmd.role.value,
+                p_target_w=h_cmd.target_watts + v_cmd.target_watts,
+                huawei_allocation_w=h_cmd.target_watts,
+                victron_allocation_w=v_cmd.target_watts,
+                pool_status=self._state.pool_status if self._state else "NORMAL",
+                reasoning="Shadow mode: decisions logged, writes suppressed",
+            )
+            self._decisions.append(entry)
+            logger.info(
+                "decision: shadow_mode — h=%s v=%s (writes suppressed)",
+                h_cmd.role.value,
+                v_cmd.role.value,
+            )
+            return
+
+        state = mgr.state
+        if state.can_write_huawei():
+            await self._huawei_ctrl.execute(h_cmd)
+        else:
+            logger.debug(
+                "Commissioning: Huawei write blocked (stage=%s)",
+                mgr.stage.value,
+            )
+
+        if state.can_write_victron():
+            await self._victron_ctrl.execute(v_cmd)
+        else:
+            logger.debug(
+                "Commissioning: Victron write blocked (stage=%s)",
+                mgr.stage.value,
+            )
+
     async def _run_cycle(self) -> None:
         """Single control cycle: poll, decide, execute, build state."""
         # 1. Poll both controllers
@@ -600,8 +665,7 @@ class Coordinator:
             v_cmd = ControllerCommand(
                 role=BatteryRole.HOLDING, target_watts=0.0, evcc_hold=True
             )
-            await self._huawei_ctrl.execute(h_cmd)
-            await self._victron_ctrl.execute(v_cmd)
+            await self._execute_commands(h_cmd, v_cmd)
             self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
             # Log hold signal as specific trigger
             if self._prev_h_role != "HOLDING" or self._prev_v_role != "HOLDING":
@@ -642,8 +706,7 @@ class Coordinator:
                 h_cmd = v_cmd = None  # type: ignore[assignment]
 
             if h_cmd is not None:
-                await self._huawei_ctrl.execute(h_cmd)
-                await self._victron_ctrl.execute(v_cmd)
+                await self._execute_commands(h_cmd, v_cmd)
                 self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
                 await self._write_integrations(h_snap, v_snap, h_cmd, v_cmd, None)
                 return
@@ -655,8 +718,7 @@ class Coordinator:
                 slot, h_snap, v_snap
             )
             h_cmd, v_cmd = await self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
-            await self._huawei_ctrl.execute(h_cmd)
-            await self._victron_ctrl.execute(v_cmd)
+            await self._execute_commands(h_cmd, v_cmd)
             self._grid_charge_was_active = True
             self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
             decision = self._check_and_log_decision(h_cmd, v_cmd, 0.0)
@@ -667,8 +729,7 @@ class Coordinator:
         if self._grid_charge_was_active:
             h_cmd, v_cmd = self._compute_grid_charge_cleanup()
             h_cmd, v_cmd = await self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
-            await self._huawei_ctrl.execute(h_cmd)
-            await self._victron_ctrl.execute(v_cmd)
+            await self._execute_commands(h_cmd, v_cmd)
             self._grid_charge_was_active = False
             self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
             decision = self._check_and_log_decision(h_cmd, v_cmd, 0.0)
@@ -703,8 +764,7 @@ class Coordinator:
                 self._last_victron_cmd_w = 0.0
 
                 h_cmd, v_cmd = await self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
-                await self._huawei_ctrl.execute(h_cmd)
-                await self._victron_ctrl.execute(v_cmd)
+                await self._execute_commands(h_cmd, v_cmd)
                 self._state = self._build_state(
                     h_snap, v_snap, h_cmd, v_cmd
                 )
@@ -736,8 +796,7 @@ class Coordinator:
             self._last_victron_cmd_w = v_target
 
             h_cmd, v_cmd = await self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
-            await self._huawei_ctrl.execute(h_cmd)
-            await self._victron_ctrl.execute(v_cmd)
+            await self._execute_commands(h_cmd, v_cmd)
             self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
             decision = self._check_and_log_decision(h_cmd, v_cmd, p_target)
             await self._write_integrations(h_snap, v_snap, h_cmd, v_cmd, decision)
@@ -751,8 +810,7 @@ class Coordinator:
             h_cmd = ControllerCommand(role=h_role, target_watts=0.0)
             v_cmd = ControllerCommand(role=v_role, target_watts=0.0)
             h_cmd, v_cmd = await self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
-            await self._huawei_ctrl.execute(h_cmd)
-            await self._victron_ctrl.execute(v_cmd)
+            await self._execute_commands(h_cmd, v_cmd)
             self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
             decision = self._check_and_log_decision(h_cmd, v_cmd, 0.0)
             await self._write_integrations(h_snap, v_snap, h_cmd, v_cmd, decision)
@@ -806,8 +864,7 @@ class Coordinator:
         v_cmd = ControllerCommand(role=v_role, target_watts=v_w)
 
         h_cmd, v_cmd = await self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
-        await self._huawei_ctrl.execute(h_cmd)
-        await self._victron_ctrl.execute(v_cmd)
+        await self._execute_commands(h_cmd, v_cmd)
         self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
         decision = self._check_and_log_decision(h_cmd, v_cmd, p_target)
         await self._write_integrations(h_snap, v_snap, h_cmd, v_cmd, decision)
@@ -1611,4 +1668,14 @@ class Coordinator:
             cross_charge_waste_wh=xc_waste,
             cross_charge_episode_count=xc_episodes,
             huawei_working_mode=self._resolve_working_mode_name(),
+            commissioning_stage=(
+                self._commissioning_manager.stage.value
+                if self._commissioning_manager is not None
+                else "DUAL_BATTERY"
+            ),
+            commissioning_shadow_mode=(
+                self._commissioning_manager.shadow_mode
+                if self._commissioning_manager is not None
+                else False
+            ),
         )
