@@ -100,6 +100,8 @@ class Coordinator:
         self._self_tuner = None
         self._cross_charge_detector: CrossChargeDetector | None = None
         self._commissioning_manager = None  # CommissioningManager | None
+        self._dess_subscriber = None  # DessMqttSubscriber | None
+        self._vrm_client = None  # VrmClient | None
 
         # Decision ring buffer (INT-04)
         self._decisions: deque[DecisionEntry] = deque(maxlen=100)
@@ -224,6 +226,14 @@ class Coordinator:
     def set_cross_charge_detector(self, detector: CrossChargeDetector) -> None:
         """Inject the cross-charge detector for per-cycle safety guard."""
         self._cross_charge_detector = detector
+
+    def set_dess_subscriber(self, subscriber) -> None:
+        """Inject the DESS MQTT subscriber for discharge gating."""
+        self._dess_subscriber = subscriber
+
+    def set_vrm_client(self, client) -> None:
+        """Inject the VRM REST client for diagnostics."""
+        self._vrm_client = client
 
     def get_cross_charge_status(self) -> dict[str, object] | None:
         """Return cross-charge status dict for /api/health, or None."""
@@ -718,6 +728,7 @@ class Coordinator:
                 slot, h_snap, v_snap
             )
             h_cmd, v_cmd = await self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
+            h_cmd, v_cmd = self._apply_dess_guard(h_cmd, v_cmd)
             await self._execute_commands(h_cmd, v_cmd)
             self._grid_charge_was_active = True
             self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
@@ -729,6 +740,7 @@ class Coordinator:
         if self._grid_charge_was_active:
             h_cmd, v_cmd = self._compute_grid_charge_cleanup()
             h_cmd, v_cmd = await self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
+            h_cmd, v_cmd = self._apply_dess_guard(h_cmd, v_cmd)
             await self._execute_commands(h_cmd, v_cmd)
             self._grid_charge_was_active = False
             self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
@@ -764,6 +776,7 @@ class Coordinator:
                 self._last_victron_cmd_w = 0.0
 
                 h_cmd, v_cmd = await self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
+                h_cmd, v_cmd = self._apply_dess_guard(h_cmd, v_cmd)
                 await self._execute_commands(h_cmd, v_cmd)
                 self._state = self._build_state(
                     h_snap, v_snap, h_cmd, v_cmd
@@ -796,6 +809,7 @@ class Coordinator:
             self._last_victron_cmd_w = v_target
 
             h_cmd, v_cmd = await self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
+            h_cmd, v_cmd = self._apply_dess_guard(h_cmd, v_cmd)
             await self._execute_commands(h_cmd, v_cmd)
             self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
             decision = self._check_and_log_decision(h_cmd, v_cmd, p_target)
@@ -810,6 +824,7 @@ class Coordinator:
             h_cmd = ControllerCommand(role=h_role, target_watts=0.0)
             v_cmd = ControllerCommand(role=v_role, target_watts=0.0)
             h_cmd, v_cmd = await self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
+            h_cmd, v_cmd = self._apply_dess_guard(h_cmd, v_cmd)
             await self._execute_commands(h_cmd, v_cmd)
             self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
             decision = self._check_and_log_decision(h_cmd, v_cmd, 0.0)
@@ -864,6 +879,7 @@ class Coordinator:
         v_cmd = ControllerCommand(role=v_role, target_watts=v_w)
 
         h_cmd, v_cmd = await self._apply_cross_charge_guard(h_snap, v_snap, h_cmd, v_cmd)
+        h_cmd, v_cmd = self._apply_dess_guard(h_cmd, v_cmd)
         await self._execute_commands(h_cmd, v_cmd)
         self._state = self._build_state(h_snap, v_snap, h_cmd, v_cmd)
         decision = self._check_and_log_decision(h_cmd, v_cmd, p_target)
@@ -1205,6 +1221,84 @@ class Coordinator:
     # ------------------------------------------------------------------
     # Cross-charge guard
     # ------------------------------------------------------------------
+
+    def _get_dess_active_slot_index(self) -> int | None:
+        """Return the index of the currently active DESS slot, or None."""
+        if self._dess_subscriber is None or not self._dess_subscriber.dess_available:
+            return None
+        if self._dess_subscriber.schedule.mode == 0:
+            return None
+        _tz = ZoneInfo(os.environ.get("MODUL3_TIMEZONE", "Europe/Berlin"))
+        now_local = datetime.now(tz=_tz)
+        now_s = now_local.hour * 3600 + now_local.minute * 60 + now_local.second
+        for idx, slot in enumerate(self._dess_subscriber.schedule.slots):
+            end_s = slot.start_s + slot.duration_s
+            if slot.duration_s > 0 and slot.start_s <= now_s < end_s:
+                return idx
+        return None
+
+    def _apply_dess_guard(
+        self,
+        h_cmd: ControllerCommand,
+        v_cmd: ControllerCommand,
+    ) -> tuple[ControllerCommand, ControllerCommand]:
+        """Gate Huawei discharge when DESS is actively charging Victron.
+
+        Returns commands unchanged when:
+        - No DESS subscriber injected
+        - DESS not available (MQTT disconnected)
+        - DESS mode == 0 (off)
+        - No active schedule slot at current time
+        - Active slot strategy != 1 (charge)
+        - Huawei is not discharging (target_watts >= 0)
+        """
+        if self._dess_subscriber is None:
+            return h_cmd, v_cmd
+        if not self._dess_subscriber.dess_available:
+            return h_cmd, v_cmd
+        if self._dess_subscriber.schedule.mode == 0:
+            return h_cmd, v_cmd
+
+        # Compute seconds from midnight in local time
+        _tz = ZoneInfo(os.environ.get("MODUL3_TIMEZONE", "Europe/Berlin"))
+        now_local = datetime.now(tz=_tz)
+        now_s = now_local.hour * 3600 + now_local.minute * 60 + now_local.second
+
+        active_slot = self._dess_subscriber.get_active_slot(now_s)
+        if active_slot is None:
+            return h_cmd, v_cmd
+
+        # Only gate when DESS is charging Victron (strategy=1) and Huawei is discharging
+        if active_slot.strategy == 1 and h_cmd.target_watts < 0:
+            suppressed_h = ControllerCommand(
+                role=BatteryRole.HOLDING,
+                target_watts=0.0,
+                evcc_hold=h_cmd.evcc_hold,
+            )
+            entry = DecisionEntry(
+                timestamp=datetime.now(tz=timezone.utc).isoformat(),
+                trigger="dess_coordination",
+                huawei_role="HOLDING",
+                victron_role=v_cmd.role.value,
+                p_target_w=0.0,
+                huawei_allocation_w=0.0,
+                victron_allocation_w=v_cmd.target_watts,
+                pool_status=(
+                    self._state.pool_status if self._state else "NORMAL"
+                ),
+                reasoning=(
+                    f"DESS charging Victron (strategy=1, slot start={active_slot.start_s}s). "
+                    f"Suppressed Huawei discharge ({h_cmd.target_watts:.0f}W) to avoid conflict."
+                ),
+            )
+            self._decisions.append(entry)
+            logger.info(
+                "dess_coordination: suppressed Huawei discharge %.0fW during DESS charge slot",
+                h_cmd.target_watts,
+            )
+            return suppressed_h, v_cmd
+
+        return h_cmd, v_cmd
 
     async def _apply_cross_charge_guard(
         self,
@@ -1676,6 +1770,22 @@ class Coordinator:
             commissioning_shadow_mode=(
                 self._commissioning_manager.shadow_mode
                 if self._commissioning_manager is not None
+                else False
+            ),
+            dess_mode=(
+                self._dess_subscriber.schedule.mode
+                if self._dess_subscriber is not None
+                else 0
+            ),
+            dess_active_slot=self._get_dess_active_slot_index(),
+            dess_available=(
+                self._dess_subscriber.dess_available
+                if self._dess_subscriber is not None
+                else False
+            ),
+            vrm_available=(
+                self._vrm_client.available
+                if self._vrm_client is not None
                 else False
             ),
         )

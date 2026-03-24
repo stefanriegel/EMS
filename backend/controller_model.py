@@ -207,6 +207,19 @@ class CoordinatorState:
     commissioning_shadow_mode: bool = False
     """True when shadow mode is active (decisions logged, writes suppressed)."""
 
+    # --- DESS/VRM integration ---
+    dess_mode: int = 0
+    """DESS mode: 0=off, 1=auto(VRM), 4=Node-RED."""
+
+    dess_active_slot: int | None = None
+    """Index of the currently active DESS schedule slot, or None."""
+
+    dess_available: bool = False
+    """True when DESS MQTT subscriber is connected and receiving data."""
+
+    vrm_available: bool = False
+    """True when VRM REST client is fetching fresh diagnostics."""
+
 
 @dataclass
 class DecisionEntry:
