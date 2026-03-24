@@ -69,7 +69,7 @@ Plans:
   5. Anomaly events are queryable via REST API and optionally sent as Telegram notifications
 **Plans**: 2 plans
 Plans:
-- [ ] 18-01-PLAN.md — AnomalyDetector core module with all 3 detection domains, tiered alerts, IsolationForest training, and unit tests
+- [x] 18-01-PLAN.md — AnomalyDetector core module with all 3 detection domains, tiered alerts, IsolationForest training, and unit tests
 - [ ] 18-02-PLAN.md — Coordinator wiring, nightly training schedule, REST API endpoints, Telegram notifications
 
 ### Phase 19: Self-Tuning Control
@@ -93,5 +93,5 @@ Phases execute in numeric order: 16 -> 17 -> 18 -> 19
 |-------|----------------|--------|-----------|
 | 16. ML Infrastructure | 2/3 | Complete    | 2026-03-23 |
 | 17. Consumption Forecaster Upgrade | 2/2 | Complete    | 2026-03-23 |
-| 18. Anomaly Detection | 0/2 | Not started | - |
+| 18. Anomaly Detection | 1/2 | In Progress|  |
 | 19. Self-Tuning Control | 0/? | Not started | - |

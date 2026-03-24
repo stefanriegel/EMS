@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: milestone
-status: Ready to plan
-stopped_at: Completed 17-02-PLAN.md
-last_updated: "2026-03-23T23:46:55.109Z"
+status: Ready to execute
+stopped_at: Completed 18-01-PLAN.md
+last_updated: "2026-03-24T00:14:47.973Z"
 progress:
   total_phases: 4
   completed_phases: 2
-  total_plans: 5
-  completed_plans: 5
+  total_plans: 7
+  completed_plans: 6
 ---
 
 # Project State
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-23)
 
 **Core value:** Both battery systems operate independently with zero oscillation to maximize PV self-consumption
-**Current focus:** Phase 17 — Consumption Forecaster Upgrade
+**Current focus:** Phase 18 — Anomaly Detection
 
 ## Current Position
 
-Phase: 18
-Plan: Not started
+Phase: 18 (Anomaly Detection) — EXECUTING
+Plan: 2 of 2
 
 ## Performance Metrics
 
@@ -59,6 +59,7 @@ Plan: Not started
 | Phase 16 P03 | 5min | 2 tasks | 5 files |
 | Phase 17 P01 | 8min | 2 tasks | 3 files |
 | Phase 17 P02 | 8min | 2 tasks | 5 files |
+| Phase 18 P01 | 8min | 1 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -81,6 +82,9 @@ Recent decisions affecting current work:
 - [Phase 17]: Last outdoor temp from training stored as prediction fallback
 - [Phase 17]: MAPE filters hours where actual < 0.1 kWh to avoid explosion on near-zero values
 - [Phase 17]: MAPE computed fire-and-forget in retrain_if_stale; retrain always proceeds even if MAPE fails
+- [Phase 18]: Check deviation BEFORE updating EMA baseline to prevent anomalous values from contaminating thresholds
+- [Phase 18]: Use composite keys (comm_loss:huawei) for per-system escalation and cooldown tracking
+- [Phase 18]: IsolationForest training requires at least 10 hourly baseline samples to avoid degenerate fits
 
 ### Pending Todos
 
@@ -93,6 +97,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-23T23:39:29.761Z
-Stopped at: Completed 17-02-PLAN.md
+Last session: 2026-03-24T00:14:47.971Z
+Stopped at: Completed 18-01-PLAN.md
 Resume file: None

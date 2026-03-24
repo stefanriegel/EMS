@@ -38,13 +38,13 @@ Requirements for Intelligent Self-Tuning milestone.
 
 ### Anomaly Detection
 
-- [ ] **ANOM-01**: Communication loss pattern detection — identify recurring driver timeout patterns
-- [ ] **ANOM-02**: Consumption spike detection — flag unusual consumption relative to time-of-day baseline
-- [ ] **ANOM-03**: Tiered alerts with confirmation periods — warning after 1 occurrence, alert after 3 within 24h
-- [ ] **ANOM-04**: SoC curve anomaly detection — flag when charge/discharge curves deviate from learned profile
-- [ ] **ANOM-05**: Efficiency degradation tracking — monitor round-trip efficiency trends over weeks
-- [ ] **ANOM-06**: Nightly Isolation Forest training on InfluxDB metrics for multi-dimensional anomaly scoring
-- [ ] **ANOM-07**: Per-cycle anomaly check uses pre-computed statistical thresholds only (no sklearn predict in 5s loop)
+- [x] **ANOM-01**: Communication loss pattern detection — identify recurring driver timeout patterns
+- [x] **ANOM-02**: Consumption spike detection — flag unusual consumption relative to time-of-day baseline
+- [x] **ANOM-03**: Tiered alerts with confirmation periods — warning after 1 occurrence, alert after 3 within 24h
+- [x] **ANOM-04**: SoC curve anomaly detection — flag when charge/discharge curves deviate from learned profile
+- [x] **ANOM-05**: Efficiency degradation tracking — monitor round-trip efficiency trends over weeks
+- [x] **ANOM-06**: Nightly Isolation Forest training on InfluxDB metrics for multi-dimensional anomaly scoring
+- [x] **ANOM-07**: Per-cycle anomaly check uses pre-computed statistical thresholds only (no sklearn predict in 5s loop)
 - [ ] **ANOM-08**: Anomaly events exposed via REST API and Telegram notifications
 
 ## Future Requirements
@@ -82,13 +82,13 @@ Requirements for Intelligent Self-Tuning milestone.
 | FCST-05 | Phase 17 | Complete |
 | FCST-06 | Phase 17 | Complete |
 | FCST-07 | Phase 17 | Complete |
-| ANOM-01 | Phase 18 | Pending |
-| ANOM-02 | Phase 18 | Pending |
-| ANOM-03 | Phase 18 | Pending |
-| ANOM-04 | Phase 18 | Pending |
-| ANOM-05 | Phase 18 | Pending |
-| ANOM-06 | Phase 18 | Pending |
-| ANOM-07 | Phase 18 | Pending |
+| ANOM-01 | Phase 18 | Complete |
+| ANOM-02 | Phase 18 | Complete |
+| ANOM-03 | Phase 18 | Complete |
+| ANOM-04 | Phase 18 | Complete |
+| ANOM-05 | Phase 18 | Complete |
+| ANOM-06 | Phase 18 | Complete |
+| ANOM-07 | Phase 18 | Complete |
 | ANOM-08 | Phase 18 | Pending |
 | TUNE-01 | Phase 19 | Pending |
 | TUNE-02 | Phase 19 | Pending |
