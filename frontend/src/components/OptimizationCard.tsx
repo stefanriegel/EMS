@@ -9,17 +9,18 @@
  * Renders "No schedule available" when optimization is null (scheduler not
  * yet started, or no active schedule computed).
  */
-import type { OptimizationPayload, DayPlanPayload } from "../types";
+import type { OptimizationPayload, DayPlanPayload, PoolState } from "../types";
 
 interface Props {
   optimization: OptimizationPayload | null;
+  pool?: PoolState | null;
 }
 
 function localTime(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-export function OptimizationCard({ optimization }: Props) {
+export function OptimizationCard({ optimization, pool }: Props) {
   return (
     <section className="card optimization-card">
       <h2 className="card-title">Tonight's Schedule</h2>
@@ -174,6 +175,18 @@ export function OptimizationCard({ optimization }: Props) {
             </details>
           )}
         </>
+      )}
+
+      {pool && pool.cross_charge_episode_count > 0 && (
+        <div data-testid="cross-charge-history" className="opt-cross-charge-history">
+          <div className="opt-cross-charge-title">
+            Cross-Charge History
+          </div>
+          <div className="opt-cross-charge-stats">
+            <span>Episodes: {pool.cross_charge_episode_count}</span>
+            <span>Waste: {(pool.cross_charge_waste_wh / 1000).toFixed(2)} kWh</span>
+          </div>
+        </div>
       )}
     </section>
   );

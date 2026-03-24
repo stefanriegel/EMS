@@ -121,7 +121,7 @@ function DashboardLayout() {
           <EnergyFlowCard pool={pool} devices={devices} />
           <BatteryStatus pool={pool} devices={devices} connected={ws.connected} />
           <DecisionLog decisions={decisions} />
-          <OptimizationCard optimization={optimization} />
+          <OptimizationCard optimization={optimization} pool={pool} />
           <ForecastCard forecast={forecast} />
           <TariffCard tariff={tariff} />
           <LoadsCard loads={loads} />
