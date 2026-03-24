@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: milestone
-status: Ready to execute
-stopped_at: Completed 20-01-PLAN.md
-last_updated: "2026-03-24T10:59:13.646Z"
+status: Phase complete — ready for verification
+stopped_at: Completed 20-02-PLAN.md
+last_updated: "2026-03-24T11:10:28.684Z"
 progress:
   total_phases: 5
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 2
-  completed_plans: 1
+  completed_plans: 2
 ---
 
 # Project State
@@ -56,6 +56,7 @@ Plan: 2 of 2
 | Phase 12-15 | 9 | 2.9 min |
 | Phase 16-19 | 9 | 5.4 min |
 | Phase 20 P01 | 4min | 1 tasks | 3 files |
+| Phase 20 P02 | 9min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -70,6 +71,8 @@ Recent decisions affecting current work:
 - [v1.4 research]: Huawei power limits are ceilings not setpoints — Victron must absorb slack
 - [v1.4 research]: Forcible charge/discharge (Option B) preferred over TOU period writes initially
 - [Phase 20]: dry_run check inside _do() inner function for consistency with _with_reconnect wrapper
+- [Phase 20]: HardwareValidationConfig uses wall-clock time.time() for validation period tracking
+- [Phase 20]: Safe-state writes bypass validation gate entirely (no dry_run)
 
 ### Pending Todos
 
@@ -83,6 +86,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-24T10:59:13.644Z
-Stopped at: Completed 20-01-PLAN.md
+Last session: 2026-03-24T11:10:28.682Z
+Stopped at: Completed 20-02-PLAN.md
 Resume file: None

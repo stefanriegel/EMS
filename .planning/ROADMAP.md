@@ -12,7 +12,7 @@ This milestone transitions EMS v2 from a tested, packaged system into live produ
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 20: Hardware Validation** - Validate Modbus connectivity, write-back verification, and dry-run infrastructure on real hardware
+- [x] **Phase 20: Hardware Validation** - Validate Modbus connectivity, write-back verification, and dry-run infrastructure on real hardware (completed 2026-03-24)
 - [ ] **Phase 21: Cross-Charge Detection and Prevention** - Detect and prevent battery-to-battery energy transfer through the AC bus
 - [ ] **Phase 22: Huawei Mode Manager** - Take authoritative TOU mode control of Huawei for real setpoint command
 - [ ] **Phase 23: Production Commissioning** - Staged rollout from read-only to dual-battery writes with safety guards
@@ -29,10 +29,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. EMS performs write-then-read-back verification and reports match/mismatch before trusting any setpoint
   3. All driver write methods accept a dry_run flag that logs intended writes to the decision log without executing them
   4. EMS enforces a configurable read-only validation period (default 48h) per battery before enabling writes
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 Plans:
 - [x] 20-01-PLAN.md — Driver dry_run flag, connectivity validation, and write-back verification
-- [ ] 20-02-PLAN.md — HardwareValidationConfig, controller validation period gating, startup wiring
+- [x] 20-02-PLAN.md — HardwareValidationConfig, controller validation period gating, startup wiring
 
 ### Phase 21: Cross-Charge Detection and Prevention
 **Goal**: Coordinator detects and stops battery-to-battery energy transfer in real time
@@ -86,7 +86,7 @@ Phases execute in numeric order: 20 -> 21 -> 22 -> 23 -> 24
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 20. Hardware Validation | 1/2 | In Progress|  |
+| 20. Hardware Validation | 2/2 | Complete   | 2026-03-24 |
 | 21. Cross-Charge Detection and Prevention | 0/0 | Not started | - |
 | 22. Huawei Mode Manager | 0/0 | Not started | - |
 | 23. Production Commissioning | 0/0 | Not started | - |

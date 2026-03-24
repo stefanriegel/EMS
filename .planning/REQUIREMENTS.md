@@ -12,7 +12,7 @@ Requirements for Production Deployment & Cross-Charge Prevention. Each maps to r
 - [x] **HWVAL-01**: EMS validates Modbus read connectivity to both batteries before attempting any writes
 - [x] **HWVAL-02**: EMS performs write-back verification (write value, read back, confirm match) before trusting setpoint control
 - [x] **HWVAL-03**: All write methods support a `dry_run` flag that logs intended writes without executing them
-- [ ] **HWVAL-04**: EMS runs 48h read-only validation phase before enabling writes on each battery system
+- [x] **HWVAL-04**: EMS runs 48h read-only validation phase before enabling writes on each battery system
 
 ### Huawei Control
 
@@ -73,7 +73,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | HWVAL-01 | Phase 20 | Complete |
 | HWVAL-02 | Phase 20 | Complete |
 | HWVAL-03 | Phase 20 | Complete |
-| HWVAL-04 | Phase 20 | Pending |
+| HWVAL-04 | Phase 20 | Complete |
 | HCTL-01 | Phase 22 | Pending |
 | HCTL-02 | Phase 22 | Pending |
 | HCTL-03 | Phase 22 | Pending |
