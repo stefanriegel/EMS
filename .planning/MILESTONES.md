@@ -1,5 +1,23 @@
 # Milestones
 
+## v1.3 Intelligent Self-Tuning (Shipped: 2026-03-24)
+
+**Phases completed:** 4 phases, 9 plans, 14 tasks
+
+**Key accomplishments:**
+
+- ModelStore with joblib persistence and JSON metadata sidecar for sklearn version-aware model caching
+- FeaturePipeline with 1-hour cached extraction from HA statistics and optional InfluxDB augmentation
+- Non-blocking sklearn training via anyio executor, ModelStore persistence across restarts, and OMP_NUM_THREADS=2 in Docker
+- HistGBR with 8-feature matrix (temp, calendar, lag), recency weighting, time-series CV, and real weather forecast integration via OpenMeteoClient
+- Daily MAPE tracking with 30-day rolling history, near-zero filtering, and /api/ml/status endpoint exposing model health, training info, and prediction accuracy
+- AnomalyDetector with 3 detection domains (comm loss, consumption spikes, battery health), tiered alert escalation, nightly IsolationForest training, and per-cycle float-only threshold checks
+- AnomalyDetector wired into coordinator 5s loop, nightly scheduler, REST API (events + battery health), and Telegram alerts with per-type categories
+- SelfTuner engine with adaptive dead-band/ramp/min-SoC tuning, 14-day shadow mode, bounded 10%-per-night changes, automatic rollback, and coordinator runtime field injection
+- SelfTuner wired into coordinator 5s loop (record_cycle), nightly scheduler (after anomaly training), REST API (/api/ml/status self_tuning section), and all 5 HA command handlers (mark_ha_override)
+
+---
+
 ## v1.2 Home Assistant Best Practice Alignment (Shipped: 2026-03-23)
 
 **Phases completed:** 4 phases, 9 plans, 13 tasks

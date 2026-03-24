@@ -59,18 +59,18 @@ Both battery systems operate independently with zero oscillation — coordinated
 - ✓ Controllable entities: 5 number + 1 select + 2 button entities with MQTT subscribe, mode override, auto-timeout — Phase 14
 - ✓ HA Ingress support: ASGI middleware, auth bypass, relative frontend paths, dynamic WebSocket URL — Phase 15
 
+- ✓ ModelStore with joblib persistence and sklearn version-aware model caching — Phase 16
+- ✓ FeaturePipeline with cached multi-source extraction (HA statistics + InfluxDB) — Phase 16
+- ✓ Non-blocking sklearn training via anyio executor with OMP_NUM_THREADS=2 — Phase 16
+- ✓ HistGradientBoostingRegressor with 8-feature matrix (weather, calendar, lag), recency weighting, and time-series CV — Phase 17
+- ✓ Daily MAPE tracking with /api/ml/status endpoint — Phase 17
+- ✓ AnomalyDetector with 3 detection domains, tiered alert escalation, nightly IsolationForest — Phase 18
+- ✓ Anomaly REST API (/api/anomaly/events) and Telegram notifications — Phase 18
+- ✓ SelfTuner with adaptive dead-band/ramp/min-SoC tuning, 14-day shadow mode, bounded changes, automatic rollback — Phase 19
+
 ### Active
 
-See REQUIREMENTS.md for v1.3 milestone requirements.
-
-## Current Milestone: v1.3 Intelligent Self-Tuning
-
-**Goal:** Replace manual tuning with data-driven ML models that learn from real usage patterns — better consumption forecasts, self-optimizing control parameters, and early anomaly detection.
-
-**Target features:**
-- Better consumption forecasting with weather, day-of-week, and seasonal features
-- Self-tuning control parameters (dead-bands, ramp rates, min-SoC profiles) from actual usage data
-- Anomaly detection for hardware faults, unusual consumption, and driver behavior drift
+(No active milestone — planning next)
 
 ### Out of Scope
 
@@ -82,13 +82,13 @@ See REQUIREMENTS.md for v1.3 milestone requirements.
 
 ## Current State
 
-**v1.2 shipped 2026-03-23.** Home Assistant best practice alignment: wizard removed, MQTT discovery overhauled (3 devices, LWT, binary sensors, entity naming), 8 controllable entities (number/select/button), HA Ingress sidebar integration.
+**v1.3 shipped 2026-03-24.** Intelligent Self-Tuning: ML infrastructure (ModelStore, FeaturePipeline, executor offloading), upgraded consumption forecaster (HistGBR, weather features, MAPE tracking), anomaly detection (3 domains, tiered alerts, IsolationForest), and self-tuning control parameters (shadow mode, bounded changes, automatic rollback).
 
 **Codebase:**
-- Backend: ~11,200 LOC Python (FastAPI, pymodbus, paho-mqtt)
+- Backend: ~14,200 LOC Python (FastAPI, pymodbus, paho-mqtt, scikit-learn)
 - Frontend: ~2,600 LOC TypeScript/React (Vite, wouter)
-- Tests: ~15,200 LOC across 1,211 tests
-- 194 commits across 6 phases (16 plans, 29 tasks)
+- Tests: ~18,300 LOC across 1,509 tests
+- 4 new ML modules: model_store, feature_pipeline, anomaly_detector, self_tuner
 
 **Hardware environment:**
 - Huawei SUN2000 inverter with LUNA2000 battery (30 kWh) — Modbus TCP on port 502
@@ -101,7 +101,9 @@ See REQUIREMENTS.md for v1.3 milestone requirements.
 **Known areas needing field validation:**
 - Victron Venus OS Modbus register addresses vs. actual firmware (v3.20+)
 - Unit ID assignments need probing or manual config on real hardware
-- Ramp rate and dead-band tuning values are starting estimates
+- Self-tuner shadow mode needs 14+ days of production data before live parameter adjustment
+- Anomaly detection thresholds may need real-world calibration
+- MAPE activation gate (25% threshold, 60 days) needs production validation
 
 ## Constraints
 
@@ -127,6 +129,10 @@ See REQUIREMENTS.md for v1.3 milestone requirements.
 | Three HA devices (Huawei/Victron/System) | Matches physical hardware reality; cleaner entity grouping | ✓ Validated Phase 13 |
 | Bidirectional MQTT control via number/select/button | Enables HA automation control without custom integration | ✓ Validated Phase 14 |
 | HA Ingress with ASGI middleware | Raw ASGI handles both HTTP and WebSocket; simpler than BaseHTTPMiddleware | ✓ Validated Phase 15 |
+| HistGradientBoostingRegressor for consumption forecasting | Native NaN handling eliminates imputation complexity; early_stopping prevents overfitting | ✓ Validated Phase 17 |
+| JSON file persistence for ML state (/config/ems_models/) | No DB dependency; survives container restarts; consistent across ModelStore/MAPE/anomaly/tuning | ✓ Validated Phase 16-19 |
+| Pre-computed thresholds for per-cycle anomaly checks | No sklearn predict in 5s loop; float comparisons only; IsolationForest runs nightly | ✓ Validated Phase 18 |
+| 14-day shadow mode before live self-tuning | Prevents premature parameter changes; logs recommended vs actual for confidence building | ✓ Validated Phase 19 |
 
 ## Evolution
 
@@ -147,4 +153,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 ---
-*Last updated: 2026-03-23 after v1.3 milestone start*
+*Last updated: 2026-03-24 after v1.3 milestone completion*
