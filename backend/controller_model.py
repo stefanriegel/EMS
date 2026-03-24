@@ -187,6 +187,16 @@ class CoordinatorState:
     victron_effective_min_soc_pct: float = 15.0
     """Effective min-SoC for Victron (from profile or static fallback)."""
 
+    # --- Cross-charge detection ---
+    cross_charge_active: bool = False
+    """True when cross-charge is currently detected between batteries."""
+
+    cross_charge_waste_wh: float = 0.0
+    """Cumulative waste energy from cross-charge episodes in Wh."""
+
+    cross_charge_episode_count: int = 0
+    """Total number of cross-charge episodes detected."""
+
 
 @dataclass
 class DecisionEntry:
