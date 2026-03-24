@@ -87,7 +87,10 @@ Plans:
   2. EMS reads the DESS planned charge/discharge schedule from Venus OS MQTT broker
   3. Coordinator avoids issuing Huawei discharge during DESS Victron charge windows (and vice versa)
   4. VRM/DESS integration degrades gracefully when VRM credentials are missing or Venus MQTT is unavailable
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 24-01-PLAN.md — VRM client, DESS MQTT subscriber, data models, config dataclasses
+- [ ] 24-02-PLAN.md — Coordinator DESS guard, lifespan wiring, health API extension
 
 ## Progress
 
@@ -100,4 +103,4 @@ Phases execute in numeric order: 20 -> 21 -> 22 -> 23 -> 24
 | 21. Cross-Charge Detection and Prevention | 3/3 | Complete    | 2026-03-24 |
 | 22. Huawei Mode Manager | 2/2 | Complete    | 2026-03-24 |
 | 23. Production Commissioning | 2/2 | Complete    | 2026-03-24 |
-| 24. VRM/DESS Integration | 0/0 | Not started | - |
+| 24. VRM/DESS Integration | 0/2 | Planning complete | - |
