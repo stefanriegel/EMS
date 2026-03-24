@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 
 from backend.anomaly_detector import (
@@ -440,3 +441,131 @@ class TestBaselines:
             bl.update(v)
         assert bl.count == 3
         assert bl.mean > 0
+
+
+# ---------------------------------------------------------------------------
+# API integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestApiAnomalyEvents:
+    """Integration tests for /api/anomaly/events endpoint."""
+
+    @pytest.mark.anyio
+    async def test_api_anomaly_events(self, tmp_path: Path) -> None:
+        """GET /api/anomaly/events returns list of event dicts."""
+        from fastapi import FastAPI
+
+        from backend.api import api_router, get_anomaly_detector
+
+        app = FastAPI(title="EMS-test")
+        app.include_router(api_router)
+
+        det = _make_detector(tmp_path)
+        # Pre-load an event
+        det._events.append(
+            AnomalyEvent(
+                timestamp="2026-01-01T00:00:00+00:00",
+                anomaly_type="comm_loss",
+                severity="warning",
+                message="test event",
+                value=3.0,
+                threshold=3.0,
+                system="huawei",
+            )
+        )
+
+        app.dependency_overrides[get_anomaly_detector] = lambda: det
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.get("/api/anomaly/events")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, list)
+        assert len(data) == 1
+        assert data[0]["anomaly_type"] == "comm_loss"
+
+    @pytest.mark.anyio
+    async def test_api_anomaly_events_503(self) -> None:
+        """GET /api/anomaly/events returns 503 when detector is None."""
+        from fastapi import FastAPI
+
+        from backend.api import api_router, get_anomaly_detector
+
+        app = FastAPI(title="EMS-test")
+        app.include_router(api_router)
+        app.dependency_overrides[get_anomaly_detector] = lambda: None
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.get("/api/anomaly/events")
+
+        assert resp.status_code == 503
+
+    @pytest.mark.anyio
+    async def test_api_ml_status_battery_health(self, tmp_path: Path) -> None:
+        """GET /api/ml/status includes battery_health when anomaly detector is available."""
+        from fastapi import FastAPI
+
+        from backend.api import api_router, get_anomaly_detector, get_forecaster
+
+        app = FastAPI(title="EMS-test")
+        app.include_router(api_router)
+
+        mock_forecaster = MagicMock()
+        mock_forecaster.get_ml_status.return_value = {
+            "models": {},
+            "mape": {"current": 10.0, "history": [], "days_tracked": 1},
+            "days_of_history": 30,
+            "min_training_days": 14,
+        }
+        app.dependency_overrides[get_forecaster] = lambda: mock_forecaster
+
+        det = _make_detector(tmp_path)
+        det._charge_kwh["huawei"] = 10.0
+        det._discharge_kwh["huawei"] = 9.0
+        app.dependency_overrides[get_anomaly_detector] = lambda: det
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.get("/api/ml/status")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "battery_health" in data
+        assert "huawei" in data["battery_health"]
+        assert data["battery_health"]["huawei"]["efficiency_pct"] is not None
+
+    @pytest.mark.anyio
+    async def test_api_ml_status_without_anomaly(self) -> None:
+        """GET /api/ml/status works without anomaly detector (no battery_health key)."""
+        from fastapi import FastAPI
+
+        from backend.api import api_router, get_anomaly_detector, get_forecaster
+
+        app = FastAPI(title="EMS-test")
+        app.include_router(api_router)
+
+        mock_forecaster = MagicMock()
+        mock_forecaster.get_ml_status.return_value = {
+            "models": {},
+            "mape": {"current": 10.0, "history": [], "days_tracked": 1},
+            "days_of_history": 30,
+            "min_training_days": 14,
+        }
+        app.dependency_overrides[get_forecaster] = lambda: mock_forecaster
+        app.dependency_overrides[get_anomaly_detector] = lambda: None
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.get("/api/ml/status")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "battery_health" not in data

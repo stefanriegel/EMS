@@ -463,14 +463,45 @@ def get_forecaster(request: Request):
     return getattr(request.app.state, "consumption_forecaster", None)
 
 
+# ---------------------------------------------------------------------------
+# Anomaly detector dependency
+# ---------------------------------------------------------------------------
+
+
+def get_anomaly_detector(request: Request):
+    """FastAPI dependency that returns the running :class:`AnomalyDetector`.
+
+    Reads ``request.app.state.anomaly_detector`` via :func:`getattr` so
+    it gracefully returns ``None`` if the attribute was never set.
+    """
+    return getattr(request.app.state, "anomaly_detector", None)
+
+
 @api_router.get("/ml/status")
 async def get_ml_status(
     forecaster=Depends(get_forecaster),
+    anomaly_detector=Depends(get_anomaly_detector),
 ) -> dict[str, Any]:
-    """Return ML model status, training info, and MAPE history."""
+    """Return ML model status, training info, MAPE history, and battery health."""
     if forecaster is None:
         raise HTTPException(status_code=503, detail="ML forecaster not available")
-    return forecaster.get_ml_status()
+    result = forecaster.get_ml_status()
+    if anomaly_detector is not None:
+        result["battery_health"] = anomaly_detector.get_battery_health()
+    return result
+
+
+@api_router.get("/anomaly/events")
+async def get_anomaly_events(
+    limit: int = 100,
+    anomaly_detector=Depends(get_anomaly_detector),
+) -> list[dict[str, Any]]:
+    """Return recent anomaly events."""
+    if anomaly_detector is None:
+        raise HTTPException(
+            status_code=503, detail="Anomaly detector not available"
+        )
+    return anomaly_detector.get_events(limit=limit)
 
 
 # ---------------------------------------------------------------------------
