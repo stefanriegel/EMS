@@ -172,9 +172,12 @@ class TestRampRateTuning:
         """High spike count (>3/day avg) increases ramp rate."""
         # 1 spike per hour = 24 per day >> 3
         tuner = _tuner_with_stats(tmp_path, transitions_per_hour=4, spikes_per_hour=1)  # type: ignore[arg-type]
+        # Start below clamp max so increase is observable
+        tuner._state.current_params["ramp_rate_w"] = 1500
+        tuner._state.base_params["ramp_rate_w"] = 1500
         forecaster = _make_forecaster()
         await tuner.nightly_tune(forecaster)
-        assert tuner._state.current_params["ramp_rate_w"] > 2000
+        assert tuner._state.current_params["ramp_rate_w"] > 1500
 
     @pytest.mark.anyio
     async def test_ramp_rate_tuning_decrease(self, tmp_path: object) -> None:
