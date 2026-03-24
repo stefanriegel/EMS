@@ -1,208 +1,221 @@
 # Pitfalls Research
 
-**Domain:** ML self-tuning, anomaly detection, and forecasting for dual-battery EMS
-**Researched:** 2026-03-23
-**Confidence:** HIGH (based on existing codebase analysis, scikit-learn docs, InfluxDB docs, and published research)
+**Domain:** Dual-battery EMS production deployment, cross-charge prevention, VRM/DESS integration
+**Researched:** 2026-03-24
+**Confidence:** HIGH (based on codebase analysis, hardware documentation, community reports)
 
 ## Critical Pitfalls
 
-### Pitfall 1: Cold-Start ML Producing Worse Results Than the Seasonal Fallback
+### Pitfall 1: Huawei Modbus Single-Connection Exclusion
 
 **What goes wrong:**
-The existing `ConsumptionForecaster` has a 14-day minimum training threshold, but the v1.3 self-tuning features (dead-band optimization, ramp rate tuning, min-SoC profile learning) need much more data to produce safe recommendations. With 14-30 days of history, an ML model can learn spurious correlations (e.g., a two-week cold spell makes it think consumption is always high) and produce parameter suggestions that are objectively worse than the current hand-tuned defaults. The system ships defaults that already work -- `hysteresis_w=200`, `debounce_cycles=2`, `loop_interval_s=5.0` -- and an undertrained model could recommend values that cause oscillation or missed discharge opportunities.
+The Huawei SUN2000 Smart Dongle only supports ONE concurrent Modbus TCP connection. If the EMS opens a persistent connection, the existing `wlcrs/huawei_solar` Home Assistant integration loses its connection and goes unavailable. Conversely, if HA is connected, the EMS gets timeouts and broken pipe errors. This is not a software bug -- the dongle firmware rejects the second TCP client.
 
 **Why it happens:**
-Developers treat "model trained" as "model ready for production." GradientBoostingRegressor will happily fit 14 days of data and report low training RMSE, but the model has never seen a season change, a holiday week, or a heat pump defrost cycle. The existing codebase already shows this risk: `_BASE_LOAD_W = 300.0` is a constant placeholder, and the neutral temperature fallback (`neutral_temp = 10.0`) means the ML path ignores actual weather conditions even when trained.
+The Modbus TCP proxy on the Smart Dongle is single-server only. Most developers assume TCP allows multiple clients (it does at the socket level), but the dongle's firmware handles one transaction stream at a time and drops competing connections.
 
 **How to avoid:**
-- Define explicit graduation criteria: a self-tuned parameter only replaces the default when the model has seen at least 60 days of data spanning at least 2 distinct outdoor temperature regimes (warm/cold).
-- Implement a shadow mode: ML-recommended parameters are logged alongside the actual parameters being used. Compare outcomes for at least 14 days before activating.
-- Cap parameter adjustment range: a self-tuned hysteresis value must stay within [100W, 500W], ramp rates within [50W/s, 500W/s]. Never allow the ML to recommend values outside physically safe bounds.
-- Keep the seasonal fallback as the permanent backstop. The `fallback_used=True` pattern in the existing `ConsumptionForecast` is correct -- extend it to all self-tuned parameters.
+1. Use a Modbus Proxy (e.g., the HACS Modbus Proxy add-on) to multiplex. Both HA and EMS connect to the proxy; it serializes access to the dongle.
+2. Increase timeouts to 10+ seconds when going through a proxy -- latency doubles.
+3. Alternatively, disable the HA integration entirely and let the EMS be the sole Modbus client, publishing entities via MQTT discovery instead (the EMS already does this with 17 entities).
+4. Never hold a persistent connection open. Connect, read/write, disconnect -- or at minimum use short poll intervals with connection pooling.
 
 **Warning signs:**
-- Model training succeeds but `days_of_history < 60`.
-- Self-tuned parameters change by more than 30% from defaults in the first month.
-- Forecast error percentage (`error_pct` from `get_forecast_comparison()`) exceeds 40% consistently.
+- `ConnectionException` or `BrokenPipeError` appearing sporadically in logs
+- Huawei entities in HA going `unavailable` when EMS starts
+- Zero values returned from Modbus reads (proxy returning stale/corrupt data)
 
 **Phase to address:**
-First phase of self-tuning implementation. Shadow mode must be built before any parameter is auto-applied.
+Phase 1 (Hardware Validation) -- must decide the connection strategy before any real hardware work. This is a blocking architectural decision.
 
 ---
 
-### Pitfall 2: Self-Tuning Destabilizes the 5-Second Control Loop
+### Pitfall 2: Huawei "Takeover" Is Not True Setpoint Control
 
 **What goes wrong:**
-The Coordinator runs a hard 5-second control loop (`_cfg.loop_interval_s = 5.0`) with carefully tuned anti-oscillation: 200W hysteresis dead-band, 2-cycle debounce, per-system ramp limiting. If self-tuning adjusts these parameters during operation, it can create resonance between the two independent battery controllers. For example: reducing Huawei dead-band to 100W while Victron stays at 150W can cause the two systems to alternate between CHARGING and DISCHARGING on successive cycles when load hovers near the threshold.
+The current EMS controls Huawei via `write_max_discharge_power` and `write_max_charge_power` -- these are LIMITS, not setpoints. The Huawei internal EMS still decides what to do within those limits. Setting `write_max_discharge_power(2000)` does not mean "discharge at 2000W" -- it means "discharge at whatever the internal EMS decides, up to 2000W." This leads to:
+- The battery not discharging when expected (internal EMS sees no load)
+- Unpredictable charge rates during grid-charge windows
+- Inability to hold battery at a specific power level
+
+The current `HuaweiController.execute()` maps `PRIMARY_DISCHARGE` to `write_max_discharge_power(abs(watts))`, which means the coordinator thinks it allocated 2000W to Huawei, but Huawei might deliver 0W, 500W, or 2000W depending on its own internal logic.
 
 **Why it happens:**
-The dual-battery architecture has coupled dynamics even though the controllers are logically independent -- they share the same grid meter reading. A parameter change to one system's control response affects the other system's behavior through the shared P_target calculation. Classical control theory calls this "unmodeled coupling," and ML optimizers that treat each parameter independently will miss it.
+Huawei's `MAXIMISE_SELF_CONSUMPTION` mode (register 47086 = 2) runs its own PV-first algorithm internally. The Modbus registers exposed are configuration limits, not real-time setpoints like Victron's Hub4 AC power setpoint. There is no Huawei equivalent of Victron's Mode 3 external control.
 
 **How to avoid:**
-- Never adjust control parameters mid-cycle or mid-hour. Apply parameter updates only at well-defined transition points (e.g., start of a new hour, after a HOLD period).
-- Test parameter combinations in simulation before applying. Build a lightweight replay simulator that feeds historical grid meter data through the Coordinator with proposed parameters, counting oscillation events (role transitions per hour > threshold = reject).
-- Enforce monotonic constraints: if the ML suggests reducing hysteresis for Huawei, it must also verify that the Victron hysteresis provides sufficient damping. The combined dead-band must never drop below 150W total.
-- Add an oscillation detector to the coordinator: if role transitions exceed 6 per hour for either system, revert to default parameters and log a CRITICAL alert.
+1. Accept this limitation and design around it: use `TOU` mode (register 47086 = 5) with custom charge/discharge time windows to force specific behaviors.
+2. Track the delta between commanded and actual power -- if Huawei consistently under-delivers, allocate the gap to Victron.
+3. The coordinator's headroom-weighted allocation must treat Huawei's allocation as a ceiling, not a commitment. Victron (with true setpoint control) should be the "slack absorber."
+4. Consider a hybrid operating model: Huawei runs its own internal EMS for self-consumption, and the custom EMS only takes over for grid-charge windows and export management via working mode switches.
 
 **Warning signs:**
-- Role transition count per hour increasing after parameter change.
-- Both batteries alternating between CHARGING and DISCHARGING within a 30-second window.
-- Grid power oscillating (import/export flip-flop visible in InfluxDB metrics).
-- `DecisionEntry` ring buffer showing rapid state changes with contradictory reasoning.
+- Coordinator logs show Huawei allocated X watts but power meter reads 0 or much less
+- Grid import during periods where the coordinator thought Huawei was discharging
+- Battery SoC not moving despite active discharge command
 
 **Phase to address:**
-Must be addressed in the self-tuning phase. The oscillation detector should be built first, before any parameter adjustment capability.
+Phase 1 (Hardware Validation) -- must probe real hardware to understand actual control granularity before building coordinator logic around assumptions.
 
 ---
 
-### Pitfall 3: Blocking the Control Loop with ML Inference
+### Pitfall 3: Cross-Charging Between AC-Coupled Batteries
 
 **What goes wrong:**
-GradientBoostingRegressor `.predict()` on 100 trees with 5 features takes 0.5-2ms on amd64 but 5-15ms on aarch64 (Raspberry Pi 4 class hardware common in Home Assistant). Training `.fit()` on 90 days of hourly data (2160 samples, 100 trees) takes 2-8 seconds on amd64 and 15-60 seconds on aarch64. If training or batch prediction runs inside the coordinator's `_run_cycle()` or blocks the event loop, the 5-second control interval is violated. A missed control cycle means stale setpoints remain active, which is a safety issue for battery systems.
+When Victron discharges (exports AC) and Huawei is in charge mode, the Huawei system can absorb Victron's AC output -- effectively shuffling energy from one battery to the other through two DC-AC-DC conversions at ~85% round-trip efficiency. The system loses 15% of the energy for zero net benefit. In the worst case, both batteries cross-charge each other in alternating cycles, burning energy continuously.
 
 **Why it happens:**
-The existing code imports sklearn lazily (`from sklearn.ensemble import GradientBoostingRegressor` inside `train()`) which is good. But `train()` is an `async def` that calls synchronous sklearn `.fit()` -- this blocks the asyncio event loop for the entire training duration. The current architecture runs training in `_nightly_scheduler_loop` which happens at 04:00, far from peak demand. But v1.3's "self-tuning" implies more frequent model updates, and anomaly detection implies per-cycle inference.
+Both battery systems share the same AC bus (household wiring). Neither system knows about the other -- they each see grid power flow and react independently. The Huawei internal EMS might charge from "PV" that is actually Victron discharge power, because from its perspective, power flowing in the AC bus looks identical regardless of source.
 
 **How to avoid:**
-- Run all sklearn `.fit()` calls in `asyncio.get_event_loop().run_in_executor(None, ...)` to offload to a thread pool. The GIL will still block CPU-bound work, but it won't block the event loop's I/O operations (driver polling, WebSocket updates).
-- For per-cycle anomaly detection, pre-compute thresholds (e.g., z-score bounds, IQR ranges) outside the control loop and use simple arithmetic checks (< 0.1ms) inside the loop. Never call `.predict()` inside `_run_cycle()`.
-- Cap training frequency: retrain at most once per 24 hours (the existing `retrain_if_stale(stale_hours=24)` pattern is correct). Self-tuning parameter updates at most once per hour.
-- Set `OMP_NUM_THREADS=2` in the Dockerfile for aarch64 builds. OpenMP default thread detection in containers is broken -- it detects all host CPUs, causing oversubscription and severe slowdown on Raspberry Pi.
+1. Never simultaneously discharge one battery while the other charges unless there is a verified household load consuming the discharged power.
+2. The coordinator must use a cross-charge detection algorithm: if `huawei_charging_w > 0` AND `victron_discharging_w > 0` (or vice versa), and `grid_power_w` is near zero (no net import/export), cross-charging is occurring.
+3. Detection threshold: `min(abs(charge_power), abs(discharge_power)) > 100W` while `abs(grid_power) < 200W` for 2+ consecutive cycles = cross-charge confirmed.
+4. Response: immediately set the charging battery to HOLDING. The discharging battery should serve the load alone.
+5. Log cross-charge events with energy-loss calculation for monitoring.
 
 **Warning signs:**
-- Control loop cycle time exceeding 5 seconds (log the elapsed time of each `_run_cycle()`).
-- asyncio event loop blocked warnings in Python logs.
-- Driver readings becoming stale (`stale_threshold_s=30.0` breached) during training windows.
+- Both batteries active (one charging, one discharging) while grid power is near zero
+- Pool SoC flat or declining despite both batteries showing non-zero power
+- Anomaly detector efficiency domain should flag round-trip efficiency < 90%
 
 **Phase to address:**
-Anomaly detection phase (per-cycle checks) and self-tuning phase (training offloading). The `run_in_executor` pattern should be implemented as the very first task.
+Phase 2 or 3 (Cross-Charge Prevention) -- this is the core feature of the milestone. Build detection first, prevention second, and monitoring third.
 
 ---
 
-### Pitfall 4: Anomaly Detection False Positives Triggering Unnecessary Alerts and Mode Changes
+### Pitfall 4: Victron DESS and Custom EMS Fighting for Control
 
 **What goes wrong:**
-Anomaly detection on energy consumption data has notoriously high false positive rates because "normal" household consumption is highly variable. A heat pump defrost cycle, an oven preheating, or an EV starting to charge all look like anomalies to a model trained on quiet periods. If anomaly detection triggers Telegram alerts or -- worse -- forces the coordinator into HOLD mode, the user gets alert fatigue and the system becomes less effective than without ML.
+If DESS (Dynamic ESS) is active on VRM, it writes its own schedule to `com.victronenergy.settings /Settings/DynamicESS/Schedule` on the Venus GX device. This schedule contains desired SoC, grid feed-in permission, and timing. Simultaneously, the custom EMS writes Hub4 AC power setpoints via Modbus. The two systems fight -- DESS changes the operating mode or SoC target, the EMS writes a contradicting setpoint, the Victron oscillates between passthru and discharge mode every few seconds.
 
-Published research shows that models trained on clean data overfit to small variations, with 40% data subsets actually producing fewer false positives than full-dataset models. Static thresholds produce 20% more false positives than adaptive thresholds.
+Community reports confirm: "ESS control loop unstable, constant mode switching (external control / passthru)" is a known failure mode when two controllers compete.
 
 **Why it happens:**
-Energy consumption is quasi-periodic with high variance within cycles. A household's consumption at 18:00 on a Tuesday might range from 1.5 kW to 8 kW depending on cooking, laundry, and heat pump behavior. Simple z-score or IQR-based anomaly detection will flag the high end of normal variation as anomalous.
+DESS runs on the VRM cloud and pushes schedules to the GX device via VRM API. The GX device's ESS implementation applies those schedules. Meanwhile, Modbus Mode 3 setpoints also arrive. There is no arbitration -- whoever writes last wins, until the other writes again.
 
 **How to avoid:**
-- Use context-aware baselines: anomaly thresholds must be hour-of-day and day-of-week specific. A 6 kW draw at 18:00 is normal; at 03:00 it warrants investigation.
-- Implement a tiered alert system: (1) INFO log only for mild anomalies (1.5-2x expected), (2) Telegram notification for sustained anomalies (> 30 minutes above 2x expected), (3) coordinator action only for hardware-level anomalies (driver communication failure, SoC reading impossible values).
-- Never let anomaly detection change battery control parameters or force mode changes. Anomaly detection is observability, not control.
-- Require confirmation period: an anomaly must persist for N consecutive cycles before generating any alert. A single-cycle spike is noise.
-- Track false positive rate: log every alert, and when the user dismisses or ignores it, count that as a false positive. If FP rate exceeds 30%, widen thresholds automatically.
+1. **Decide ownership clearly.** Either DESS controls Victron OR the custom EMS controls Victron. Not both.
+2. If using DESS: set the custom EMS to READ-ONLY for Victron (poll state, do not write setpoints). Control only Huawei.
+3. If using custom EMS: fully disable DESS by setting `/Settings/DynamicEss/Mode` to `0` on the Venus GX. Verify it stays disabled after VRM firmware updates.
+4. If a hybrid approach is wanted (DESS for Victron, custom EMS for Huawei): read DESS schedule via VRM API to inform Huawei coordination, but never write Victron setpoints.
 
 **Warning signs:**
-- More than 3 Telegram alerts per day from anomaly detection.
-- User stops responding to anomaly alerts (alert fatigue).
-- Anomaly rate exceeding 5% of all observations (indicates threshold is too tight).
+- Victron ESS mode flipping between 2 and 3 in logs
+- Setpoints being overwritten within seconds of writing
+- Battery oscillating between charge/discharge rapidly (sub-minute cycles)
+- Venus GX VRM dashboard showing "External Control" and "Optimized" alternating
 
 **Phase to address:**
-Anomaly detection phase. The tiered system and confirmation periods must be in the initial design, not added after complaints.
+Phase 1 (Operating Mode Investigation) -- this must be settled before any Victron control code runs on real hardware.
 
 ---
 
-### Pitfall 5: Feature Engineering Leaking Future Data Into Training
+### Pitfall 5: Victron Hub4 60-Second Setpoint Watchdog Timeout
 
 **What goes wrong:**
-The existing `ConsumptionForecaster` builds features from `[outdoor_temp, ewm_temp_3d, day_of_week, hour_of_day, month]`. When predicting future hours, it uses `neutral_temp = 10.0` as a placeholder because actual future temperatures are unknown. This creates a train/predict distribution mismatch: the model trains on real temperature data but predicts with a constant. If v1.3 adds more features (solar production, grid price, EV charging status), the risk of accidentally including "future" features in training grows. For example, using tomorrow's actual solar production to train a model that predicts tonight's charge target is a classic data leakage bug.
+Victron ESS Mode 3 requires the AcPowerSetpoint register to be written at least once every 60 seconds. If the EMS misses a write (crash, network timeout, slow cycle), the Victron reverts to its internal logic -- which may mean full discharge, full charge, or passthru depending on configuration. With a 5-second control loop, this seems safe, but:
+- 12 consecutive failures (12 x 5s = 60s) triggers the watchdog
+- Network hiccups during HA add-on restarts or Docker container recreation
+- The EMS safe-state logic waits 3 failures before zeroing (15s), but the watchdog is at 60s -- the gap between 15s and 60s is a gray zone where stale setpoints persist
 
 **Why it happens:**
-In time-series ML, the boundary between "known at prediction time" and "only known after the fact" is subtle. Features like "yesterday's consumption" are fine. Features like "today's total consumption" are leakage if you're predicting the morning and the feature includes evening data. The existing codebase already has this issue with the temperature placeholder -- the model's training distribution doesn't match its inference distribution.
+The Victron watchdog is a safety feature. It prevents a crashed external controller from leaving the battery in an unsafe state. But it also means any temporary disruption causes uncontrolled behavior for up to 60 seconds.
 
 **How to avoid:**
-- Categorize every feature as KNOWN_AT_PREDICTION_TIME or RETROSPECTIVE. Only KNOWN_AT_PREDICTION_TIME features may be used during inference. RETROSPECTIVE features are fine for training evaluation but must be replaced with forecasts or dropped during prediction.
-- For weather features, integrate the existing `weather_client.OpenMeteoClient` forecast into the prediction pipeline instead of using `neutral_temp = 10.0`. The solar forecast infrastructure already exists.
-- Use time-series cross-validation (expanding window), not random train/test split. The existing code trains on all available data without validation -- add a rolling validation window to detect leakage.
-- Build a test that compares model accuracy on training data vs. a held-out future period. If training accuracy is dramatically better than held-out accuracy, leakage is likely.
+1. The existing 3-failure safe-state (15s) is correct -- it writes zero setpoints well before the 60s watchdog expires. Keep this.
+2. Add a "last successful write" timestamp. If `now - last_write > 45s`, escalate to emergency: write zero setpoints immediately, regardless of failure count.
+3. On EMS startup, immediately write zero setpoints before starting the control loop -- don't assume the previous session left clean state.
+4. Log the 60s watchdog explicitly: if the EMS cannot write for 50+ seconds, send a Telegram alert.
 
 **Warning signs:**
-- Training RMSE is suspiciously low (e.g., < 50W for heat pump prediction).
-- Model accuracy degrades sharply when deployed vs. offline evaluation.
-- Prediction accuracy is much worse at hour boundaries (morning/evening transitions) than mid-period.
+- `consecutive_failures >= 9` in VictronController (approaching 60s watchdog)
+- Victron power behavior changing without EMS command
+- Grid power spikes coinciding with EMS restart timestamps
 
 **Phase to address:**
-Improved forecasting phase. Feature categorization must happen before any new features are added to the model.
+Phase 2 or 3 (Production Hardening) -- the current safe-state logic is close but needs the secondary 45s timeout guard.
 
 ---
 
-### Pitfall 6: Model Drift From Seasonal Changes and New Appliances
+### Pitfall 6: Working Mode Switches Causing Transient Power Spikes
 
 **What goes wrong:**
-A model trained during winter (high heat pump consumption, low solar) performs poorly in spring (heat pump off, high solar). A model trained before an EV purchase doesn't understand the new 7 kW charging patterns. The existing `retrain_if_stale(stale_hours=24)` retrains daily, but the 90-day training window means winter patterns dominate even in March, and vice versa. The model slowly adapts but lags reality by weeks.
+Switching Huawei between working modes (e.g., `MAXIMISE_SELF_CONSUMPTION` to `TOU`) via register 47086 causes a transient period where the battery may briefly discharge or charge at maximum rate before settling into the new mode. The FusionSolar TOU configuration defines charge/discharge windows -- if the current time falls into an "active charge" window during the mode switch, the battery immediately starts charging at full rate.
 
 **Why it happens:**
-GradientBoostingRegressor has no built-in concept of data recency. All 2160 training samples (90 days * 24 hours) are weighted equally. A one-week heatwave 80 days ago has the same influence as yesterday's data. The existing EWM smoothing (`_compute_ewm`) helps the temperature feature but doesn't address the target variable weighting.
+The Huawei firmware applies the new working mode atomically but the TOU schedule lookup happens after the mode switch. During the transition, the internal state machine may pass through intermediate states. If TOU windows are pre-configured in FusionSolar and the mode switch lands during an active window, the battery acts on the pre-configured schedule immediately.
 
 **How to avoid:**
-- Implement sample weighting: recent data gets higher weight. Use sklearn's `sample_weight` parameter in `.fit()`, with exponential decay (half-life of 30 days). This is a one-line change but dramatically improves seasonal adaptation.
-- Track model error over time (the existing `get_forecast_comparison()` method). If error trends upward for 5 consecutive days, trigger immediate retrain with a shorter lookback window (30 days instead of 90).
-- Detect distribution shift: compare the mean and variance of predictions over the last 7 days to the training data distribution. A significant shift (> 2 sigma) triggers a retrain alert.
-- For new appliance detection: monitor total daily consumption trend. A step change of > 20% sustained for 7 days should trigger a notification suggesting the user confirm a new appliance, and the model retrains with a shorter window.
+1. Set TOU time windows via Modbus before switching the working mode -- never switch mode blindly assuming neutral defaults.
+2. Write `write_max_discharge_power(0)` and `write_max_charge_power(0)` before switching modes to clamp any transient.
+3. After switching, wait 2-3 seconds and re-read battery power to confirm the new mode is stable before resuming normal control.
+4. Never switch working modes during periods of high PV production -- the transient could cause grid export spikes.
 
 **Warning signs:**
-- `error_pct` from `get_forecast_comparison()` consistently above 30% for 5+ days.
-- Predicted daily consumption diverging from actual by more than 5 kWh.
-- Model always predicting high consumption during summer (winter training dominance).
+- Brief power spikes (>3kW) appearing in InfluxDB exactly when mode switches are logged
+- Grid export/import spikes at mode transition timestamps
+- Battery SoC moving faster than expected during the first 10s after a mode switch
 
 **Phase to address:**
-Self-tuning phase, specifically the model lifecycle management component.
+Phase 1 (Hardware Validation) -- test mode switching behavior on real hardware to characterize transient duration and magnitude.
 
 ---
 
-### Pitfall 7: aarch64 Build and Runtime Failures for scikit-learn + numpy
+### Pitfall 7: Simulated-to-Real Gap -- Code That Passes Tests But Fails on Hardware
 
 **What goes wrong:**
-The Dockerfile already handles this partially (`apk add gfortran openblas-dev`) but scikit-learn on Alpine aarch64 is fragile. The `scikit-learn>=1.4,<2` constraint means pip must compile from source on aarch64 Alpine (no manylinux wheels for musl). Build times exceed 15 minutes on Raspberry Pi 4. At runtime, OpenMP thread detection inside Docker containers detects all host CPUs instead of the container's cgroup limit, causing thread oversubscription that makes GBR training 3-10x slower than expected.
+The EMS has ~18,300 LOC of tests across 1,509 test cases, but all use mocked drivers. The real hardware introduces timing, latency, firmware quirks, and electrical behavior that mocks cannot reproduce:
+- Modbus TCP over WiFi (Smart Dongle) has 50-200ms latency vs. instant mock responses
+- Huawei returns `None` for registers that should have values (firmware version differences)
+- Victron register scaling factors differ between Venus OS versions
+- Real power readings oscillate 5-10% around setpoints due to inverter PID loops
+- pymodbus connection recovery behaves differently under real network conditions
 
 **Why it happens:**
-Home Assistant Add-on base images use Alpine Linux (musl libc), not Debian/Ubuntu (glibc). PyPI wheels for scikit-learn are built for manylinux (glibc), so Alpine must compile from source. The HA Add-on builder uses QEMU for cross-architecture builds (amd64 host building aarch64 image), which makes compilation even slower. OpenMP's CPU detection reads `/proc/cpuinfo` (host CPUs) instead of the cgroup CPU quota.
+This is the classic simulation-to-production gap. Every mock has implicit assumptions about response format, timing, and error modes. 72% of BESS incidents occur during commissioning or the first two operational years -- the integration and deployment phase is where failures concentrate.
 
 **How to avoid:**
-- Set `OMP_NUM_THREADS=2` and `OPENBLAS_NUM_THREADS=2` in the Dockerfile or `run.sh`. This is the single most impactful fix for runtime performance on constrained hardware.
-- Consider switching to `HistGradientBoostingRegressor` which is faster and uses less memory than `GradientBoostingRegressor` (it's the recommended replacement in scikit-learn docs since 1.0).
-- Pin numpy to a version with pre-built Alpine aarch64 wheels if available, or ensure openblas-dev is installed before numpy compilation.
-- Add a build cache step in CI: build the Python dependencies in a separate Docker layer so they're cached between code changes (the current Dockerfile structure already does this correctly with `COPY pyproject.toml .` before `COPY backend/`).
-- Set a training timeout: if `.fit()` takes longer than 120 seconds, abort and keep the previous model. Log a WARNING so the user knows training was skipped.
+1. First production deployment should be READ-ONLY: poll both batteries, log all data, write zero setpoints. Run for 48+ hours to validate data formats.
+2. Second phase: enable writes on ONE battery system only (Victron, because it has true setpoint control and a hardware watchdog). Monitor for 48+ hours.
+3. Third phase: enable Huawei writes. Monitor for 48+ hours.
+4. Build a "hardware validation" mode that compares live register values against expected ranges and flags anomalies.
+5. Every driver method should have a `dry_run` flag that logs the intended write without executing it.
 
 **Warning signs:**
-- Docker build taking > 20 minutes on aarch64.
-- `import sklearn` taking > 5 seconds at startup.
-- Training taking > 60 seconds for 2160 samples on target hardware.
-- High CPU usage (> 100% of allocated cores) during training.
+- Any `KeyError`, `TypeError`, or `None` appearing in driver read paths during the first live run
+- Actual SoC values outside 0-100% range (firmware quirks)
+- Register read returning `0` for all values (wrong slave ID or unit ID)
 
 **Phase to address:**
-First phase touching ML code. The `OMP_NUM_THREADS` fix and `HistGradientBoostingRegressor` switch should happen before any new ML features are added.
+Phase 1 (Hardware Validation) -- the entire first phase should be about establishing ground truth from real hardware.
 
 ---
 
-### Pitfall 8: Model Versioning and Rollback Failure
+### Pitfall 8: VRM API Rate Limiting and Stale Data
 
 **What goes wrong:**
-scikit-learn models serialized with `pickle` or `joblib` are version-coupled: a model saved with sklearn 1.4 may not load correctly on sklearn 1.5. The existing codebase doesn't persist models at all (retrains from scratch each startup), which avoids this issue but wastes 15-60 seconds on every restart. If v1.3 adds model persistence for faster cold starts, the system must handle sklearn version upgrades gracefully. A failed model load on startup could crash the entire EMS.
+The VRM API has undocumented rate limits. Polling DESS schedules too frequently (every 5s to match the control loop) will result in HTTP 429 responses or temporary IP blocks. Additionally, DESS schedule updates are not real-time -- next-day prices may not be available until late afternoon, and the schedule VRM returns via API may lag behind what the GX device actually uses.
 
-More importantly, if a newly trained model performs worse than the previous one (e.g., after a data quality issue), there's no rollback mechanism. The old model is simply overwritten.
+Community reports confirm: "VRM-DESS API not updating with next day price and schedules" is a recurring issue. Reading schedules via VRM API may return different values than what the GX device received directly.
 
 **Why it happens:**
-scikit-learn explicitly states that loading models across versions is "entirely unsupported and inadvisable." The Add-on auto-updates, and a sklearn minor version bump could silently break persisted models.
+VRM is a cloud service designed for monitoring dashboards, not real-time control loops. The API caches aggressively, and schedule updates propagate on their own timeline. The local GX device receives updates via MQTT from VRM, which may differ from what the HTTP API returns.
 
 **How to avoid:**
-- Don't persist sklearn models to disk. The current approach (retrain from scratch at startup + nightly) is actually safer for an HA Add-on environment. Training 2160 samples takes < 60s even on aarch64 -- acceptable for a startup-time cost.
-- If persistence is needed: store model metadata (sklearn version, training date, sample count, validation RMSE) alongside the model. On load, verify the sklearn version matches. If it doesn't, discard the model and retrain.
-- Keep the last-known-good model: before overwriting, copy the current model file. If the new model's validation RMSE is worse than the previous model's by more than 20%, keep the old model and log a WARNING.
-- Use `skops.io` instead of pickle for serialization if persistence is added -- it's more secure and provides version compatibility metadata.
+1. Poll VRM API at most once every 5-15 minutes for DESS schedule reads. Cache locally.
+2. Never use VRM API data for real-time control decisions -- only for schedule awareness and coordination.
+3. Implement exponential backoff on 429 responses. Start at 60s, max at 15 minutes.
+4. If VRM API is unavailable, fall back to local-only operation (the "no cloud dependencies" constraint already demands this).
+5. Store a VRM API token with proper refresh logic -- tokens expire and the refresh flow has its own edge cases.
 
 **Warning signs:**
-- Model load failure after Add-on update.
-- Validation RMSE of new model is worse than the previous model.
-- Model age exceeding 7 days (retrain loop may be silently failing).
+- HTTP 429 responses in VRM client logs
+- DESS schedule showing yesterday's data (stale cache)
+- Schedule mismatch between VRM API response and actual Victron behavior
 
 **Phase to address:**
-Model lifecycle management component of the self-tuning phase.
+Phase 2 (VRM Integration) -- design the client with aggressive caching and graceful degradation from the start.
 
 ---
 
@@ -210,98 +223,99 @@ Model lifecycle management component of the self-tuning phase.
 
 | Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
 |----------|-------------------|----------------|-----------------|
-| Training on all data without validation split | Simpler code, uses all available data | Can't detect overfitting or leakage | Only during cold-start (< 30 days of data) |
-| Using `neutral_temp = 10.0` for prediction | Avoids weather forecast dependency | Predictions ignore the primary consumption driver (heating) | Never acceptable in v1.3 -- integrate Open-Meteo forecast |
-| `_BASE_LOAD_W = 300.0` constant | Placeholder until real entity available | Underestimates base load for many households | Only until a consumption entity is configured |
-| Retraining from scratch on every startup | Avoids model persistence version coupling | 15-60s startup delay on aarch64 | Acceptable given the safety tradeoff -- persistence is riskier |
-| Single GBR model per load type | Simple architecture | No ensemble diversity, single point of failure | Acceptable for v1.3 scope; ensemble can be added in v2 |
-| In-process ML training (no separate worker) | No infrastructure complexity | Blocks event loop during training | Acceptable with `run_in_executor()` -- only unacceptable if training runs in the async path without executor |
+| Treating Huawei discharge limit as a setpoint | Simpler coordinator logic | Coordinator overestimates Huawei contribution, Victron under-compensates | Never in production -- must track actual vs commanded |
+| Leaving DESS partially enabled | Less config changes | DESS and EMS fight intermittently, hard to reproduce | Never -- must be fully enabled OR fully disabled |
+| Skipping read-only validation phase | Ship faster | First write command may have wrong sign, wrong scale, wrong register | Never -- real money (battery degradation) at stake |
+| Hardcoding Victron unit IDs (100, 227) | Works on this specific Venus GX | Fails on different Venus GX firmware or device topology | MVP only -- must be configurable (already in add-on options) |
+| Not logging cross-charge events | Less code | Cannot quantify energy losses, cannot prove prevention works | Never -- cross-charge detection is the milestone's core deliverable |
 
 ## Integration Gotchas
 
 | Integration | Common Mistake | Correct Approach |
 |-------------|----------------|------------------|
-| HA SQLite statistics | Querying > 90 days of hourly data causes slow reads on SD card | Limit to 90 days; use `LIMIT` clause; cache results in memory |
-| InfluxDB Flux queries for training data | Using `filter()` after `map()` prevents pushdown optimization | Always put `filter()`, `range()`, and `keep()` before any `map()` or `reduce()` operations |
-| Open-Meteo weather forecast | Treating forecast as ground truth for feature engineering | Use forecast only for inference features; train on actual weather from HA statistics |
-| EVCC state for EV charging detection | Polling EVCC HTTP API inside the control loop | Use the existing `EvccMqttDriver` -- it pushes state updates without polling overhead |
-| Telegram notifications for anomalies | Sending one message per anomaly detection cycle | Batch anomalies: one summary per hour maximum, with deduplication |
+| Huawei Modbus TCP | Opening a persistent connection alongside HA integration | Use Modbus Proxy or be the sole client; disable HA integration and publish via MQTT discovery |
+| Victron Modbus TCP | Assuming unit ID 227 for VE.Bus | Probe or configure -- unit IDs vary by Venus GX model and connected device count |
+| VRM API | Polling every control cycle (5s) | Poll every 5-15 minutes; cache locally; never block control loop on API response |
+| DESS Schedule | Reading via VRM API and assuming it matches GX state | Read from GX device directly via Modbus/MQTT if possible; VRM API may be stale |
+| EVCC + EMS + Huawei | Three systems sharing one Modbus connection | Modbus Proxy is mandatory when EVCC also reads Huawei; configure timeouts >= 10s |
+| Huawei working mode | Switching mode without clamping power first | Always write zero charge/discharge limits before mode switch; wait for confirmation |
 
 ## Performance Traps
 
 | Trap | Symptoms | Prevention | When It Breaks |
 |------|----------|------------|----------------|
-| sklearn `.fit()` in async without executor | Event loop freezes for 2-60s, missed control cycles, stale WebSocket | Always use `run_in_executor(None, model.fit, X, y)` | Immediately on aarch64; after ~5000 samples on amd64 |
-| InfluxDB query for 90 days of 5s-interval metrics | Query takes 30s+, returns millions of rows | Pre-aggregate to hourly in Flux query using `aggregateWindow(every: 1h, fn: mean)` | At ~500K data points (about 30 days of 5s data) |
-| OpenMP thread oversubscription in container | Training takes 10x longer than expected, high CPU steal time | Set `OMP_NUM_THREADS=2` and `OPENBLAS_NUM_THREADS=2` | Immediately on any containerized aarch64 deployment |
-| Per-cycle anomaly detection with sklearn predict | Each `.predict()` call adds 5-15ms on aarch64 | Pre-compute thresholds; use simple arithmetic in the loop | At scale of 5s cycles on aarch64 (need < 1ms budget for anomaly check) |
-| Growing in-memory training data cache | Memory usage grows unbounded as history accumulates | Cap in-memory cache at 90 days; drop oldest data on each retrain | At ~6 months of operation on 1GB RAM devices |
+| Synchronous VRM API calls in control loop | 5s loop stretches to 8-10s; setpoints lag | Move VRM polling to separate async task with its own interval | Immediately on first VRM timeout |
+| Huawei Modbus via WiFi dongle under load | Modbus timeouts increase with household WiFi congestion | Use wired Ethernet to Smart Dongle if possible; increase timeout to 10s | Evening peak hours when streaming/gaming competes |
+| Cross-charge detection with tight thresholds | False positives during normal PV transitions (clouds) | Use 2-3 cycle debounce (10-15s) and minimum power threshold (100W) | PV ramp events in partly cloudy conditions |
+| Writing all Victron phase setpoints sequentially | L1 gets new setpoint 200ms before L3; brief phase imbalance | Write all 3 phases in rapid succession; consider batch register write | Always present but usually negligible |
 
 ## Security Mistakes
 
 | Mistake | Risk | Prevention |
 |---------|------|------------|
-| Persisting ML models with pickle | Arbitrary code execution on model load (pickle deserialization vulnerability) | Use `skops.io` or retrain from scratch (current approach is safe) |
-| Exposing model parameters via REST API without auth | Attacker could observe consumption patterns (occupancy inference) | Ensure `/api/ml/*` endpoints are behind the existing JWT auth middleware |
-| Logging raw consumption data at DEBUG level | Energy consumption patterns leak household activity schedule | Log aggregates only; never log per-minute consumption in production |
+| VRM API token in plaintext config | Token grants full control of Victron installation via VRM portal | Store in HA secrets or environment variable; never commit to git |
+| Modbus TCP with no authentication | Anyone on LAN can write setpoints to either battery system | Accept this (Modbus has no auth); restrict via network segmentation or VLAN |
+| Unclamped setpoint values | Writing 30000W to a 5000W inverter could trigger firmware protection faults | Clamp all write values to hardware maximums before sending; read max values from registers |
+| No write confirmation | Writing a setpoint and assuming it took effect | Read back the register after writing; compare expected vs actual |
 
 ## UX Pitfalls
 
 | Pitfall | User Impact | Better Approach |
 |---------|-------------|-----------------|
-| Showing ML confidence without context | "72% confidence" means nothing to a homeowner | Show "Based on 45 days of data (learning, expect improvement)" |
-| Anomaly alerts with technical details | "Z-score 3.2 on base_load at 03:15 UTC" is useless | "Unusual power draw detected at 4:15 AM (3.2 kW vs typical 0.5 kW) -- check for appliances left on" |
-| Showing self-tuned parameter changes | "hysteresis_w changed from 200 to 187" confuses users | Don't show parameter changes at all. Show outcomes: "System response optimized -- 12% fewer mode switches this week" |
-| Requiring user action for model management | "Model retrained -- approve new parameters?" blocks automation | Fully automated with guardrails. User sees outcomes, not process. Notify only on problems. |
+| Silent cross-charging with no dashboard indicator | User sees both batteries active, thinks system is working, unaware of 15% energy loss | Show cross-charge warning badge on dashboard; log cumulative energy loss |
+| DESS/EMS conflict with no user-facing explanation | User sees erratic battery behavior, blames EMS, when DESS is still active | Show DESS status on dashboard; warn if DESS is detected active |
+| Mode switch during user observation | User watches dashboard, sees power spike during mode transition, panics | Show "mode transition" state in UI; explain transient behavior |
+| Hardware validation requires manual steps | User must SSH into HA to run probe scripts | Expose hardware validation as a button in the add-on config or a dedicated setup step |
 
 ## "Looks Done But Isn't" Checklist
 
-- [ ] **Consumption forecaster:** Often missing actual weather integration -- verify predictions use Open-Meteo forecast, not `neutral_temp = 10.0`
-- [ ] **Self-tuning:** Often missing rollback mechanism -- verify oscillation detector can revert to defaults within 2 control cycles
-- [ ] **Anomaly detection:** Often missing confirmation period -- verify single-cycle spikes don't generate alerts
-- [ ] **Model training:** Often missing executor offload -- verify `_run_cycle()` never blocks > 100ms during training
-- [ ] **aarch64 build:** Often missing OMP thread limits -- verify `OMP_NUM_THREADS` is set in Dockerfile and run.sh
-- [ ] **Feature engineering:** Often missing train/predict distribution check -- verify all features used in `.predict()` match what was used in `.fit()` (no placeholder constants replacing real training values)
-- [ ] **Model lifecycle:** Often missing error trend monitoring -- verify `get_forecast_comparison()` runs daily and logs are actionable
-- [ ] **Dashboard ML section:** Often missing fallback state display -- verify UI shows "Learning (14/60 days)" not just "ML active"
+- [ ] **Huawei control:** Working in tests with mocks does NOT mean it works on hardware -- verify with `scripts/probe_huawei.py` on real inverter, confirm register reads return expected types
+- [ ] **Cross-charge detection:** Algorithm detects synthetic cross-charge in tests -- verify it detects real cross-charge with actual power meter data (real power oscillates, synthetic data is clean)
+- [ ] **DESS disabled:** Set `/Settings/DynamicEss/Mode` to `0` once -- verify it stays disabled after Venus OS firmware updates (some updates re-enable defaults)
+- [ ] **Modbus Proxy stability:** Proxy works for 5 minutes during testing -- verify it survives 48+ hours without dropped connections or memory leaks
+- [ ] **VRM API token refresh:** Token works for initial call -- verify refresh flow handles token expiry after 24-48 hours
+- [ ] **Safe state on EMS crash:** EMS writes zero before shutdown -- verify the Victron 60s watchdog actually reverts to safe behavior (not just passthru)
+- [ ] **Sign conventions on real hardware:** Tests use mocked positive/negative values -- verify actual register values match expected sign convention on THIS firmware version
+- [ ] **TOU schedule persistence:** TOU windows written via Modbus survive inverter reboot -- verify with power cycle test
 
 ## Recovery Strategies
 
 | Pitfall | Recovery Cost | Recovery Steps |
 |---------|---------------|----------------|
-| Self-tuning causes oscillation | LOW | Oscillation detector triggers automatic revert to defaults; no user action needed |
-| ML training blocks control loop | MEDIUM | Restart the Add-on; add `run_in_executor()` to training path; revert deployment if needed |
-| Anomaly detection alert fatigue | LOW | Widen thresholds by 50%; reduce alert frequency to daily summary; disable Telegram for anomalies |
-| Model drift after season change | LOW | Force retrain with 30-day window; wait 7 days for model to re-adapt |
-| sklearn version incompatibility | LOW | Delete persisted model file; system retrains from scratch at next startup (< 60s) |
-| Feature leakage producing false accuracy | MEDIUM | Audit feature pipeline; implement time-series CV; retrain with corrected features; compare to seasonal baseline |
-| aarch64 build failure after sklearn update | HIGH | Pin sklearn version exactly in pyproject.toml; test aarch64 build in CI before merging |
-| Control loop missed cycles during training | LOW | Add `run_in_executor()`; set training timeout of 120s; monitor cycle timing |
+| Cross-charging detected | LOW | Immediately set both batteries to HOLDING; log event; resume after 30s with discharge-only mode |
+| DESS/EMS conflict causing oscillation | LOW | Set DESS mode to 0 via GX device; restart EMS; verify stable |
+| Huawei Modbus connection conflict with HA | MEDIUM | Stop HA integration; configure Modbus Proxy; reconfigure both clients; restart |
+| Wrong sign convention on real hardware | MEDIUM | Switch to read-only mode immediately; analyze register values; fix sign mapping; redeploy |
+| Setpoint written to wrong register (wrong unit ID) | HIGH | Stop EMS immediately; check battery status via vendor app; may need manual firmware reset if protection tripped |
+| Working mode switch causes power spike triggering grid relay | HIGH | Grid relay trips; wait for manual reset; investigate spike magnitude; add pre-switch clamping |
 
 ## Pitfall-to-Phase Mapping
 
 | Pitfall | Prevention Phase | Verification |
 |---------|------------------|--------------|
-| Cold-start worse than fallback | Forecasting improvement phase | Shadow mode log shows ML params vs defaults for 14+ days before activation |
-| Self-tuning destabilizes control loop | Self-tuning phase (first task) | Oscillation detector tested with synthetic rapid-transition scenarios |
-| Blocking control loop with ML | Any phase adding ML inference | `_run_cycle()` timing histogram shows p99 < 500ms; no stale data warnings during training |
-| Anomaly false positives | Anomaly detection phase | False positive rate < 20% after 30 days; alert count < 3/day |
-| Feature leakage | Forecasting improvement phase | Time-series CV gap between train and test accuracy < 15% |
-| Model drift | Self-tuning lifecycle phase | Error trend monitoring active; auto-retrain triggers within 5 days of drift |
-| aarch64 build/runtime issues | First phase touching ML | CI builds and tests on aarch64; `OMP_NUM_THREADS=2` verified in container |
-| Model versioning/rollback | Self-tuning lifecycle phase | Model load failure handled gracefully (retrain from scratch, no crash) |
+| Huawei single-connection exclusion | Phase 1 (Hardware Validation) | HA integration and EMS both connected simultaneously for 1 hour without errors |
+| Huawei limit-not-setpoint confusion | Phase 1 (Hardware Validation) | Command 2000W discharge, measure actual power at meter, document deviation |
+| Cross-charging between batteries | Phase 2/3 (Cross-Charge Prevention) | Intentionally create cross-charge scenario, verify detection fires within 15s, verify prevention stops it |
+| DESS/EMS dual control conflict | Phase 1 (Operating Mode Decision) | Run EMS control loop for 1 hour with DESS disabled; verify no mode oscillation in Venus GX logs |
+| Victron 60s setpoint watchdog | Phase 2 (Production Hardening) | Kill EMS process; verify Victron reverts to safe state within 60s; verify no uncontrolled discharge |
+| Working mode transient spikes | Phase 1 (Hardware Validation) | Switch modes while monitoring grid meter; measure spike magnitude and duration |
+| Simulated-to-real gap | Phase 1 (Hardware Validation) | 48-hour read-only run with all data logged; compare against mock assumptions |
+| VRM API rate limiting | Phase 2 (VRM Integration) | Poll VRM API at 5-minute intervals for 24 hours; confirm no 429 responses; verify data freshness |
 
 ## Sources
 
-- [scikit-learn model persistence docs](https://scikit-learn.org/stable/model_persistence.html) -- version coupling warnings, skops.io recommendation
-- [scikit-learn aarch64 performance issue #15824](https://github.com/scikit-learn/scikit-learn/issues/15824) -- slow tests on ARM, OpenMP oversubscription
-- [InfluxDB Flux query optimization](https://docs.influxdata.com/influxdb/v2/query-data/optimize-queries/) -- pushdown functions, filter ordering
-- [Anomaly detection in energy consumption (Wiley 2025)](https://onlinelibrary.wiley.com/doi/full/10.4218/etrij.2023-0155) -- false positive rates, adaptive thresholds
-- [Transfer learning for energy anomaly detection (ScienceDirect 2025)](https://www.sciencedirect.com/science/article/pii/S037877882500859X) -- 40% data subset reducing false positives
-- [Stability-preserving RL-based PID tuning](https://www.oaepublish.com/articles/ces.2021.15) -- stability guarantees lost with unconstrained ML tuning
-- [ISA PID tuning common mistakes](https://blog.isa.org/avoid-common-tuning-mistakes-pid) -- oscillation from aggressive integral parameters
-- Existing EMS codebase analysis: `backend/consumption_forecaster.py`, `backend/coordinator.py`, `backend/config.py`
+- [Huawei Solar HA Integration -- single connection limitation](https://github.com/wlcrs/huawei_solar)
+- [Modbus Proxy stability with Huawei + EVCC](https://github.com/wlcrs/huawei_solar/discussions/699)
+- [Victron ESS Mode 2 and 3 documentation -- 60s setpoint timeout](https://www.victronenergy.com/live/ess:ess_mode_2_and_3)
+- [Victron ESS control loop instability with external control](https://community.victronenergy.com/t/ess-control-loop-unstable-constant-mode-switching-external-control-passthru/55252)
+- [Victron Dynamic ESS GitHub repository](https://github.com/victronenergy/dynamic-ess)
+- [VRM DESS API schedule inconsistencies](https://community.victronenergy.com/t/is-vrm-dess-api-not-updating-with-next-day-price-and-schedules/37361)
+- [VRM DESS API bug reports](https://community.victronenergy.com/t/bug-in-vrm-api-dess/43034)
+- [Huawei Modbus register definitions -- working mode 47086](https://support.huawei.com/enterprise/de/doc/EDOC1100387581)
+- [Victron AC coupling and Factor 1.0 rule](https://www.victronenergy.com/live/ac_coupling:start)
+- [BESS failure incident analysis -- 72% in first 2 years](https://www.utilitydive.com/news/cells-and-modules-not-responsible-for-most-battery-energy-storage-system-fa/716732/)
+- [EVCC Huawei Modbus TCP discussion](https://github.com/evcc-io/evcc/discussions/1928)
 
 ---
-*Pitfalls research for: ML self-tuning, anomaly detection, and forecasting in dual-battery EMS*
-*Researched: 2026-03-23*
+*Pitfalls research for: EMS v2 production deployment, cross-charge prevention, VRM/DESS integration*
+*Researched: 2026-03-24*

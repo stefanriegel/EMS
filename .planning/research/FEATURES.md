@@ -1,201 +1,130 @@
-# Feature Research
+# Feature Landscape
 
-**Domain:** ML-driven self-tuning for residential dual-battery energy management
-**Researched:** 2026-03-23
-**Confidence:** MEDIUM
+**Domain:** Production deployment, VRM/DESS integration, cross-charge prevention for dual-battery EMS
+**Researched:** 2026-03-24
+**Milestone:** v1.4 Production Deployment & Cross-Charge Prevention
 
-## Feature Landscape
+## Table Stakes
 
-### Table Stakes (Users Expect These)
-
-Features that any ML-enhanced battery EMS must have to be credible. The existing system already has basic ML forecasting; v1.3 needs to make it genuinely useful.
+Features required for the system to run safely in production with both batteries under coordinated control. Missing any of these means the EMS cannot be trusted with real hardware and real money.
 
 | Feature | Why Expected | Complexity | Notes |
 |---------|--------------|------------|-------|
-| Weather-aware consumption forecast | Current forecaster uses a neutral 10C placeholder instead of actual/forecast temps. Heat pump power correlates directly with outdoor temp. Without real weather data, the ML model is severely handicapped. | LOW | Solar forecast already available via `get_solar_forecast()`. Need to pipe actual outdoor temp from HA stats into prediction features instead of the hardcoded `neutral_temp = 10.0`. Biggest accuracy win for lowest effort. |
-| Day-of-week and holiday awareness | Household consumption varies 15-30% between weekdays and weekends. Current model includes `day_of_week` as a feature but treats it as a raw integer — not categorical. Holidays are ignored entirely. | LOW | Already have `float(ts.weekday())` in `_build_features()`. Needs: (1) one-hot or cyclical encoding for day-of-week, (2) German public holiday calendar (the `holidays` PyPI package covers this), (3) weekend/holiday binary flag. |
-| Forecast accuracy tracking with MAPE | Without measuring forecast error, you cannot know if ML is helping or hurting. Current `get_forecast_comparison()` returns error_pct but nothing persists or tracks trends. | LOW | Write daily MAPE to InfluxDB. Expose via API. Target: MAPE under 20% for next-day consumption (literature shows 7-15% is achievable with GBR on residential data). |
-| Lagged consumption features | Research consistently shows that consumption 24h and 168h (1 week) ago are the strongest predictors — more important than weather for many households. Current model has zero lagged features. | MEDIUM | Requires storing and retrieving hourly consumption history. HA statistics already has this via `read_entity_hourly()`. Add features: `load_24h_ago`, `load_168h_ago`, `avg_load_last_24h`. |
-| Retraining on fresh data | Current `retrain_if_stale()` retrains every 24h. This is correct cadence — daily retraining captures seasonal drift without overfitting. Already implemented. | ALREADY DONE | Keep the 24h retrain cycle. Add: log train vs. validation RMSE to detect overfitting. |
-| Communication loss detection | Both drivers already have failure counters and `max_offline_s` timeout. Users expect the system to notice when hardware goes silent. | ALREADY DONE | Existing: 3 consecutive failures triggers safe state, Telegram alert via `ALERT_COMM_FAILURE`. Enhance: track failure frequency over time to detect degrading connections (intermittent failures that stay below the 3-strike threshold). |
+| Huawei working mode takeover | The Huawei SUN2000 has its own internal EMS (self-consumption optimization). The EMS must switch the inverter to a mode where external setpoints are obeyed, not internally overridden. Without this, `write_max_charge_power` / `write_max_discharge_power` are advisory at best. | MEDIUM | Register `storage_working_mode_settings` (47086) via `huawei-solar` library. Current driver already has `write_battery_mode(StorageWorkingModesC)`. The mode `MAXIMISE_SELF_CONSUMPTION` is the default internal mode. For EMS control, need to switch to `TIME_OF_USE` (value 5) which makes the inverter follow externally-configured charge/discharge windows, or explore register 47589 (inverter control level) for full remote takeover. The `huawei-solar` library already exposes `StorageWorkingModesC` enum. **Critical**: must restore original mode on EMS shutdown. |
+| Cross-charge detection | When one battery discharges while the other charges, energy flows through the AC bus from Battery A to Battery B -- a pure loss (2x conversion = ~15-20% wasted). This is the defining failure mode of AC-coupled dual-battery systems. The coordinator must detect and prevent it. | HIGH | Not a hardware problem -- this is a coordinator logic problem. Both controllers operate via the coordinator, so the coordinator has full visibility. Detection: check if one system has a DISCHARGE role while the other has a CHARGING role simultaneously, and grid power is near zero (energy is circulating, not flowing to/from grid). Prevention: the coordinator must never assign contradictory roles unless the energy flow direction justifies it (e.g., grid import covers both charging battery and household load). |
+| Cross-charge prevention in coordinator | The coordinator's `_assign_discharge_roles` and `_allocate` methods must enforce that discharge and charge commands are mutually exclusive unless grid power flow confirms real demand exists. | HIGH | Must modify the coordinator's control loop to add a cross-charge guard. At minimum: if `h_cmd.role` is discharge and `v_cmd.role` is charge (or vice versa), verify that measured grid import exceeds the charge power. If not, force the charging battery to HOLDING. Depends on reliable grid power measurement (available from Victron `grid_power_w`). |
+| Session health validation on startup | Before sending any setpoints to real hardware, confirm Modbus connectivity, correct unit IDs, and that the inverter responds to register reads. A misconfigured unit ID could write to the wrong device. | LOW | Both drivers already have `connect()` with health checks. Need to extend startup to verify write capability: do a read-back after the first write to confirm the register was accepted. Especially important for Huawei where the SDongle2 proxy can silently drop writes. |
+| Safe shutdown / mode restoration | When EMS stops (crash, update, user action), batteries must return to a safe autonomous state. Huawei must be restored to its original working mode (self-consumption). Victron Hub4 setpoints should be zeroed. | MEDIUM | Add `async def shutdown()` to both controllers. HuaweiController: restore `StorageWorkingModesC.MAXIMISE_SELF_CONSUMPTION`. VictronController: write zero setpoints to all phases. Register with FastAPI lifespan `shutdown` hook. Must be idempotent (safe to call multiple times). |
+| Production deployment on HA | The system must actually run on the target HA instance controlling real hardware. All configuration via Add-on options, no manual SSH required. | MEDIUM | The HA Add-on packaging (Phase 6, Phase 12) is done. This is about operational validation: correct `host_network: true`, Modbus TCP reachable from container, correct unit IDs, config options for Huawei master/slave IDs and Victron system/VEBus IDs. |
 
-### Differentiators (Competitive Advantage)
+## Differentiators
 
-Features that go beyond what EMHASS and typical HA battery integrations offer. These leverage the dual-battery architecture and 5s granularity metrics unique to this system.
+Features that add significant value but the system can ship without them initially. These separate this EMS from a simple "set and forget" battery controller.
 
 | Feature | Value Proposition | Complexity | Notes |
 |---------|-------------------|------------|-------|
-| Self-tuning dead-bands and ramp rates | Current hysteresis (200W) and per-system dead-bands (Huawei 300W, Victron 150W) are manual estimates. Self-tuning measures oscillation frequency over rolling windows and adjusts dead-bands to minimize state transitions while maintaining responsiveness. | MEDIUM | Metric: count state transitions per hour from `ems_decision` data. If transitions > threshold (e.g., 6/hour), widen dead-band by 10%. If transitions < floor (e.g., 1/hour) and grid import is high, narrow dead-band. Safety bounds: dead-band range 50W-500W per system. Ramp rate range 100W/s - 2000W/s. |
-| Self-tuning min-SoC profiles | Current min-SoC is static or manual time-of-day windows. Self-tuning analyzes actual consumption patterns per time-of-day window and adjusts min-SoC to keep just enough reserve for expected demand before next PV production window. | HIGH | Requires: (1) reliable hourly consumption forecast, (2) next-day solar forecast, (3) dynamic programming or simple heuristic to compute optimal SoC floor per hour. Safety: min-SoC never below hardware minimum (Huawei 10%, Victron 15%). Max adjustment per day: 5% to prevent oscillation. |
-| SoC curve anomaly detection | Track expected vs. actual SoC change given known charge/discharge power. Divergence indicates battery degradation, sensor drift, or calibration error. No competing HA add-on does this. | MEDIUM | Physics: delta_SoC_expected = (power_w * interval_s) / (capacity_kwh * 3600 * 10). Compare with actual delta_SoC from driver readings. Track cumulative drift over days. Alert when round-trip efficiency drops below threshold (e.g., 85% for lithium). |
-| Efficiency degradation tracking | Monitor round-trip efficiency (energy_out / energy_in) over weeks/months. Detect gradual battery aging before it becomes a problem. | MEDIUM | Requires: InfluxDB integration for historical energy totals. Compute weekly round-trip efficiency from cumulative charge/discharge energy. Trend analysis: linear regression on weekly efficiency values. Alert when efficiency drops below configurable threshold or declines faster than expected. |
-| Consumption anomaly detection | Detect unusual consumption spikes (appliance left on, HVAC malfunction, water heater stuck). Alert user via Telegram. | MEDIUM | Method: compare current hour's consumption against the ML forecast. If actual > 2x predicted for 2+ consecutive hours, flag anomaly. Use z-score against historical same-hour-same-weekday distribution. Avoid false positives by requiring persistence (not single spikes). |
-| Optimization scorecard | Daily/weekly self-consumption ratio, self-sufficiency ratio, grid import kWh, and cost tracking. Shows whether ML changes are actually helping. | LOW | Metrics: SCR = PV_self_consumed / PV_total, SSR = PV_self_consumed / total_consumption. Already have the raw data in InfluxDB. Expose as `/api/optimization/scorecard` endpoint with daily/weekly/monthly aggregation. This is the "did it work?" metric for all other features. |
-| Multi-horizon consumption forecast | Extend from 24h to 72h forecast aligned with the existing WeatherScheduler 3-day outlook. Current `predict_hourly(72)` exists but uses neutral 10C for all hours — useless for 72h planning. | MEDIUM | Requires weather forecast integration into the consumption model. Open-Meteo already provides 72h hourly temperature forecasts (used by solar forecast). Pipe hourly temp forecasts into the GBR features instead of the neutral placeholder. |
+| VRM API DESS schedule reading | Read Victron's Dynamic ESS (DESS) schedule to understand what charge/discharge windows DESS has planned. This enables a hybrid mode: let DESS manage Victron while EMS controls Huawei, with awareness of DESS plans for coordinated optimization. | MEDIUM | DESS writes schedules to Venus OS D-Bus: `/Settings/DynamicESS/Schedule/[0-3]/[Soc,AllowGridFeedIn,Start,Duration,Restrictions,Strategy]`. Each slot has: target SoC (%), start (unix timestamp), duration (seconds, typically 3600), restrictions (0=none, 1=no-export, 2=no-import), strategy (0=follow-SOC, 1=minimize-grid). **Two access paths**: (1) Local: read via Modbus TCP from Venus OS -- these settings may not be exposed via standard Modbus register list, would need custom D-Bus bridge or `dbus-mqtt` topic subscription. (2) Remote: VRM Dynamic ESS API at `vrm-dynamic-ess-api.victronenergy.com` with `X-Authorization: Token <access-token>`, endpoint `GET /` returns schedule with battery config params. The API is designed for *writing* schedules (it calculates optimal schedules given prices), not just reading. **Recommendation**: prefer local Venus OS access via MQTT (`/Settings/DynamicEss/Schedule/...` topics via dbus-mqtt) over VRM cloud API to maintain local-only constraint. |
+| Dual-scheduler coordination | Run the internal EMS scheduler alongside DESS. Internal scheduler handles Huawei grid-charge windows; DESS handles Victron. Coordinator merges both schedules for cross-charge prevention. | HIGH | The existing `Scheduler` and `WeatherScheduler` produce `ChargeSchedule` / `DayPlan` for the internal system. A new `DessScheduleReader` would produce an equivalent schedule for Victron's planned behavior. The coordinator would then have two schedule inputs and must ensure they don't conflict (both batteries charging from grid simultaneously may exceed grid import limits; one charging while other discharges = cross-charge). |
+| Cross-charge energy waste metric | Track and expose how much energy was lost to cross-charging (historical). Even with prevention, transient cross-charge will occur during role transitions. Measuring it proves the prevention works. | LOW | Calculate `cross_charge_waste_wh` per cycle: `min(abs(charge_power), abs(discharge_power)) * cycle_seconds * (1 - efficiency)` when both batteries have opposing power signs. Log to InfluxDB, expose via API. Target: <1% of daily throughput. |
+| Huawei TOU schedule programming | Instead of continuous max-charge/max-discharge power limits, program Huawei's native TOU mode with specific charge/discharge windows. This gives the Huawei internal EMS a schedule to follow even if the external EMS loses connectivity. | HIGH | Requires writing TOU charge/discharge periods via Modbus registers. The `huawei-solar` library supports `storage_working_mode_settings` = TOU, plus additional registers for charge periods (47200-47249 range for up to 14 time-of-use periods). Each period has: start hour, start minute, end hour, end minute, charge/discharge flag, electricity price. Complex register writes with validation. **Risk**: if Huawei firmware rejects malformed TOU entries, the battery may revert to default behavior unpredictably. |
+| Operating mode investigation | Systematically test and document two operating strategies: (A) Full EMS control of both batteries via Modbus, (B) DESS controls Victron + EMS controls Huawei. Determine which delivers better optimization. | MEDIUM | Not a code feature but a research/validation task. Requires running both modes for several days each, comparing: total grid import, self-consumption ratio, cross-charge losses, system stability. Results inform whether VRM/DESS integration is needed at all. |
+| Victron Hub4 override coordination | When DESS is active, it writes to Hub4 overrides (`/Overrides/ForceCharge`, `/Overrides/MaxDischargePower`, `/Overrides/Setpoint`). If EMS also writes Hub4 setpoints, there will be contention. Need to either disable DESS and let EMS control directly, or read DESS state and only control Huawei. | MEDIUM | Three strategies: (1) Disable DESS (`/Settings/DynamicEss/Mode = 0`) and let EMS control both batteries via Hub4 directly -- simplest. (2) Leave DESS active, read its schedule, and only write Huawei setpoints -- safest for Victron side. (3) Override DESS when EMS disagrees -- most complex, risk of oscillation between two controllers. **Recommendation**: Start with strategy (2), fall back to (1) if cross-charge prevention requires direct Victron control. |
 
-### Anti-Features (Commonly Requested, Often Problematic)
+## Anti-Features
 
-| Feature | Why Requested | Why Problematic | Alternative |
-|---------|---------------|-----------------|-------------|
-| Reinforcement learning for battery control | Academic papers show RL outperforms rule-based control in simulation. Sounds cutting-edge. | RL needs thousands of episodes to converge. Each "episode" is a real day with real money. Exploration means deliberately making bad decisions. Sim-to-real gap is massive for household consumption. RL adds massive complexity for marginal gains over well-tuned heuristics. EMHASS uses LP, not RL, for good reason. | Stick with heuristic control + parameter tuning. The coordinator's role-based dispatch is already well-structured. Self-tune the parameters, not the policy. |
-| Deep learning (LSTM/Transformer) for consumption forecast | Papers show LSTM beats GBR on some benchmarks. | Single household data is tiny (2000-8000 hourly samples per year). Deep learning overfits catastrophically on small datasets. GBR with 100 estimators is the right tool. Training must run on a Raspberry Pi / HA host — no GPU available. scikit-learn GBR trains in <1s on 90 days of hourly data. | Keep GradientBoostingRegressor. Consider XGBoost or LightGBM only if GBR accuracy plateaus — they are faster but not more accurate at this data scale. |
-| Fully autonomous parameter changes without bounds | "Let the ML decide everything" — remove safety limits so the optimizer has full freedom. | Battery hardware has hard limits. Setting min-SoC too low damages cells. Setting dead-bands too narrow causes relay cycling that physically wears components. A runaway optimizer could cause real hardware damage or unexpected bills. | Every auto-tuned parameter must have hard safety bounds defined in config. Changes are bounded per cycle (e.g., max 5% SoC adjustment per day, max 50W dead-band change per hour). Human can always override via HA number entities. |
-| Real-time ML inference on every control cycle | Run ML prediction every 5 seconds for maximum responsiveness. | Consumption changes slowly (minutes, not seconds). Running GBR.predict() every 5s wastes CPU on an embedded device for no benefit. Forecast horizon is hours — re-predicting every 5s is meaningless. | Predict hourly or on significant state changes (e.g., heat pump starts/stops). Cache predictions. Control loop uses cached forecast, not live inference. |
-| Cloud-based ML training or inference | Offload computation to cloud for better models. | Violates core constraint: "Local network only, no cloud dependencies." Adds latency, availability risk, and privacy concerns. The data volume is small enough for local training. | All ML runs locally. scikit-learn GBR on 90 days of hourly data trains in <1s on arm64. No cloud needed. |
-| Automated tariff switching / energy trading | ML predicts grid prices and automatically buys/sells energy. | This system uses fixed/semi-fixed tariffs (Octopus Go, Modul3). Dynamic wholesale trading requires financial regulation compliance, real-time grid operator APIs, and risk management. Completely different domain. | Optimize within existing tariff structure. The scheduler already picks cheapest slots. ML can improve the consumption forecast that feeds into slot selection. |
+Features to explicitly NOT build. These look tempting but create more problems than they solve.
+
+| Anti-Feature | Why Avoid | What to Do Instead |
+|--------------|-----------|-------------------|
+| Direct VRM cloud API for schedule writes | Violates the local-only constraint. Creates cloud dependency for core operation. VRM API has authentication tokens that expire, rate limits, and connectivity requirements. | Read DESS schedule locally via Venus OS D-Bus/MQTT. If VRM data is needed for forecasts, treat it as optional enhancement (graceful degradation). |
+| Bidirectional DESS schedule manipulation | Writing custom schedules to DESS from EMS creates a dual-controller fight. DESS recalculates every few minutes and would overwrite EMS changes. Two optimizers fighting over the same battery = oscillation. | Choose one controller per battery: either DESS manages Victron or EMS does, never both simultaneously. |
+| Huawei register 47589 remote control mode | Register 47589 (inverter control level) sets the inverter to full remote control modes (0=local, 1-5=remote). Mode 1 ("remote charge/self-discharge") and mode 5 ("three-party scheduling") give maximum control but disable ALL internal safety and optimization. If EMS crashes, Huawei does nothing -- no self-consumption, no self-protection. | Use `storage_working_mode_settings` (47086) to switch to TOU mode, which still allows Huawei's internal EMS to handle safety while following external time-based instructions. Or use max-charge/max-discharge power limits (current approach) which constrain but don't override the internal EMS. |
+| Real-time grid power balancing across both inverters | Trying to coordinate instantaneous AC power output from both inverters to match household load creates a control theory nightmare. Two independent actuators with different response times (Huawei ~2s, Victron ~0.5s) and different measurement points = guaranteed oscillation. | Continue the current role-based approach: one battery is PRIMARY_DISCHARGE at a time. The other is HOLDING or SECONDARY. Only one actuator targets grid power; the other has a fixed setpoint. |
+| Automatic DESS disable/enable toggling | Automatically disabling DESS when EMS wants direct Victron control and re-enabling it afterward creates race conditions and confusing states. User won't know who is controlling what. | Pick one strategy at configuration time and stick with it. Expose as an Add-on option: "Victron control: EMS-direct / DESS-managed". |
 
 ## Feature Dependencies
 
 ```
-[Weather-aware forecast]
-    └──requires──> [HA outdoor temp entity] (ALREADY EXISTS)
-    └──requires──> [Weather forecast API] (ALREADY EXISTS via Open-Meteo)
-    └──enhances──> [Multi-horizon 72h forecast]
-                       └──enhances──> [Self-tuning min-SoC profiles]
-
-[Lagged consumption features]
-    └──requires──> [HA statistics hourly history] (ALREADY EXISTS)
-    └──enhances──> [Weather-aware forecast]
-
-[Forecast accuracy tracking (MAPE)]
-    └──requires──> [InfluxDB metrics] (ALREADY EXISTS, optional)
-    └──enhances──> [Self-tuning dead-bands] (knows if forecast improved)
-    └──enhances──> [Optimization scorecard]
-
-[Self-tuning dead-bands]
-    └──requires──> [Oscillation counting from ems_decision] (data EXISTS)
-    └──requires──> [Safety bounds in config]
-
-[Self-tuning min-SoC]
-    └──requires──> [Weather-aware forecast]
-    └──requires──> [Multi-horizon 72h forecast]
-    └──requires──> [Forecast accuracy tracking] (must trust the forecast first)
-
-[SoC curve anomaly detection]
-    └──requires──> [Per-system InfluxDB metrics] (ALREADY EXISTS)
-    └──enhances──> [Efficiency degradation tracking]
-
-[Consumption anomaly detection]
-    └──requires──> [Weather-aware forecast] (need accurate baseline to detect anomalies)
-
-[Optimization scorecard]
-    └──requires──> [InfluxDB metrics] (ALREADY EXISTS)
-    └──enhances──> ALL self-tuning features (measures their impact)
+Session Health Validation
+    |
+    v
+Huawei Working Mode Takeover --> Safe Shutdown / Mode Restoration
+    |
+    v
+Cross-Charge Detection --> Cross-Charge Prevention in Coordinator
+    |                            |
+    v                            v
+Cross-Charge Waste Metric    Production Deployment on HA
+                                 |
+                                 v
+                          Operating Mode Investigation
+                                 |
+                            +---------+
+                            |         |
+                            v         v
+               (if Mode A)           (if Mode B)
+        Full EMS Control        VRM DESS Schedule Reading
+                                     |
+                                     v
+                              Dual-Scheduler Coordination
+                                     |
+                                     v
+                              Hub4 Override Coordination
 ```
 
-### Dependency Notes
+**Key dependency chain**: Cross-charge prevention must be in place *before* production deployment. Without it, the system could waste 15-20% of battery throughput on circular energy flows.
 
-- **Self-tuning min-SoC requires weather-aware forecast:** You cannot dynamically set SoC floors without knowing tomorrow's solar production and tonight's expected consumption. The forecast must be reasonably accurate (MAPE < 25%) before trusting it for SoC decisions.
-- **Consumption anomaly detection requires weather-aware forecast:** Anomaly = actual significantly exceeds expected. Without good forecast, everything looks anomalous on cold days.
-- **Optimization scorecard enhances everything:** Without measuring self-consumption ratio and grid import, you cannot know if any tuning change helped. Build this early.
-- **Forecast accuracy tracking is the gatekeeper:** Self-tuning features should only activate when MAPE is below a threshold, otherwise they amplify forecast errors.
+**Decision gate**: Operating mode investigation determines whether VRM/DESS integration features are needed. If full EMS control (Mode A) works well, the DESS integration branch can be deferred entirely.
 
-## MVP Definition
+## MVP Recommendation
 
-### Launch With (Phase 1 of v1.3)
+### Phase 1: Safe Production Control (must have)
 
-Foundation: make the existing forecaster actually useful, measure its impact.
+1. **Session health validation** -- already partially done, extend with write-back verification
+2. **Huawei working mode takeover** -- switch to TOU or constrained self-consumption on startup
+3. **Safe shutdown / mode restoration** -- lifespan hook to restore autonomous operation
+4. **Cross-charge detection** -- add to coordinator's per-cycle decision logic
+5. **Cross-charge prevention** -- enforce mutual exclusion of opposing roles unless grid flow justifies it
 
-- [ ] **Weather-aware consumption forecast** — Replace neutral 10C placeholder with actual outdoor temp from HA statistics and forecast temps from Open-Meteo. Single biggest accuracy improvement.
-- [ ] **Lagged consumption features** — Add load_24h_ago, load_168h_ago, avg_load_last_24h to feature matrix. Research shows these are the top predictors.
-- [ ] **Day-of-week / holiday encoding** — Proper categorical encoding + German holiday flag. Low effort, meaningful accuracy gain.
-- [ ] **Forecast accuracy tracking (MAPE)** — Persist daily predicted vs. actual to InfluxDB. Expose via API. This gates everything that follows.
-- [ ] **Optimization scorecard** — Daily self-consumption ratio, self-sufficiency ratio, grid import. The "did it work?" dashboard.
+### Phase 2: Production Deployment
 
-### Add After Validation (Phase 2 of v1.3)
+6. **Production deployment on HA** -- validate full stack on real hardware, tune parameters
 
-Self-tuning: only activate once forecast MAPE is consistently under 25%.
+### Phase 3: Operating Mode Decision (investigation)
 
-- [ ] **Self-tuning dead-bands** — Count oscillations, adjust hysteresis within safety bounds. Trigger: observing > 6 state transitions/hour in production data.
-- [ ] **Multi-horizon 72h forecast with real weather** — Pipe Open-Meteo hourly temps into predict_hourly(). Enables better WeatherScheduler decisions.
-- [ ] **Consumption anomaly detection** — Flag hours where actual > 2x forecast for 2+ consecutive hours. Telegram alert.
+7. **Operating mode investigation** -- run both strategies, measure outcomes, decide on DESS path
 
-### Future Consideration (Phase 3 of v1.3 or v1.4)
+### Defer
 
-Advanced features requiring stable foundation and proven forecast accuracy.
+- **VRM DESS schedule reading**: Only if Mode B (DESS + EMS hybrid) wins the operating mode investigation
+- **Dual-scheduler coordination**: Depends on DESS schedule reading
+- **Huawei TOU schedule programming**: Complex, fragile, and the current max-power-limit approach works. Only pursue if field testing reveals the Huawei internal EMS fights the power limits excessively
+- **Cross-charge waste metric**: Nice to have for validation but not blocking
 
-- [ ] **Self-tuning min-SoC profiles** — Defer because: requires high forecast confidence, complex safety constraints, high risk of under-reserving if forecast is wrong.
-- [ ] **SoC curve anomaly detection** — Defer because: needs weeks of baseline data under ML control, physics model for expected SoC delta needs calibration per battery chemistry.
-- [ ] **Efficiency degradation tracking** — Defer because: meaningful only over months of data, low urgency.
+## Complexity Assessment
 
-## Feature Prioritization Matrix
-
-| Feature | User Value | Implementation Cost | Priority |
-|---------|------------|---------------------|----------|
-| Weather-aware forecast | HIGH | LOW | P1 |
-| Lagged consumption features | HIGH | LOW | P1 |
-| Day-of-week / holiday encoding | MEDIUM | LOW | P1 |
-| Forecast accuracy tracking (MAPE) | HIGH | LOW | P1 |
-| Optimization scorecard | HIGH | LOW | P1 |
-| Self-tuning dead-bands | HIGH | MEDIUM | P2 |
-| Multi-horizon 72h forecast | MEDIUM | MEDIUM | P2 |
-| Consumption anomaly detection | MEDIUM | MEDIUM | P2 |
-| Self-tuning min-SoC profiles | HIGH | HIGH | P3 |
-| SoC curve anomaly detection | MEDIUM | MEDIUM | P3 |
-| Efficiency degradation tracking | LOW | MEDIUM | P3 |
-
-**Priority key:**
-- P1: Foundation — must have before any self-tuning makes sense
-- P2: Self-tuning — activate after forecast proves accurate
-- P3: Advanced — needs months of baseline data
-
-## Competitor Feature Analysis
-
-| Feature | EMHASS | Batrium/BMS | SolarAssistant | Our Approach |
-|---------|--------|-------------|----------------|--------------|
-| Consumption forecast | ML via skforecast, supports multiple sklearn models, Bayesian hyperparameter tuning via optuna | None (BMS only) | Basic solar forecast only | GBR with weather + lagged features. Simpler than EMHASS but tailored to dual-battery. No optuna needed — GBR defaults work well at this data scale. |
-| Self-tuning control | None — uses Linear Programming for optimal schedule, no runtime parameter adaptation | Cell balancing only | None | Unique differentiator: auto-tune dead-bands, ramp rates, min-SoC from actual oscillation and consumption data. No competitor does this for residential. |
-| Anomaly detection | None | Cell-level voltage anomaly | None | SoC curve deviation, consumption spike detection, communication failure patterns. Goes beyond BMS-level monitoring. |
-| Optimization metric | None built-in | None | Basic self-consumption display | Full scorecard: SCR, SSR, grid import, cost. Daily/weekly/monthly. Tracks improvement over time. |
-| Dual-battery coordination | Not applicable (single inverter focus) | Not applicable | Not applicable | Core architecture advantage. ML tuning applies independently per system with coordinated dispatch. |
-
-## Data Requirements Summary
-
-### Already Available (no new integrations needed)
-
-| Data Source | Entity/Measurement | Granularity | Used By |
-|-------------|-------------------|-------------|---------|
-| HA statistics | outdoor temp entity | Hourly | Weather-aware forecast |
-| HA statistics | heat pump power entity | Hourly | Consumption forecast |
-| HA statistics | DHW power entity | Hourly | Consumption forecast |
-| Open-Meteo | Hourly temperature forecast | Hourly, 72h | Multi-horizon forecast |
-| InfluxDB | ems_huawei, ems_victron | 5s | SoC anomaly, efficiency tracking |
-| InfluxDB | ems_decision | 5s | Oscillation counting, dead-band tuning |
-| EVCC solar forecast | Daily kWh | Daily, 3-day | WeatherScheduler (existing) |
-
-### New Data to Collect
-
-| Data | Source | Storage | Used By |
-|------|--------|---------|---------|
-| Daily MAPE (predicted vs actual kWh) | Computed from forecast + HA stats | InfluxDB `ems_forecast_accuracy` | Accuracy tracking, self-tuning gate |
-| Hourly state transition count | Computed from ems_decision | InfluxDB `ems_oscillation` or in-memory ring buffer | Dead-band self-tuning |
-| Weekly round-trip efficiency per system | Computed from ems_huawei/ems_victron charge/discharge totals | InfluxDB `ems_efficiency` | Degradation tracking |
-| Self-consumption ratio (daily) | Computed from PV production + grid import/export | InfluxDB `ems_scorecard` | Optimization scorecard |
-
-## Training and Inference Constraints
-
-| Constraint | Requirement | Rationale |
-|------------|-------------|-----------|
-| Training time | < 2 seconds on arm64 | Must not block the control loop or noticeably delay nightly scheduler |
-| Inference time | < 50ms per 72h forecast | Called once per hour max, but should be fast enough for on-demand API calls |
-| Memory | < 50 MB model + feature data | HA host has limited RAM; other add-ons compete for resources |
-| Training cadence | Once daily (04:00 local, with scheduler) | Already implemented in `retrain_if_stale(24)` |
-| Training data window | 90 days rolling | Current implementation. Sufficient for seasonal patterns without overfitting. |
-| Model persistence | In-memory only (retrain on restart) | GBR trains in <1s. No need for model serialization complexity. Avoids stale model issues. |
-| Fallback | Seasonal constant (existing) | Must always work even if ML fails. Current `_seasonal_fallback_kwh` is correct safety net. |
+| Feature | Estimated Effort | Risk | Confidence |
+|---------|-----------------|------|------------|
+| Session health validation | 1-2 days | LOW | HIGH -- extending existing patterns |
+| Huawei working mode takeover | 2-3 days | MEDIUM | MEDIUM -- need real hardware testing, firmware behavior varies |
+| Safe shutdown | 1-2 days | LOW | HIGH -- standard lifespan hook pattern |
+| Cross-charge detection | 2-3 days | LOW | HIGH -- pure coordinator logic, no new hardware interaction |
+| Cross-charge prevention | 3-5 days | MEDIUM | MEDIUM -- needs careful edge case handling, testing with realistic power profiles |
+| Production deployment | 3-5 days | HIGH | LOW -- real hardware always surprises, unit ID probing, network issues |
+| Operating mode investigation | 5-7 days | MEDIUM | LOW -- requires running system for multiple days, weather-dependent |
+| VRM DESS schedule reading | 3-5 days | MEDIUM | MEDIUM -- D-Bus/MQTT path reading is well-documented but untested |
+| Dual-scheduler coordination | 5-7 days | HIGH | LOW -- novel architecture, no reference implementations |
 
 ## Sources
 
-- [EMHASS documentation — ML forecaster](https://emhass.readthedocs.io/en/latest/mlforecaster.html) — MEDIUM confidence, direct competitor analysis
-- [EMHASS documentation — forecast module](https://emhass.readthedocs.io/en/latest/forecasts.html) — MEDIUM confidence, feature comparison
-- [Gradient Boosting for home energy prediction (ScienceDirect)](https://www.sciencedirect.com/science/article/pii/S2352484721001049) — MEDIUM confidence, validates GBR for residential forecasting
-- [Load forecasting for battery storage control (MDPI)](https://www.mdpi.com/1996-1073/13/15/3946) — MEDIUM confidence, feature importance validation
-- [Seasonal hourly electricity demand forecasting (Nature)](https://www.nature.com/articles/s41598-025-91878-0) — MEDIUM confidence, confirms weather + calendar features
-- [Hybrid ML framework for battery anomaly detection (Nature)](https://www.nature.com/articles/s41598-025-90810-w) — MEDIUM confidence, anomaly detection patterns
-- [Self-consumption and self-sufficiency metrics (MDPI)](https://www.mdpi.com/1996-1073/14/6/1591) — MEDIUM confidence, metric definitions
-- [Optimal PV-BESS household strategy (arXiv)](https://arxiv.org/html/2506.17268) — LOW confidence, academic optimization approach
-- Existing codebase: `backend/consumption_forecaster.py`, `backend/config.py`, `backend/orchestrator.py`, `backend/weather_scheduler.py` — HIGH confidence, current implementation analysis
-
----
-*Feature research for: ML self-tuning in dual-battery EMS*
-*Researched: 2026-03-23*
+- [Victron Dynamic ESS GitHub](https://github.com/victronenergy/dynamic-ess) -- DESS schedule structure, D-Bus paths
+- [Victron Dynamic ESS Manual](https://www.victronenergy.com/live/drafts:dynamic_ess) -- SOC targeting approach, override mechanism
+- [VRM API Documentation](https://vrm-api-docs.victronenergy.com/) -- Authentication, diagnostics endpoint
+- [VRM Dynamic ESS API](https://vrm-dynamic-ess-api.victronenergy.com/docs) -- Schedule endpoint with SOC targets and battery config
+- [Huawei SUN2000 Modbus Interface Definitions](https://support.huawei.com/enterprise/de/doc/EDOC1100387581) -- Register 47589 (control level), 47086 (working mode)
+- [Huawei TOU Mode Documentation](https://support.huawei.com/enterprise/en/doc/EDOC1100186676/e8d2e6db/tou-time-of-use-mode) -- TOU charge period configuration
+- [Victron GX Modbus-TCP Manual](https://www.victronenergy.com/live/ccgx:modbustcp_faq) -- Hub4 control registers
+- [Victron Venus OS D-Bus Wiki](https://github.com/victronenergy/venus/wiki/dbus) -- D-Bus service paths for settings
+- [Victron Community: DESS Modbus Registers](https://community.victronenergy.com/t/dess-modbus-registers/2154) -- Community discussion on reading DESS state via Modbus
+- [Victron Community: Multiplus II and Huawei AC-Coupling](https://community.victronenergy.com/t/multiplus-ii-and-huawei-ac-coupling/25221) -- Real-world AC coupling experience
+- Existing codebase: `backend/drivers/huawei_driver.py`, `backend/coordinator.py`, `backend/huawei_controller.py`
