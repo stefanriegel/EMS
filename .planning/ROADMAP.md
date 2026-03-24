@@ -103,4 +103,4 @@ Phases execute in numeric order: 20 -> 21 -> 22 -> 23 -> 24
 | 21. Cross-Charge Detection and Prevention | 3/3 | Complete    | 2026-03-24 |
 | 22. Huawei Mode Manager | 2/2 | Complete    | 2026-03-24 |
 | 23. Production Commissioning | 2/2 | Complete    | 2026-03-24 |
-| 24. VRM/DESS Integration | 2/2 | Complete   | 2026-03-24 |
+| 24. VRM/DESS Integration | 2/2 | Complete    | 2026-03-24 |
