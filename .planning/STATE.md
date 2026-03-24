@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: milestone
-status: Ready to plan
-stopped_at: Completed 18-02-PLAN.md
-last_updated: "2026-03-24T00:30:45.780Z"
+status: Ready to execute
+stopped_at: Completed 19-01-PLAN.md
+last_updated: "2026-03-24T07:41:56.885Z"
 progress:
   total_phases: 4
   completed_phases: 3
-  total_plans: 7
-  completed_plans: 7
+  total_plans: 9
+  completed_plans: 8
 ---
 
 # Project State
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-23)
 
 **Core value:** Both battery systems operate independently with zero oscillation to maximize PV self-consumption
-**Current focus:** Phase 18 — Anomaly Detection
+**Current focus:** Phase 19 — Self-Tuning Control
 
 ## Current Position
 
-Phase: 19
-Plan: Not started
+Phase: 19 (Self-Tuning Control) — EXECUTING
+Plan: 2 of 2
 
 ## Performance Metrics
 
@@ -61,6 +61,7 @@ Plan: Not started
 | Phase 17 P02 | 8min | 2 tasks | 5 files |
 | Phase 18 P01 | 8min | 1 tasks | 3 files |
 | Phase 18 P02 | 7min | 2 tasks | 5 files |
+| Phase 19 P01 | 4min | 1 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -88,6 +89,9 @@ Recent decisions affecting current work:
 - [Phase 18]: IsolationForest training requires at least 10 hourly baseline samples to avoid degenerate fits
 - [Phase 18]: Use send_alert(category, message) matching existing notifier API for anomaly Telegram alerts
 - [Phase 18]: Anomaly category map as class-level dict on Coordinator for clean per-type Telegram dispatch
+- [Phase 19]: Oscillation thresholds >6/hr increase, <2/hr decrease dead-band using 7-day rolling avg
+- [Phase 19]: Grid spikes only counted on state transition coincidence to avoid EV/heat pump false positives
+- [Phase 19]: Min-SoC profile: 6 four-hour blocks, 20% for above-avg consumption, 10% for below
 
 ### Pending Todos
 
@@ -100,6 +104,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-24T00:24:30.483Z
-Stopped at: Completed 18-02-PLAN.md
+Last session: 2026-03-24T07:41:56.883Z
+Stopped at: Completed 19-01-PLAN.md
 Resume file: None

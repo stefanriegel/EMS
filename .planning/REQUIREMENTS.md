@@ -27,14 +27,14 @@ Requirements for Intelligent Self-Tuning milestone.
 
 ### Self-Tuning Control
 
-- [ ] **TUNE-01**: Oscillation detector counts state transitions per hour from coordinator decisions
-- [ ] **TUNE-02**: Dead-band auto-tuning — adjust Huawei/Victron hysteresis based on oscillation rate
-- [ ] **TUNE-03**: Ramp rate auto-tuning — adjust based on grid import spikes during transitions
-- [ ] **TUNE-04**: Min-SoC profile auto-tuning — adjust based on consumption patterns and solar forecast accuracy
-- [ ] **TUNE-05**: Shadow mode — log recommended vs actual parameters for 14 days before live application
-- [ ] **TUNE-06**: Bounded changes — max 10% adjustment per night with absolute safe bounds
-- [ ] **TUNE-07**: Automatic rollback — revert to previous parameters if oscillation rate increases after tuning
-- [ ] **TUNE-08**: Activation gate — self-tuning only activates when forecast MAPE < 25% and 60+ days of data
+- [x] **TUNE-01**: Oscillation detector counts state transitions per hour from coordinator decisions
+- [x] **TUNE-02**: Dead-band auto-tuning — adjust Huawei/Victron hysteresis based on oscillation rate
+- [x] **TUNE-03**: Ramp rate auto-tuning — adjust based on grid import spikes during transitions
+- [x] **TUNE-04**: Min-SoC profile auto-tuning — adjust based on consumption patterns and solar forecast accuracy
+- [x] **TUNE-05**: Shadow mode — log recommended vs actual parameters for 14 days before live application
+- [x] **TUNE-06**: Bounded changes — max 10% adjustment per night with absolute safe bounds
+- [x] **TUNE-07**: Automatic rollback — revert to previous parameters if oscillation rate increases after tuning
+- [x] **TUNE-08**: Activation gate — self-tuning only activates when forecast MAPE < 25% and 60+ days of data
 
 ### Anomaly Detection
 
@@ -90,14 +90,14 @@ Requirements for Intelligent Self-Tuning milestone.
 | ANOM-06 | Phase 18 | Complete |
 | ANOM-07 | Phase 18 | Complete |
 | ANOM-08 | Phase 18 | Complete |
-| TUNE-01 | Phase 19 | Pending |
-| TUNE-02 | Phase 19 | Pending |
-| TUNE-03 | Phase 19 | Pending |
-| TUNE-04 | Phase 19 | Pending |
-| TUNE-05 | Phase 19 | Pending |
-| TUNE-06 | Phase 19 | Pending |
-| TUNE-07 | Phase 19 | Pending |
-| TUNE-08 | Phase 19 | Pending |
+| TUNE-01 | Phase 19 | Complete |
+| TUNE-02 | Phase 19 | Complete |
+| TUNE-03 | Phase 19 | Complete |
+| TUNE-04 | Phase 19 | Complete |
+| TUNE-05 | Phase 19 | Complete |
+| TUNE-06 | Phase 19 | Complete |
+| TUNE-07 | Phase 19 | Complete |
+| TUNE-08 | Phase 19 | Complete |
 
 **Coverage:**
 - v1.3 requirements: 28 total

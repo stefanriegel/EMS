@@ -84,7 +84,7 @@ Plans:
   5. Dead-band, ramp rate, and min-SoC profile tuning each adjust independently based on their respective signals (oscillation rate, grid import spikes, consumption patterns)
 **Plans**: 2 plans
 Plans:
-- [ ] 19-01-PLAN.md — SelfTuner core module with all tuning logic, safety gates, and unit tests
+- [x] 19-01-PLAN.md — SelfTuner core module with all tuning logic, safety gates, and unit tests
 - [ ] 19-02-PLAN.md — Coordinator wiring, nightly loop integration, and API extension
 
 ## Progress
@@ -97,4 +97,4 @@ Phases execute in numeric order: 16 -> 17 -> 18 -> 19
 | 16. ML Infrastructure | 2/3 | Complete    | 2026-03-23 |
 | 17. Consumption Forecaster Upgrade | 2/2 | Complete    | 2026-03-23 |
 | 18. Anomaly Detection | 2/2 | Complete    | 2026-03-24 |
-| 19. Self-Tuning Control | 0/2 | Not started | - |
+| 19. Self-Tuning Control | 1/2 | In Progress|  |
