@@ -276,16 +276,28 @@ class TestReadMaster:
     @pytest.mark.anyio
     async def test_read_master_returns_correct_dataclass(self, driver, mock_client):
         """get_multiple result list is mapped correctly to HuaweiMasterData fields."""
-        # _MASTER_REGISTERS order: state_1, pv_01_voltage, pv_01_current,
-        #   pv_02_voltage, pv_02_current, input_power, active_power
-        mock_client.get_multiple.return_value = [
-            _result(0x0002),    # state_1
-            _result(380.5),     # pv_01_voltage
-            _result(5.2),       # pv_01_current
-            _result(375.0),     # pv_02_voltage
-            _result(5.0),       # pv_02_current
-            _result(4200),      # input_power
-            _result(3800),      # active_power
+        # First call: _MASTER_REGISTERS (13 regs)
+        # Second call: _MASTER_YIELD_REGISTERS (2 regs)
+        mock_client.get_multiple.side_effect = [
+            [
+                _result(0x0002),    # state_1
+                _result(380.5),     # pv_01_voltage
+                _result(5.2),       # pv_01_current
+                _result(375.0),     # pv_02_voltage
+                _result(5.0),       # pv_02_current
+                _result(4200),      # input_power
+                _result(233.0),     # phase_A_voltage
+                _result(234.0),     # phase_B_voltage
+                _result(235.0),     # phase_C_voltage
+                _result(3800),      # active_power
+                _result(50.01),     # grid_frequency
+                _result(97.5),      # efficiency
+                _result(42.3),      # internal_temperature
+            ],
+            [
+                _result(28945.0),   # accumulated_yield_energy
+                _result(15.5),      # daily_yield_energy
+            ],
         ]
         driver._client = mock_client
 
@@ -298,20 +310,25 @@ class TestReadMaster:
         assert data.pv_02_current_a == pytest.approx(5.0)
         assert data.pv_input_power_w == 4200
         assert data.active_power_w == 3800
+        assert data.phase_a_voltage_v == pytest.approx(233.0)
+        assert data.grid_frequency_hz == pytest.approx(50.01)
+        assert data.internal_temperature_c == pytest.approx(42.3)
+        assert data.daily_yield_kwh == pytest.approx(15.5)
+        assert data.total_yield_kwh == pytest.approx(28945.0)
 
     @pytest.mark.anyio
     async def test_read_master_calls_get_multiple_with_correct_slave_id(self, driver, mock_client):
         """get_multiple is called with master_slave_id=0."""
-        mock_client.get_multiple.return_value = [
-            _result(0), _result(0.0), _result(0.0), _result(0.0),
-            _result(0.0), _result(0), _result(0),
+        mock_client.get_multiple.side_effect = [
+            [_result(0)] * 13,  # _MASTER_REGISTERS
+            [_result(0)] * 2,   # _MASTER_YIELD_REGISTERS
         ]
         driver._client = mock_client
 
         await driver.read_master()
 
-        _, kwargs = mock_client.get_multiple.call_args
-        assert kwargs.get("slave_id") == 0
+        first_call_kwargs = mock_client.get_multiple.call_args_list[0][1]
+        assert first_call_kwargs.get("slave_id") == 0
 
 
 # ---------------------------------------------------------------------------
@@ -342,16 +359,20 @@ class TestReadBattery:
 
     @pytest.mark.anyio
     async def test_read_battery_makes_two_get_multiple_calls(self, driver, mock_client):
-        """read_battery() must call get_multiple exactly twice."""
+        """read_battery() must call get_multiple at least twice (pack1 + pack2)."""
         mock_client.get_multiple.side_effect = [
             self._pack1_results(),
             self._pack2_results(),
+            [_result(1.0), _result(0.5)],   # day charge/discharge stats
+            [_result(100.0), _result(99.0)], # total charge/discharge
+            [_result(30000)],                # rated capacity
         ]
         driver._client = mock_client
 
         await driver.read_battery()
 
-        assert mock_client.get_multiple.call_count == 2
+        # 2 core calls + up to 3 best-effort stats calls
+        assert mock_client.get_multiple.call_count >= 2
 
     @pytest.mark.anyio
     async def test_read_battery_pack1_registers_come_first(self, driver, mock_client):
@@ -360,6 +381,9 @@ class TestReadBattery:
         mock_client.get_multiple.side_effect = [
             self._pack1_results(),
             self._pack2_results(),
+            [_result(1.0), _result(0.5)],
+            [_result(100.0), _result(99.0)],
+            [_result(30000)],
         ]
         driver._client = mock_client
 
@@ -515,16 +539,20 @@ class TestReconnect:
         # First get_multiple raises; after reconnect the second succeeds
         good_results = [
             _result(0x0002), _result(380.5), _result(5.2),
-            _result(375.0), _result(5.0), _result(4200), _result(3800),
+            _result(375.0), _result(5.0), _result(4200),
+            _result(233.0), _result(234.0), _result(235.0),
+            _result(3800), _result(50.0), _result(97.5), _result(42.0),
         ]
+        yield_results = [_result(28000.0), _result(15.0)]
         mock_client.get_multiple.side_effect = [
             ConnectionException("Connection lost"),
             good_results,
+            yield_results,
         ]
 
         fresh_client = AsyncMock()
         fresh_client.stop = AsyncMock()
-        fresh_client.get_multiple = AsyncMock(return_value=good_results)
+        fresh_client.get_multiple = AsyncMock(side_effect=[good_results, yield_results])
 
         driver._client = mock_client
 

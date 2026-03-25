@@ -52,7 +52,19 @@ _MASTER_REGISTERS: list[str] = [
     "pv_02_voltage",     # 32018
     "pv_02_current",     # 32019
     "input_power",       # 32064
+    "phase_A_voltage",   # 32069
+    "phase_B_voltage",   # 32070
+    "phase_C_voltage",   # 32071
     "active_power",      # 32080
+    "grid_frequency",    # 32085
+    "efficiency",        # 32086
+    "internal_temperature",  # 32087
+]
+
+# Extended master registers (separate read — different address range)
+_MASTER_YIELD_REGISTERS: list[str] = [
+    "accumulated_yield_energy",  # 32106
+    "daily_yield_energy",        # 32114
 ]
 
 # Slave inverter: same PV registers, no storage
@@ -75,6 +87,7 @@ _BATTERY_PACK1_REGISTERS: list[str] = [
     "storage_maximum_charge_power",           # 37046
     "storage_maximum_discharge_power",        # 37048
 ]
+
 
 # Battery pack 2 + combined system (37738–37767, all within 64-reg gap)
 # This call is wrapped in contextlib.suppress — pack 2 may be absent.
@@ -213,6 +226,21 @@ class HuaweiDriver:
             # results is list[Result] in the same order as _MASTER_REGISTERS
             r = {name: result.value for name, result in zip(_MASTER_REGISTERS, results)}
             logger.debug("read_master slave_id=%d raw=%s", self.master_slave_id, r)
+
+            # Extended yield registers (separate read, best-effort)
+            daily_kwh: float | None = None
+            total_kwh: float | None = None
+            try:
+                yield_results = await self._client.get_multiple(
+                    _MASTER_YIELD_REGISTERS,
+                    slave_id=self.master_slave_id,
+                )
+                yr = {n: res.value for n, res in zip(_MASTER_YIELD_REGISTERS, yield_results)}
+                daily_kwh = float(yr["daily_yield_energy"])
+                total_kwh = float(yr["accumulated_yield_energy"])
+            except Exception:
+                pass  # non-critical
+
             return HuaweiMasterData(
                 device_status=r["state_1"],
                 pv_01_voltage_v=float(r["pv_01_voltage"]),
@@ -221,6 +249,14 @@ class HuaweiDriver:
                 pv_02_current_a=float(r["pv_02_current"]),
                 pv_input_power_w=int(r["input_power"]),
                 active_power_w=int(r["active_power"]),
+                internal_temperature_c=float(r["internal_temperature"]),
+                grid_frequency_hz=float(r["grid_frequency"]),
+                efficiency_pct=float(r["efficiency"]),
+                phase_a_voltage_v=float(r["phase_A_voltage"]),
+                phase_b_voltage_v=float(r["phase_B_voltage"]),
+                phase_c_voltage_v=float(r["phase_C_voltage"]),
+                daily_yield_kwh=daily_kwh,
+                total_yield_kwh=total_kwh,
             )
 
         return await self._with_reconnect(_do)
@@ -315,7 +351,7 @@ class HuaweiDriver:
                     "read_battery pack2 slave_id=%d raw=%s", self.master_slave_id, p2
                 )
 
-            return HuaweiBatteryData(
+            bat = HuaweiBatteryData(
                 # Pack 1 (always present)
                 pack1_status=p1.get("storage_unit_1_running_status"),
                 pack1_charge_discharge_power_w=int(
@@ -351,6 +387,43 @@ class HuaweiDriver:
                     else int(p1["storage_unit_1_charge_discharge_power"])
                 ),
             )
+
+            # --- Call 3: Battery stats (best-effort) ---
+            _STATS_REGS = [
+                "storage_current_day_charge_capacity",
+                "storage_current_day_discharge_capacity",
+            ]
+            _STATS_REGS2 = [
+                "storage_total_charge",
+                "storage_total_discharge",
+            ]
+            try:
+                sr = await self._client.get_multiple(
+                    _STATS_REGS, slave_id=self.master_slave_id
+                )
+                sd = {n: res.value for n, res in zip(_STATS_REGS, sr)}
+                bat.day_charge_kwh = float(sd["storage_current_day_charge_capacity"])
+                bat.day_discharge_kwh = float(sd["storage_current_day_discharge_capacity"])
+            except Exception:
+                pass
+            try:
+                sr2 = await self._client.get_multiple(
+                    _STATS_REGS2, slave_id=self.master_slave_id
+                )
+                sd2 = {n: res.value for n, res in zip(_STATS_REGS2, sr2)}
+                bat.total_charge_kwh = float(sd2["storage_total_charge"])
+                bat.total_discharge_kwh = float(sd2["storage_total_discharge"])
+            except Exception:
+                pass
+            try:
+                cap_result = await self._client.get_multiple(
+                    ["storage_rated_capacity"], slave_id=self.master_slave_id
+                )
+                bat.rated_capacity_wh = int(cap_result[0].value)
+            except Exception:
+                pass
+
+            return bat
 
         return await self._with_reconnect(_do)
 

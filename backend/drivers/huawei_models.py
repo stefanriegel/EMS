@@ -41,6 +41,31 @@ class HuaweiMasterData:
     the register was not readable (e.g. during startup).
     """
 
+    # --- Extended telemetry (optional, None when not read) ---
+    internal_temperature_c: float | None = None
+    """Inverter internal temperature in degrees Celsius."""
+
+    grid_frequency_hz: float | None = None
+    """Grid frequency in Hz."""
+
+    efficiency_pct: float | None = None
+    """Inverter conversion efficiency in percent."""
+
+    phase_a_voltage_v: float | None = None
+    """Phase A voltage in volts."""
+
+    phase_b_voltage_v: float | None = None
+    """Phase B voltage in volts."""
+
+    phase_c_voltage_v: float | None = None
+    """Phase C voltage in volts."""
+
+    daily_yield_kwh: float | None = None
+    """Today's energy yield in kWh."""
+
+    total_yield_kwh: float | None = None
+    """Lifetime energy yield in kWh."""
+
 
 @dataclass
 class HuaweiSlaveData:
@@ -121,6 +146,21 @@ class HuaweiBatteryData:
 
     working_mode: int | None
     """Raw working-mode register value; ``None`` if unavailable."""
+
+    rated_capacity_wh: int | None = None
+    """Rated total battery capacity in Wh."""
+
+    day_charge_kwh: float | None = None
+    """Energy charged today in kWh."""
+
+    day_discharge_kwh: float | None = None
+    """Energy discharged today in kWh."""
+
+    total_charge_kwh: float | None = None
+    """Lifetime charge energy in kWh."""
+
+    total_discharge_kwh: float | None = None
+    """Lifetime discharge energy in kWh."""
 
     # --- Derived: system-level direction split ---
 
