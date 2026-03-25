@@ -53,9 +53,6 @@ _evcc_port=$(get_option 'evcc_port')
 [ -n "$_evcc_host" ] && export EVCC_HOST="$_evcc_host"
 [ -n "$_evcc_port" ] && export EVCC_PORT="$_evcc_port"
 
-_ha_heat=$(get_option 'ha_heat_pump_entity_id')
-[ -n "$_ha_heat" ] && export HA_HEAT_PUMP_ENTITY_ID="$_ha_heat"
-
 # --- Multi-entity HA REST polling (all optional) ---
 _ha_ent_hp=$(get_option 'ha_entity_heat_pump')
 [ -n "$_ha_ent_hp" ] && export HA_ENTITY_HEAT_PUMP="$_ha_ent_hp"

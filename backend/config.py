@@ -622,12 +622,10 @@ class HaStatisticsConfig:
         return cls(
             db_path=db_path,
             outdoor_temp_entity=os.environ.get(
-                "HA_STAT_OUTDOOR_TEMP_ENTITY",
-                "sensor.ems_esp_boiler_aussentemperatur",
+                "HA_STAT_OUTDOOR_TEMP_ENTITY", ""
             ),
             heat_pump_entity=os.environ.get(
-                "HA_STAT_HEAT_PUMP_ENTITY",
-                "sensor.warmepumpe_total_active_power",
+                "HA_STAT_HEAT_PUMP_ENTITY", ""
             ),
             dhw_entity=os.environ.get("HA_STAT_DHW_ENTITY") or None,
             min_training_days=int(os.environ.get("HA_ML_MIN_DAYS", "14")),

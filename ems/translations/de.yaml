@@ -76,14 +76,6 @@ configuration:
       Leer lassen für Auto-Erkennung. Nur für externe EVCC-Installationen.
       Standard-EVCC-API-Port ist 7070.
 
-  # --- HA Entity Monitoring ---
-  ha_heat_pump_entity_id:
-    name: Wärmepumpe Entity ID
-    description: >-
-      HA-Sensor-Entity-ID für die aktuelle Leistungsaufnahme der Wärmepumpe
-      in Watt. Beispiel: sensor.warmepumpe_total_active_power.
-      Leer lassen zum Deaktivieren.
-
   # --- HA Entity Monitoring (Multi-Entity REST Polling) ---
   ha_entity_heat_pump:
     name: Waermepumpe Leistung Entity

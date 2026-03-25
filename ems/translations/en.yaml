@@ -76,13 +76,6 @@ configuration:
       Leave blank for auto-discovery. Set only for external EVCC deployments.
       Default EVCC API port is 7070.
 
-  # --- Home Assistant entity monitoring ---
-  ha_heat_pump_entity_id:
-    name: Heat Pump Entity ID
-    description: >-
-      HA sensor entity ID reporting your heat pump's current power draw in watts.
-      Example: sensor.warmepumpe_total_active_power. Leave blank to disable.
-
   # --- HA entity monitoring (multi-entity REST polling) ---
   ha_entity_heat_pump:
     name: Heat Pump Power Entity
