@@ -48,21 +48,24 @@ configuration:
   influxdb_url:
     name: InfluxDB URL
     description: >-
-      Vollständige URL der InfluxDB v2 Instanz, z.B. http://192.168.0.10:8086.
-      Wird automatisch erkannt wenn das HA InfluxDB Add-on installiert ist —
-      leer lassen für Auto-Erkennung.
-  influxdb_token:
-    name: InfluxDB API Token
+      Vollstaendige URL der InfluxDB-Instanz, z.B. http://192.168.0.10:8086.
+      Wird automatisch erkannt wenn das HA InfluxDB Add-on installiert ist --
+      leer lassen fuer Auto-Erkennung.
+  influxdb_database:
+    name: InfluxDB Datenbank
     description: >-
-      InfluxDB v2 API-Token mit Schreibzugriff auf den Bucket.
-      Unter InfluxDB UI → Data → API Tokens zu finden.
-      Wird vom HA InfluxDB Add-on automatisch erkannt.
-  influxdb_org:
-    name: InfluxDB Organisation
-    description: InfluxDB Organisationsname. Standard ist "ems".
-  influxdb_bucket:
-    name: InfluxDB Bucket
-    description: InfluxDB Bucket für EMS-Metriken. Standard ist "ems".
+      InfluxDB-Datenbankname fuer EMS-Metriken. Standard ist "ems".
+      Die Datenbank muss in InfluxDB zuerst erstellt werden (CREATE DATABASE ems).
+  influxdb_username:
+    name: InfluxDB Benutzername
+    description: >-
+      Optionaler InfluxDB-Benutzername fuer die Authentifizierung. Leer lassen
+      wenn die InfluxDB-Instanz keine Authentifizierung erfordert.
+  influxdb_password:
+    name: InfluxDB Passwort
+    description: >-
+      Optionales InfluxDB-Passwort fuer die Authentifizierung. Leer lassen
+      wenn die InfluxDB-Instanz keine Authentifizierung erfordert.
 
   # --- EVCC ---
   evcc_host:

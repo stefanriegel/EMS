@@ -1,4 +1,9 @@
-"""InfluxMetricsReader — async Flux query wrapper for EMS metrics history (S05).
+"""InfluxMetricsReader -- async Flux query wrapper for EMS metrics history.
+
+TODO: This module still uses the InfluxDB v2 ``influxdb_client`` Flux query
+API.  It needs migration to InfluxDB v1 InfluxQL queries via direct HTTP
+(``GET /query?db=<database>&q=<influxql>``).  Until then, the reader is
+disabled in ``main.py`` and callers receive ``None``.
 
 Wraps the async ``influxdb_client`` query API and provides two read surfaces:
 

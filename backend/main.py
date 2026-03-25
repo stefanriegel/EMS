@@ -74,7 +74,6 @@ from backend.anomaly_detector import AnomalyDetector
 from backend.config import AnomalyDetectorConfig, CommissioningConfig, ModeManagerConfig
 from backend.huawei_mode_manager import HuaweiModeManager
 from backend.self_tuner import SelfTuner
-from influxdb_client.client.influxdb_client_async import InfluxDBClientAsync
 
 logger = logging.getLogger(__name__)
 
@@ -394,23 +393,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             len(tariff_cfg.modul3.windows),
         )
 
-        # --- Instantiate InfluxDB client and metrics writer (optional) ---
+        # --- Instantiate InfluxDB writer (optional, v1 line protocol) ---
         influx_cfg = InfluxConfig.from_env()
         if influx_cfg.enabled:
-            influx_client = InfluxDBClientAsync(
-                url=influx_cfg.url, token=influx_cfg.token, org=influx_cfg.org
+            metrics_writer: InfluxMetricsWriter | None = InfluxMetricsWriter(
+                url=influx_cfg.url,
+                database=influx_cfg.database,
+                username=influx_cfg.username,
+                password=influx_cfg.password,
             )
-            metrics_writer: InfluxMetricsWriter | None = InfluxMetricsWriter(influx_client, influx_cfg.bucket)
-            metrics_reader: InfluxMetricsReader | None = InfluxMetricsReader(influx_client, influx_cfg.org, influx_cfg.bucket)
+            # TODO: InfluxMetricsReader still uses the v2 Flux query API.
+            # It needs migration to v1 InfluxQL or direct HTTP queries.
+            # For now, disable it to avoid import errors.
+            metrics_reader: InfluxMetricsReader | None = None
             logger.info(
-                "InfluxDB client connected — url=%s org=%s", influx_cfg.url, influx_cfg.org
+                "InfluxDB writer connected -- url=%s database=%s",
+                influx_cfg.url,
+                influx_cfg.database,
             )
         else:
-            influx_client = None
             metrics_writer = None
             metrics_reader = None
             logger.info(
-                "InfluxDB disabled — set INFLUXDB_URL and INFLUXDB_TOKEN to enable metrics persistence"
+                "InfluxDB disabled -- set INFLUXDB_URL to enable metrics persistence"
             )
 
         # --- ModelStore (optional — model persistence across restarts) ---
@@ -862,9 +867,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if app.state.ha_rest_client is not None:
         await app.state.ha_rest_client.stop()
     if app.state.orchestrator is not None:
-        # influx_client and drivers are only created in the non-degraded path
-        if influx_client is not None:
-            await influx_client.close()
+        # Close InfluxDB writer HTTP client if it was created
+        if metrics_writer is not None:
+            await metrics_writer.close()
         await victron_ctrl.stop_watchdog_guard()
         logger.info("Disconnecting Victron driver")
         await victron.close()

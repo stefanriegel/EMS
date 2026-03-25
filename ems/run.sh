@@ -37,10 +37,12 @@ _victron_vb_unit=$(get_option 'victron_vebus_unit_id')
 
 _influxdb_url=$(get_option 'influxdb_url')
 [ -n "$_influxdb_url" ] && export INFLUXDB_URL="$_influxdb_url"
-_influxdb_token=$(get_option 'influxdb_token')
-[ -n "$_influxdb_token" ] && export INFLUXDB_TOKEN="$_influxdb_token"
-export INFLUXDB_ORG=$(get_option 'influxdb_org')
-export INFLUXDB_BUCKET=$(get_option 'influxdb_bucket')
+_influxdb_database=$(get_option 'influxdb_database')
+[ -n "$_influxdb_database" ] && export INFLUXDB_DATABASE="$_influxdb_database"
+_influxdb_username=$(get_option 'influxdb_username')
+[ -n "$_influxdb_username" ] && export INFLUXDB_USERNAME="$_influxdb_username"
+_influxdb_password=$(get_option 'influxdb_password')
+[ -n "$_influxdb_password" ] && export INFLUXDB_PASSWORD="$_influxdb_password"
 
 # --- Auto-discovered by Supervisor (MQTT, HA REST, EVCC add-on) ---
 # SUPERVISOR_TOKEN is injected automatically by the HA Supervisor — no export needed.

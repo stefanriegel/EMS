@@ -242,54 +242,68 @@ class OrchestratorConfig:
 
 @dataclass
 class InfluxConfig:
-    """Connection config for the InfluxDB time-series database.
+    """Connection config for InfluxDB v1 time-series database.
 
-    InfluxDB is **optional** — the EMS runs fully without it.  The client is
-    only instantiated when :attr:`enabled` is ``True``, i.e. when at least
-    one of ``INFLUXDB_URL`` or ``INFLUXDB_TOKEN`` is explicitly set in the
-    environment.
+    InfluxDB is **optional** -- the EMS runs fully without it.  The writer is
+    only instantiated when :attr:`enabled` is ``True``, i.e. when
+    ``INFLUXDB_URL`` is explicitly set in the environment.
 
     Attributes:
-        url:     HTTP(S) base URL of the InfluxDB instance (default: localhost).
-        token:   Authentication token — never logged.
-        org:     InfluxDB organisation name.
-        bucket:  Target bucket for EMS measurements.
-        enabled: ``True`` when InfluxDB is explicitly configured; ``False``
-                 when neither ``INFLUXDB_URL`` nor ``INFLUXDB_TOKEN`` is set.
+        url:      HTTP(S) base URL of the InfluxDB instance (default: localhost).
+        database: Target database name (InfluxDB v1 uses databases, not buckets).
+        username: Optional username for InfluxDB v1 basic auth.
+        password: Optional password for InfluxDB v1 basic auth -- never logged.
+        enabled:  ``True`` when InfluxDB is explicitly configured; ``False``
+                  when ``INFLUXDB_URL`` is not set.
 
     Environment variables:
-        ``INFLUXDB_URL``    — base URL (default ``http://localhost:8086``).
-        ``INFLUXDB_TOKEN``  — auth token (default ``""``, i.e. disabled).
-        ``INFLUXDB_ORG``    — organisation (default ``ems``).
-        ``INFLUXDB_BUCKET`` — bucket (default ``ems``).
+        ``INFLUXDB_URL``      -- base URL (default ``http://localhost:8086``).
+        ``INFLUXDB_DATABASE`` -- database name (default ``ems``).
+        ``INFLUXDB_BUCKET``   -- alias for database (backward compat).
+        ``INFLUXDB_USERNAME`` -- optional username (default ``""``).
+        ``INFLUXDB_PASSWORD`` -- password (default ``""``).
+        ``INFLUXDB_TOKEN``    -- alias for password (backward compat).
     """
 
     url: str = "http://localhost:8086"
-    token: str = ""
-    org: str = "ems"
-    bucket: str = "ems"
+    database: str = "ems"
+    username: str = ""
+    password: str = ""
     enabled: bool = False
 
     @classmethod
     def from_env(cls) -> "InfluxConfig":
         """Construct an :class:`InfluxConfig` from environment variables.
 
-        InfluxDB is considered **enabled** when either ``INFLUXDB_URL`` or
-        ``INFLUXDB_TOKEN`` is explicitly set to a non-empty value.  When
-        neither is set :attr:`enabled` is ``False`` and the lifespan will
-        skip instantiating the InfluxDB client.
+        InfluxDB is considered **enabled** when ``INFLUXDB_URL`` is explicitly
+        set to a non-empty value.  When it is not set :attr:`enabled` is
+        ``False`` and the lifespan will skip instantiating the writer.
 
-        All connection fields fall back to safe defaults when their
-        corresponding variable is absent.
+        For backward compatibility:
+        - ``INFLUXDB_BUCKET`` is accepted as an alias for ``INFLUXDB_DATABASE``
+        - ``INFLUXDB_TOKEN`` is accepted as an alias for ``INFLUXDB_PASSWORD``
         """
         raw_url = os.environ.get("INFLUXDB_URL", "")
-        raw_token = os.environ.get("INFLUXDB_TOKEN", "")
-        enabled = bool(raw_url or raw_token)
+        enabled = bool(raw_url)
+
+        # Database: prefer INFLUXDB_DATABASE, fall back to INFLUXDB_BUCKET
+        database = (
+            os.environ.get("INFLUXDB_DATABASE", "")
+            or os.environ.get("INFLUXDB_BUCKET", "")
+            or "ems"
+        )
+
+        # Password: prefer INFLUXDB_PASSWORD, fall back to INFLUXDB_TOKEN
+        password = (
+            os.environ.get("INFLUXDB_PASSWORD", "")
+            or os.environ.get("INFLUXDB_TOKEN", "")
+        )
+
         return cls(
             url=raw_url or "http://localhost:8086",
-            token=raw_token,
-            org=os.environ.get("INFLUXDB_ORG", "") or "ems",
-            bucket=os.environ.get("INFLUXDB_BUCKET", "") or "ems",
+            database=database,
+            username=os.environ.get("INFLUXDB_USERNAME", ""),
+            password=password,
             enabled=enabled,
         )
 

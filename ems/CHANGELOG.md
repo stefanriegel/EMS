@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.8.0
+
+- InfluxDB v1 support: replaced v2 client with native line protocol writes via httpx
+- Works with the HA community InfluxDB add-on (v1.8.x) out of the box
+- Config: influxdb_database/username/password replace influxdb_token/org/bucket
+- Auto-discovery sets URL automatically, just configure database name and credentials
+
 ## 1.7.0
 
 - Commissioning control panel: force-advance stages, toggle shadow mode from the dashboard

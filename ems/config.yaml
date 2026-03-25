@@ -1,5 +1,5 @@
 name: EMS – Energy Management System
-version: "1.7.0"
+version: "1.8.0"
 slug: ems
 description: >-
   Energy Management System for Huawei SUN2000 + Victron MultiPlus II.
@@ -45,9 +45,9 @@ options:
   victron_vebus_unit_id: 227
   # --- InfluxDB (auto-detected from HA add-on if installed) ---
   influxdb_url: ""
-  influxdb_token: ""
-  influxdb_org: "ems"
-  influxdb_bucket: "ems"
+  influxdb_database: "ems"
+  influxdb_username: ""
+  influxdb_password: ""
   # --- Coordinator tuning (advanced) ---
   huawei_deadband_w: 400
   victron_deadband_w: 150
@@ -100,9 +100,9 @@ schema:
   victron_vebus_unit_id: int?
   # --- InfluxDB ---
   influxdb_url: str
-  influxdb_token: password
-  influxdb_org: str
-  influxdb_bucket: str
+  influxdb_database: str
+  influxdb_username: str
+  influxdb_password: password
   # --- Coordinator tuning (advanced) ---
   huawei_deadband_w: int?
   victron_deadband_w: int?
