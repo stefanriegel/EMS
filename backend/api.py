@@ -1034,6 +1034,73 @@ def _build_loads_dict(app: Any) -> dict[str, Any] | None:
     }
 
 
+def _build_tariff_dict(app: Any, tariff_engine: Any) -> dict[str, Any]:
+    """Build the ``tariff`` sub-dict, preferring EVCC grid prices when available.
+
+    Priority:
+    1. EVCC grid prices (already combined Octopus + Modul3)
+    2. CompositeTariffEngine (local calculation)
+    3. All-null fallback
+    """
+    _null_tariff: dict[str, Any] = {
+        "effective_rate_eur_kwh": None,
+        "octopus_rate_eur_kwh": None,
+        "modul3_rate_eur_kwh": None,
+        "source": "none",
+    }
+
+    # --- Strategy 1: EVCC grid prices (single source of truth) ---
+    scheduler = getattr(app.state, "scheduler", None)
+    if scheduler is not None:
+        gp = getattr(scheduler, "last_grid_prices", None)
+        if gp is not None and gp.import_eur_kwh:
+            try:
+                from datetime import datetime, timezone
+                now = datetime.now(tz=timezone.utc)
+                # Find the current time slot in the price series
+                current_rate = gp.import_eur_kwh[-1]  # fallback: last known
+                for i, ts in enumerate(gp.slot_timestamps_utc):
+                    if i + 1 < len(gp.slot_timestamps_utc):
+                        if ts <= now < gp.slot_timestamps_utc[i + 1]:
+                            current_rate = gp.import_eur_kwh[i]
+                            break
+                    elif ts <= now:
+                        current_rate = gp.import_eur_kwh[i]
+                return {
+                    "effective_rate_eur_kwh": round(current_rate, 6),
+                    "octopus_rate_eur_kwh": None,
+                    "modul3_rate_eur_kwh": None,
+                    "source": "evcc",
+                }
+            except Exception:
+                pass  # fall through to engine
+
+    # --- Strategy 2: CompositeTariffEngine ---
+    if tariff_engine is not None:
+        try:
+            from datetime import datetime, timezone
+            from zoneinfo import ZoneInfo
+            now = datetime.now(tz=timezone.utc)
+            oct_tz = ZoneInfo(tariff_engine._octopus.timezone)
+            m3_tz = ZoneInfo(tariff_engine._modul3.timezone)
+            now_oct = now.astimezone(oct_tz)
+            now_m3 = now.astimezone(m3_tz)
+            oct_min = now_oct.hour * 60 + now_oct.minute
+            m3_min = now_m3.hour * 60 + now_m3.minute
+            oct_rate = tariff_engine._octopus_rate_at(oct_min)
+            m3_rate = tariff_engine._modul3_rate_at(m3_min)
+            return {
+                "effective_rate_eur_kwh": round(oct_rate + m3_rate, 6),
+                "octopus_rate_eur_kwh": oct_rate,
+                "modul3_rate_eur_kwh": m3_rate,
+                "source": "live" if type(tariff_engine).__name__ == "LiveOctopusTariff" else "hardcoded",
+            }
+        except Exception:
+            return {**_null_tariff, "source": "error"}
+
+    return _null_tariff
+
+
 def _build_evcc_dict(app: Any) -> dict[str, Any]:
     """Build the ``evcc`` sub-dict from ``app.state.evcc_driver``.
 
@@ -1120,39 +1187,7 @@ async def ws_state(
             devices_dict = orchestrator.get_device_snapshot()
 
             # --- Build tariff snapshot ---
-            if tariff_engine is not None:
-                try:
-                    from datetime import datetime, timezone
-                    from zoneinfo import ZoneInfo
-                    now = datetime.now(tz=timezone.utc)
-                    oct_tz = ZoneInfo(tariff_engine._octopus.timezone)
-                    m3_tz = ZoneInfo(tariff_engine._modul3.timezone)
-                    now_oct = now.astimezone(oct_tz)
-                    now_m3 = now.astimezone(m3_tz)
-                    oct_min = now_oct.hour * 60 + now_oct.minute
-                    m3_min = now_m3.hour * 60 + now_m3.minute
-                    oct_rate = tariff_engine._octopus_rate_at(oct_min)
-                    m3_rate = tariff_engine._modul3_rate_at(m3_min)
-                    tariff_dict: dict[str, Any] = {
-                        "effective_rate_eur_kwh": round(oct_rate + m3_rate, 6),
-                        "octopus_rate_eur_kwh": oct_rate,
-                        "modul3_rate_eur_kwh": m3_rate,
-                        "source": "live" if type(tariff_engine).__name__ == "LiveOctopusTariff" else "hardcoded",
-                    }
-                except Exception:
-                    tariff_dict = {
-                        "effective_rate_eur_kwh": None,
-                        "octopus_rate_eur_kwh": None,
-                        "modul3_rate_eur_kwh": None,
-                        "source": "live" if type(tariff_engine).__name__ == "LiveOctopusTariff" else "hardcoded",
-                    }
-            else:
-                tariff_dict = {
-                    "effective_rate_eur_kwh": None,
-                    "octopus_rate_eur_kwh": None,
-                    "modul3_rate_eur_kwh": None,
-                    "source": "hardcoded",
-                }
+            tariff_dict = _build_tariff_dict(ws.app, tariff_engine)
 
             # --- Build optimization snapshot ---
             ws_scheduler = getattr(ws.app.state, "scheduler", None)

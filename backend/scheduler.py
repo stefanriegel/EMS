@@ -119,6 +119,7 @@ class Scheduler:
         self._orch_config = orch_config
         self.active_schedule: ChargeSchedule | None = None
         self.schedule_stale: bool = False
+        self.last_grid_prices: "GridPriceSeries | None" = None
 
     async def compute_schedule(self, writer=None) -> ChargeSchedule:
         """Compute a new charge schedule for the battery pool.
@@ -146,6 +147,10 @@ class Scheduler:
         # 1. Fetch EVCC state
         # ------------------------------------------------------------------
         evcc_state = await self._evcc_client.get_state()
+
+        # Cache grid prices for live tariff display
+        if evcc_state is not None and evcc_state.grid_prices is not None:
+            self.last_grid_prices = evcc_state.grid_prices
 
         if evcc_state is None:
             self.schedule_stale = True

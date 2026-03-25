@@ -499,6 +499,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         effective_consumption_reader = consumption_forecaster if consumption_forecaster is not None else metrics_reader
 
         evcc_client = EvccClient(evcc_cfg)
+        app.state.evcc_client = evcc_client
         scheduler = Scheduler(evcc_client, effective_consumption_reader, tariff_engine, sys_cfg, orch_cfg)
         weather_scheduler = WeatherScheduler(
             scheduler=scheduler,

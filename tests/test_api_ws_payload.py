@@ -48,12 +48,12 @@ def _make_app(*, tariff_engine=None, scheduler=None, forecast_comparison=None):
 # ---------------------------------------------------------------------------
 
 
-def test_ws_tariff_source_is_hardcoded_by_default():
-    """WS tariff dict contains 'source': 'hardcoded' when no tariff engine is set."""
+def test_ws_tariff_source_is_none_by_default():
+    """WS tariff dict contains 'source': 'none' when no tariff engine or EVCC is set."""
     from starlette.testclient import TestClient
 
     app = _make_app()
-    # No tariff_engine on app.state → hardcoded branch
+    # No tariff_engine or scheduler on app.state → none branch
 
     with TestClient(app).websocket_connect("/api/ws/state") as ws:
         data = ws.receive_json()
@@ -61,8 +61,8 @@ def test_ws_tariff_source_is_hardcoded_by_default():
     assert "tariff" in data, f"Missing 'tariff' key: {data}"
     tariff = data["tariff"]
     assert "source" in tariff, f"'source' field missing from tariff dict: {tariff}"
-    assert tariff["source"] == "hardcoded", (
-        f"Expected source='hardcoded' with no engine, got {tariff['source']!r}"
+    assert tariff["source"] == "none", (
+        f"Expected source='none' with no engine, got {tariff['source']!r}"
     )
 
 
