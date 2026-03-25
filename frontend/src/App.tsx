@@ -26,6 +26,7 @@ import { TariffCard } from "./components/TariffCard";
 import { OptimizationCard } from "./components/OptimizationCard";
 import { EvccCard } from "./components/EvccCard";
 import { LoadsCard } from "./components/LoadsCard";
+import { CommissioningCard } from "./components/CommissioningCard";
 import { useDecisions } from "./hooks/useDecisions";
 import { useForecast } from "./hooks/useForecast";
 import { ForecastCard } from "./components/ForecastCard";
@@ -135,6 +136,7 @@ function DashboardLayout() {
             haMqttConnected={haMqttConnected}
           />
           <LoadsCard loads={loads} />
+          <CommissioningCard />
           <DecisionLog decisions={decisions} />
         </div>
       </main>

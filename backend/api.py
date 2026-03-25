@@ -52,6 +52,7 @@ from datetime import date as date_type
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from backend.config import SystemConfig
@@ -334,6 +335,68 @@ async def post_config(
     )
     orchestrator.sys_config = new_cfg
     return _config_to_dict(new_cfg)
+
+
+# ---------------------------------------------------------------------------
+# Commissioning routes
+# ---------------------------------------------------------------------------
+
+
+@api_router.post("/commissioning/advance")
+async def advance_commissioning(request: Request):
+    """Advance to the next commissioning stage."""
+    mgr = getattr(request.app.state, "commissioning_manager", None)
+    if mgr is None:
+        return JSONResponse({"error": "Commissioning not available"}, status_code=503)
+
+    current = mgr.stage.value
+    advanced = mgr.advance()
+    if advanced:
+        return {"ok": True, "previous_stage": current, "new_stage": mgr.stage.value, "shadow_mode": mgr.shadow_mode}
+    else:
+        prog = mgr.get_progression_status()
+        return JSONResponse(
+            {
+                "error": "Cannot advance yet",
+                "stage": current,
+                "time_in_stage_hours": prog["time_in_stage_hours"],
+                "min_hours_required": prog["min_hours_required"],
+            },
+            status_code=409,
+        )
+
+
+@api_router.post("/commissioning/force-advance")
+async def force_advance_commissioning(request: Request):
+    """Force advance commissioning stage, bypassing time requirement."""
+    mgr = getattr(request.app.state, "commissioning_manager", None)
+    if mgr is None:
+        return JSONResponse({"error": "Commissioning not available"}, status_code=503)
+    current = mgr.stage.value
+    advanced = mgr.force_advance()
+    if not advanced:
+        return JSONResponse(
+            {"error": "Already at final stage", "stage": current},
+            status_code=409,
+        )
+    return {"ok": True, "previous_stage": current, "new_stage": mgr.stage.value, "shadow_mode": mgr.shadow_mode}
+
+
+# ---------------------------------------------------------------------------
+# Override routes
+# ---------------------------------------------------------------------------
+
+
+@api_router.post("/override/shadow-mode")
+async def toggle_shadow_mode(request: Request):
+    """Toggle shadow mode on/off."""
+    mgr = getattr(request.app.state, "commissioning_manager", None)
+    if mgr is None:
+        return JSONResponse({"error": "Commissioning not available"}, status_code=503)
+    body = await request.json()
+    enabled = body.get("enabled", True)
+    mgr.shadow_mode = enabled
+    return {"ok": True, "shadow_mode": mgr.shadow_mode}
 
 
 # ---------------------------------------------------------------------------

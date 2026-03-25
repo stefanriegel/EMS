@@ -156,6 +156,13 @@ class CommissioningManager:
         assert self._state is not None
         return self._state.shadow_mode
 
+    @shadow_mode.setter
+    def shadow_mode(self, value: bool) -> None:
+        """Set shadow mode and persist."""
+        assert self._state is not None
+        self._state.shadow_mode = value
+        self._save_state()
+
     @property
     def state(self) -> CommissioningState:
         """Full state snapshot."""
@@ -169,6 +176,29 @@ class CommissioningManager:
         return datetime.fromtimestamp(
             self._state.stage_entered_at, tz=timezone.utc
         ).isoformat()
+
+    def force_advance(self) -> bool:
+        """Advance to the next commissioning stage, bypassing time requirement.
+
+        Returns ``True`` if the stage was advanced, ``False`` if already at
+        the final stage (DUAL_BATTERY).
+        """
+        assert self._state is not None, "Call load_or_init() first"
+
+        idx = _STAGE_ORDER.index(self._state.stage)
+        if idx >= len(_STAGE_ORDER) - 1:
+            return False
+
+        next_stage = _STAGE_ORDER[idx + 1]
+        logger.info(
+            "Commissioning force-advancing: %s -> %s",
+            self._state.stage.value,
+            next_stage.value,
+        )
+        self._state.stage = next_stage
+        self._state.stage_entered_at = time.time()
+        self._save_state()
+        return True
 
     def get_progression_status(self) -> dict:
         """Return progression status for API display.
