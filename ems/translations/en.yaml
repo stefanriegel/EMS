@@ -83,6 +83,51 @@ configuration:
       HA sensor entity ID reporting your heat pump's current power draw in watts.
       Example: sensor.warmepumpe_total_active_power. Leave blank to disable.
 
+  # --- HA entity monitoring (multi-entity REST polling) ---
+  ha_entity_heat_pump:
+    name: Heat Pump Power Entity
+    description: >-
+      HA sensor entity ID for heat pump power consumption (W).
+      Example: sensor.warmepumpe_total_active_power. Leave blank to disable.
+  ha_entity_cop:
+    name: Heat Pump COP Entity
+    description: >-
+      HA sensor entity ID for heat pump coefficient of performance.
+      Example: sensor.ems_esp_boiler_current_coefficient_of_performance.
+      Leave blank to disable.
+  ha_entity_outdoor_temp:
+    name: Outdoor Temperature Entity
+    description: >-
+      HA sensor entity ID for outdoor temperature (C).
+      Example: sensor.ems_esp_boiler_aussentemperatur. Leave blank to disable.
+  ha_entity_flow_temp:
+    name: Flow Temperature Entity (Vorlauf)
+    description: >-
+      HA sensor entity ID for heating flow temperature (C).
+      Example: sensor.ems_esp_boiler_actual_flow_water_temperature.
+      Leave blank to disable.
+  ha_entity_return_temp:
+    name: Return Temperature Entity (Ruecklauf)
+    description: >-
+      HA sensor entity ID for heating return temperature (C).
+      Example: sensor.ems_esp_boiler_return_temperature.
+      Leave blank to disable.
+  ha_entity_hausverbrauch:
+    name: Total Consumption Entity
+    description: >-
+      HA sensor entity ID for total household consumption (W).
+      Example: sensor.hausverbrauch. Leave blank to disable.
+  ha_entity_steuerbare:
+    name: Controllable Loads Entity
+    description: >-
+      HA sensor entity ID for controllable loads power (W).
+      Example: sensor.steuerbare_verbraucher. Leave blank to disable.
+  ha_entity_base_load:
+    name: Base Load Entity
+    description: >-
+      HA sensor entity ID for base load (total minus controllable) (W).
+      Example: sensor.hausverbrauch_abzgl_steuerbare. Leave blank to disable.
+
   # --- ML Consumption Forecaster ---
   ha_db_path:
     name: HA Database Path

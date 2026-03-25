@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 
 def _require_env(key: str) -> str:
@@ -646,25 +647,36 @@ class MultiEntityHaConfig:
 
     entity_map: dict
 
-    @classmethod
-    def default_entities(cls) -> dict:
-        """Return the default 8-entity map covering all roadmap-specified sensors."""
-        from backend.ha_rest_client import _float_converter  # noqa: PLC0415
-        return {
-            "heat_pump_power_w": ("sensor.warmepumpe_total_active_power", _float_converter),
-            "cop": ("sensor.ems_esp_boiler_current_coefficient_of_performance", _float_converter),
-            "outdoor_temp_c": ("sensor.ems_esp_boiler_aussentemperatur", _float_converter),
-            "flow_temp_c": ("sensor.ems_esp_boiler_actual_flow_water_temperature", _float_converter),
-            "return_temp_c": ("sensor.ems_esp_boiler_return_temperature", _float_converter),
-            "hausverbrauch_w": ("sensor.hausverbrauch", _float_converter),
-            "steuerbare_w": ("sensor.steuerbare_verbraucher", _float_converter),
-            "base_w": ("sensor.hausverbrauch_abzgl_steuerbare", _float_converter),
-        }
+    # Maps env-var names → (field_name, default_entity_id).
+    # When the env var is set to a non-empty string, the entity is included.
+    # When absent or empty, the entity is skipped — no 404 log spam.
+    _ENV_ENTITY_MAP: ClassVar[list[tuple[str, str]]] = [
+        ("HA_ENTITY_HEAT_PUMP", "heat_pump_power_w"),
+        ("HA_ENTITY_COP", "cop"),
+        ("HA_ENTITY_OUTDOOR_TEMP", "outdoor_temp_c"),
+        ("HA_ENTITY_FLOW_TEMP", "flow_temp_c"),
+        ("HA_ENTITY_RETURN_TEMP", "return_temp_c"),
+        ("HA_ENTITY_HAUSVERBRAUCH", "hausverbrauch_w"),
+        ("HA_ENTITY_STEUERBARE", "steuerbare_w"),
+        ("HA_ENTITY_BASE_LOAD", "base_w"),
+    ]
 
     @classmethod
     def from_env(cls) -> "MultiEntityHaConfig":
-        """Construct from environment variables with sensible defaults."""
-        return cls(entity_map=cls.default_entities())
+        """Build entity map from environment variables.
+
+        Only entities whose env var is set to a non-empty string are included.
+        This eliminates 404 log spam for entities that don't exist in the
+        user's HA instance.
+        """
+        from backend.ha_rest_client import _float_converter  # noqa: PLC0415
+
+        entity_map: dict = {}
+        for env_var, field_name in cls._ENV_ENTITY_MAP:
+            entity_id = os.environ.get(env_var, "")
+            if entity_id:
+                entity_map[field_name] = (entity_id, _float_converter)
+        return cls(entity_map=entity_map)
 
 
 @dataclass
