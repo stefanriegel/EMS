@@ -72,7 +72,9 @@ class EvccMqttDriver:
         TCP port (default 1883).
     """
 
-    def __init__(self, host: str, port: int = 1883) -> None:
+    def __init__(
+        self, host: str, port: int = 1883, username: str = "", password: str = ""
+    ) -> None:
         self.host = host
         self.port = port
 
@@ -90,6 +92,8 @@ class EvccMqttDriver:
             mqtt.CallbackAPIVersion.VERSION2,
             client_id="ems-evcc-driver",
         )
+        if username:
+            self._client.username_pw_set(username, password)
         self._client.on_connect = self._on_connect
         self._client.on_disconnect = self._on_disconnect
         self._client.on_message = self._on_message

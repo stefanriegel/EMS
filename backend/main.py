@@ -706,7 +706,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # --- EVCC MQTT driver (optional — skipped if host is not configured) ---
         evcc_mqtt_cfg = EvccMqttConfig.from_env()
         try:
-            evcc_driver = EvccMqttDriver(host=evcc_mqtt_cfg.host, port=evcc_mqtt_cfg.port)
+            evcc_driver = EvccMqttDriver(
+                host=evcc_mqtt_cfg.host,
+                port=evcc_mqtt_cfg.port,
+                username=os.environ.get("EVCC_MQTT_USERNAME", ""),
+                password=os.environ.get("EVCC_MQTT_PASSWORD", ""),
+            )
             await evcc_driver.connect()
             coordinator.set_evcc_monitor(evcc_driver)
             app.state.evcc_driver = evcc_driver
