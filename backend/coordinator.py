@@ -657,6 +657,9 @@ class Coordinator:
     async def _run_cycle(self) -> None:
         """Single control cycle: poll, decide, execute, build state."""
         # 1. Poll both controllers
+        # Pass shadow_mode to Huawei controller so mode manager skips writes
+        mgr = self._commissioning_manager
+        self._huawei_ctrl._shadow_mode = mgr.shadow_mode if mgr is not None else False
         h_snap = await self._huawei_ctrl.poll()
         v_snap = await self._victron_ctrl.poll()
         self._last_h_snap = h_snap

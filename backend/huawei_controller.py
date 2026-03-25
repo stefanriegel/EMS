@@ -56,6 +56,7 @@ class HuaweiController:
         self._last_master: HuaweiMasterData | None = None
         self._last_read_time: float = 0.0
         self._mode_manager: HuaweiModeManager | None = None
+        self._shadow_mode: bool = False
 
     @property
     def role(self) -> BatteryRole:
@@ -151,8 +152,9 @@ class HuaweiController:
                 else 0,
             )
 
-        # Mode manager health check (interval-gated internally)
-        if self._mode_manager is not None:
+        # Mode manager health check (interval-gated internally).
+        # Skip during shadow mode — no writes should happen.
+        if self._mode_manager is not None and not self._shadow_mode:
             await self._mode_manager.check_health(battery.working_mode)
 
         # Check if we crossed the failure threshold despite stale counting
