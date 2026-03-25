@@ -231,7 +231,7 @@ class TestVictronDriverRead:
         6. VE.Bus state: reg 31 -> [9]
         7. VE.Bus mode: reg 33 -> [3]
         """
-        def read_handler(address, count=1, slave=0):
+        def read_handler(address, count=1, device_id=0):
             responses = {
                 (840, 4, 100): _mock_register_response([482, 52, 1500, 60]),
                 (820, 3, 100): _mock_register_response([100, 200, 65486]),
@@ -241,10 +241,10 @@ class TestVictronDriverRead:
                 (31, 1, 227): _mock_register_response([9]),
                 (33, 1, 227): _mock_register_response([3]),
             }
-            key = (address, count, slave)
+            key = (address, count, device_id)
             if key in responses:
                 return responses[key]
-            raise ValueError(f"Unexpected read: address={address} count={count} slave={slave}")
+            raise ValueError(f"Unexpected read: address={address} count={count} device_id={device_id}")
 
         mock_client.read_holding_registers = AsyncMock(side_effect=read_handler)
 
@@ -286,7 +286,7 @@ class TestVictronDriverRead:
     @pytest.mark.anyio
     async def test_read_system_state_signed16(self, driver, mock_client):
         """Register value 65036 (0xFE0C) decodes to -500 for battery_power_w."""
-        def read_handler(address, count=1, slave=0):
+        def read_handler(address, count=1, device_id=0):
             responses = {
                 (840, 4, 100): _mock_register_response([482, 52, 65036, 60]),
                 (820, 3, 100): _mock_register_response([0, 0, 0]),
@@ -296,7 +296,7 @@ class TestVictronDriverRead:
                 (31, 1, 227): _mock_register_response([0]),
                 (33, 1, 227): _mock_register_response([0]),
             }
-            return responses.get((address, count, slave), _mock_register_response([0]))
+            return responses.get((address, count, device_id), _mock_register_response([0]))
 
         mock_client.read_holding_registers = AsyncMock(side_effect=read_handler)
 
@@ -335,7 +335,7 @@ class TestVictronDriverWrite:
         await driver.connect()
         await driver.write_ac_power_setpoint(1, -500.0)
         mock_client.write_register.assert_called_with(
-            address=37, value=0xFE0C, slave=227,
+            address=37, value=0xFE0C, device_id=227,
         )
 
     @pytest.mark.anyio
@@ -344,7 +344,7 @@ class TestVictronDriverWrite:
         await driver.connect()
         await driver.write_ac_power_setpoint(2, 300.0)
         mock_client.write_register.assert_called_with(
-            address=40, value=300, slave=227,
+            address=40, value=300, device_id=227,
         )
 
     @pytest.mark.anyio
@@ -353,7 +353,7 @@ class TestVictronDriverWrite:
         await driver.connect()
         await driver.write_ac_power_setpoint(3, 0.0)
         mock_client.write_register.assert_called_with(
-            address=41, value=0, slave=227,
+            address=41, value=0, device_id=227,
         )
 
 
@@ -407,7 +407,7 @@ class TestVictronDriverSignConvention:
     @pytest.mark.anyio
     async def test_positive_battery_power_is_charging(self, driver, mock_client):
         """Raw register 842 = 1500 -> battery_power_w = 1500 (charging)."""
-        def read_handler(address, count=1, slave=0):
+        def read_handler(address, count=1, device_id=0):
             responses = {
                 (840, 4, 100): _mock_register_response([480, 50, 1500, 60]),
                 (820, 3, 100): _mock_register_response([0, 0, 0]),
@@ -417,7 +417,7 @@ class TestVictronDriverSignConvention:
                 (31, 1, 227): _mock_register_response([0]),
                 (33, 1, 227): _mock_register_response([0]),
             }
-            return responses.get((address, count, slave), _mock_register_response([0]))
+            return responses.get((address, count, device_id), _mock_register_response([0]))
 
         mock_client.read_holding_registers = AsyncMock(side_effect=read_handler)
 
@@ -429,7 +429,7 @@ class TestVictronDriverSignConvention:
     @pytest.mark.anyio
     async def test_negative_battery_power_is_discharging(self, driver, mock_client):
         """Raw register 842 = 0xFA24 (-1500) -> battery_power_w = -1500 (discharging)."""
-        def read_handler(address, count=1, slave=0):
+        def read_handler(address, count=1, device_id=0):
             # 0xFA24 = 64036 unsigned = -1500 signed
             responses = {
                 (840, 4, 100): _mock_register_response([480, 50, 64036, 60]),
@@ -440,7 +440,7 @@ class TestVictronDriverSignConvention:
                 (31, 1, 227): _mock_register_response([0]),
                 (33, 1, 227): _mock_register_response([0]),
             }
-            return responses.get((address, count, slave), _mock_register_response([0]))
+            return responses.get((address, count, device_id), _mock_register_response([0]))
 
         mock_client.read_holding_registers = AsyncMock(side_effect=read_handler)
 
@@ -457,7 +457,7 @@ class TestVictronDriverSignConvention:
 class TestVictronDriverUnitIds:
     @pytest.mark.anyio
     async def test_custom_unit_ids(self, mock_client):
-        """Custom unit IDs are passed to read_holding_registers as slave."""
+        """Custom unit IDs are passed to read_holding_registers as device_id."""
         from backend.drivers.victron_driver import VictronDriver
 
         with patch(
@@ -472,7 +472,7 @@ class TestVictronDriverUnitIds:
             )
 
         # Set up read responses with the custom unit IDs
-        def read_handler(address, count=1, slave=0):
+        def read_handler(address, count=1, device_id=0):
             responses = {
                 (843, 1, 101): _mock_register_response([60]),  # health check
                 (840, 4, 101): _mock_register_response([480, 50, 0, 60]),
@@ -483,11 +483,11 @@ class TestVictronDriverUnitIds:
                 (31, 1, 228): _mock_register_response([0]),
                 (33, 1, 228): _mock_register_response([0]),
             }
-            key = (address, count, slave)
+            key = (address, count, device_id)
             if key in responses:
                 return responses[key]
             raise ValueError(
-                f"Unexpected read: address={address} count={count} slave={slave}"
+                f"Unexpected read: address={address} count={count} device_id={device_id}"
             )
 
         mock_client.read_holding_registers = AsyncMock(side_effect=read_handler)

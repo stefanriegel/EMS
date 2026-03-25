@@ -155,7 +155,7 @@ class VictronDriver:
         result = await self._client.read_holding_registers(
             address=_SYS_REG_BATTERY_SOC,
             count=1,
-            slave=self._system_unit_id,
+            device_id=self._system_unit_id,
         )
         if result.isError():
             self._client.close()
@@ -239,7 +239,7 @@ class VictronDriver:
             sys_bat = await self._client.read_holding_registers(
                 address=_SYS_REG_BATTERY_VOLTAGE,
                 count=4,
-                slave=self._system_unit_id,
+                device_id=self._system_unit_id,
             )
             bat_voltage_v = sys_bat.registers[0] / 10.0
             bat_current_a = _signed16(sys_bat.registers[1]) / 10.0
@@ -250,7 +250,7 @@ class VictronDriver:
             sys_grid = await self._client.read_holding_registers(
                 address=_SYS_REG_GRID_L1_POWER,
                 count=3,
-                slave=self._system_unit_id,
+                device_id=self._system_unit_id,
             )
             grid_l1_w = float(_signed16(sys_grid.registers[0]))
             grid_l2_w = float(_signed16(sys_grid.registers[1]))
@@ -261,7 +261,7 @@ class VictronDriver:
             vb_volt = await self._client.read_holding_registers(
                 address=_VB_REG_AC_OUT_L1_V,
                 count=3,
-                slave=self._vebus_unit_id,
+                device_id=self._vebus_unit_id,
             )
             l1_voltage_v = vb_volt.registers[0] / 10.0
             l2_voltage_v = vb_volt.registers[1] / 10.0
@@ -271,7 +271,7 @@ class VictronDriver:
             vb_curr = await self._client.read_holding_registers(
                 address=_VB_REG_AC_OUT_L1_I,
                 count=3,
-                slave=self._vebus_unit_id,
+                device_id=self._vebus_unit_id,
             )
             l1_current_a = _signed16(vb_curr.registers[0]) / 10.0
             l2_current_a = _signed16(vb_curr.registers[1]) / 10.0
@@ -281,7 +281,7 @@ class VictronDriver:
             vb_pow = await self._client.read_holding_registers(
                 address=_VB_REG_AC_OUT_L1_P,
                 count=3,
-                slave=self._vebus_unit_id,
+                device_id=self._vebus_unit_id,
             )
             l1_power_w = _signed16(vb_pow.registers[0]) * 0.1
             l2_power_w = _signed16(vb_pow.registers[1]) * 0.1
@@ -291,7 +291,7 @@ class VictronDriver:
             vb_state = await self._client.read_holding_registers(
                 address=_VB_REG_STATE,
                 count=1,
-                slave=self._vebus_unit_id,
+                device_id=self._vebus_unit_id,
             )
             vebus_state = int(vb_state.registers[0])
 
@@ -299,7 +299,7 @@ class VictronDriver:
             vb_mode = await self._client.read_holding_registers(
                 address=_VB_REG_MODE,
                 count=1,
-                slave=self._vebus_unit_id,
+                device_id=self._vebus_unit_id,
             )
             ess_mode = int(vb_mode.registers[0])
 
@@ -387,7 +387,7 @@ class VictronDriver:
             await self._client.write_register(
                 address=reg,
                 value=value,
-                slave=self._vebus_unit_id,
+                device_id=self._vebus_unit_id,
             )
             logger.debug(
                 "Victron setpoint: phase L%d = %d W (reg %d, raw 0x%04X, "
@@ -444,7 +444,7 @@ class VictronDriver:
             result = await self._client.read_holding_registers(
                 address=reg,
                 count=1,
-                slave=self._vebus_unit_id,
+                device_id=self._vebus_unit_id,
             )
             read_back = _signed16(result.registers[0])
             expected = int(watts)
