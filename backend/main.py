@@ -54,7 +54,7 @@ from backend.ingress import IngressMiddleware
 from backend.config import HardwareValidationConfig, HuaweiConfig, InfluxConfig, ModelStoreConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig, EvccConfig, SchedulerConfig, EvccMqttConfig, HaMqttConfig, TelegramConfig, HaRestConfig, HaStatisticsConfig, MultiEntityHaConfig, LiveTariffConfig, OpenMeteoConfig
 from backend.weather_client import OpenMeteoClient
 from backend.supervisor_client import SupervisorClient
-from backend.ha_rest_client import HomeAssistantClient, MultiEntityHaClient
+from backend.ha_rest_client import MultiEntityHaClient
 from backend.drivers.huawei_driver import HuaweiDriver
 from backend.drivers.victron_driver import VictronDriver
 from backend.evcc_client import EvccClient

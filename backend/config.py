@@ -501,19 +501,16 @@ class HaRestConfig:
     when either is empty the client is not instantiated.
 
     Attributes:
-        url:                  Base URL of the HA instance (e.g. ``http://homeassistant.local:8123``).
-        token:                Long-lived access token — never logged.
-        heat_pump_entity_id:  HA entity ID for the heat pump power sensor.
+        url:    Base URL of the HA instance (e.g. ``http://homeassistant.local:8123``).
+        token:  Long-lived access token — never logged.
 
     Environment variables:
-        ``HA_URL``                   — HA base URL (default empty → disabled).
-        ``HA_TOKEN``                 — Long-lived access token (default empty → disabled).
-        ``HA_HEAT_PUMP_ENTITY_ID``   — Entity ID for heat pump power (default empty).
+        ``HA_URL``    — HA base URL (default empty → disabled).
+        ``HA_TOKEN``  — Long-lived access token (default empty → disabled).
     """
 
     url: str = ""
     token: str = ""
-    heat_pump_entity_id: str = ""
 
     @classmethod
     def from_env(cls) -> "HaRestConfig":
@@ -526,7 +523,6 @@ class HaRestConfig:
         return cls(
             url=os.environ.get("HA_URL", ""),
             token=os.environ.get("HA_TOKEN", ""),
-            heat_pump_entity_id=os.environ.get("HA_HEAT_PUMP_ENTITY_ID", ""),
         )
 
 
@@ -688,16 +684,13 @@ class LiveTariffConfig:
         Empty string disables the live tariff — falls back to CompositeTariffEngine.
     """
 
-    octopus_entity_id: str = "sensor.octopus_a_7721404e_electricity_price"
+    octopus_entity_id: str = ""
 
     @classmethod
     def from_env(cls) -> "LiveTariffConfig":
         """Construct from environment variables."""
         return cls(
-            octopus_entity_id=os.environ.get(
-                "HA_OCTOPUS_ENTITY_ID",
-                "sensor.octopus_a_7721404e_electricity_price",
-            ),
+            octopus_entity_id=os.environ.get("HA_OCTOPUS_ENTITY_ID", ""),
         )
 
 
