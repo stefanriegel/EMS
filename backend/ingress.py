@@ -6,6 +6,13 @@ injects an ``X-Ingress-Path`` header containing the base path (e.g.
 ``scope["root_path"]`` so that FastAPI generates correct URLs for redirects,
 OpenAPI docs, and WebSocket endpoints.
 
+The middleware also normalises the request path by collapsing consecutive
+slashes (``//api/state`` → ``/api/state``).  The HA Ingress proxy concatenates
+its ``ingress_entry`` (``/``) with the remainder of the URL path, which
+produces double-slash paths.  Starlette's ``StaticFiles`` normalises
+internally (so HTML and assets still load), but FastAPI's ``APIRouter``
+performs strict matching and rejects paths with extra slashes.
+
 The middleware is implemented as a raw ASGI wrapper (not BaseHTTPMiddleware)
 for two reasons:
 
@@ -14,15 +21,20 @@ for two reasons:
 2. **Performance** -- raw ASGI avoids the per-request overhead of wrapping
    the request/response cycle in a ``Request`` object.
 
-When the header is absent (direct port access), the scope is left unchanged.
+When the header is absent (direct port access), the scope is left unchanged
+apart from path normalisation.
 """
 from __future__ import annotations
 
+import re
+
 from starlette.types import ASGIApp, Receive, Scope, Send
+
+_MULTI_SLASH = re.compile(r"//+")
 
 
 class IngressMiddleware:
-    """Set ``root_path`` from the ``X-Ingress-Path`` header for HA Ingress."""
+    """Set ``root_path`` from ``X-Ingress-Path`` and normalise request paths."""
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -34,4 +46,8 @@ class IngressMiddleware:
                 if name == b"x-ingress-path":
                     scope["root_path"] = value.decode("latin-1").rstrip("/")
                     break
+            # Collapse consecutive slashes so //api/state → /api/state.
+            path = scope.get("path", "")
+            if "//" in path:
+                scope["path"] = _MULTI_SLASH.sub("/", path)
         await self.app(scope, receive, send)
