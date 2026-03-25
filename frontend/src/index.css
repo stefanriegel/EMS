@@ -92,7 +92,7 @@ html, body {
 
 .app-main {
   flex: 1;
-  padding: 1.5rem;
+  padding: 1rem 1.5rem;
 }
 
 .app-footer {
@@ -107,10 +107,16 @@ html, body {
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 1rem;
   max-width: 1400px;
   margin: 0 auto;
+}
+
+@media (max-width: 1024px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 @media (max-width: 768px) {
@@ -592,9 +598,17 @@ html, body {
 
 /* ── EnergyFlowCard ────────────────────────────────────────────────────── */
 
-/* Full-width on every viewport size — energy flow is the hero card */
-.energy-flow-card {
-  grid-column: 1 / -1;
+/* Energy flow card — compact, fits in a single grid cell */
+.energy-flow-card svg {
+  max-width: 320px;
+  margin: 0 auto;
+  display: block;
+}
+
+@media (max-width: 768px) {
+  .energy-flow-card svg {
+    max-width: 280px;
+  }
 }
 
 @keyframes flow-particle {

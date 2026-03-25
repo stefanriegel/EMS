@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.0
+
+- Dashboard UX rework: 3-column desktop layout, compact energy flow card, logical card ordering
+- Extended Huawei registers: internal temperature, grid frequency, phase voltages, daily/total yield, battery stats
+- Slave inverter PV power now read and summed with master for total PV display
+
 ## 1.5.1
 
 - Fix: expose PV input power from both master and slave inverters to API and dashboard

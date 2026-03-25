@@ -118,19 +118,24 @@ function DashboardLayout() {
         )}
 
         <div className="dashboard-grid">
+          {/* Row 1: Energy flow + Battery pool overview */}
           <EnergyFlowCard pool={pool} devices={devices} />
           <BatteryStatus pool={pool} devices={devices} connected={ws.connected} />
-          <DecisionLog decisions={decisions} />
+
+          {/* Row 2: Device details */}
+          <DeviceDetail devices={devices} pool={pool} />
+
+          {/* Row 3: Operational cards */}
           <OptimizationCard optimization={optimization} pool={pool} />
-          <ForecastCard forecast={forecast} />
           <TariffCard tariff={tariff} />
-          <LoadsCard loads={loads} />
+          <ForecastCard forecast={forecast} />
           <EvccCard
             evcc={evcc}
             controlState={pool?.control_state ?? "IDLE"}
             haMqttConnected={haMqttConnected}
           />
-          <DeviceDetail devices={devices} pool={pool} />
+          <LoadsCard loads={loads} />
+          <DecisionLog decisions={decisions} />
         </div>
       </main>
 
