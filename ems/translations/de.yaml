@@ -163,18 +163,18 @@ configuration:
     description: Mindest-Ladezustand fuer Victron-Batterie. Standard 15%.
 
   # --- Modul3 Netzentgelt ---
-  modul3_surplus_start_min:
-    name: Modul3 Ueberschuss-Start (min)
-    description: Beginn des Ueberschuss-Netzentgeltfensters in Minuten ab Mitternacht.
-  modul3_surplus_end_min:
-    name: Modul3 Ueberschuss-Ende (min)
-    description: Ende des Ueberschuss-Netzentgeltfensters in Minuten ab Mitternacht.
-  modul3_deficit_start_min:
-    name: Modul3 Defizit-Start (min)
-    description: Beginn des Defizit-Netzentgeltfensters in Minuten ab Mitternacht.
-  modul3_deficit_end_min:
-    name: Modul3 Defizit-Ende (min)
-    description: Ende des Defizit-Netzentgeltfensters in Minuten ab Mitternacht.
+  modul3_surplus_start:
+    name: Modul3 Ueberschuss-Start
+    description: Beginn des Ueberschuss-Netzentgeltfensters (HH:MM Format, z.B. "00:30").
+  modul3_surplus_end:
+    name: Modul3 Ueberschuss-Ende
+    description: Ende des Ueberschuss-Netzentgeltfensters (HH:MM Format, z.B. "05:00").
+  modul3_deficit_start:
+    name: Modul3 Defizit-Start
+    description: Beginn des Defizit-Netzentgeltfensters (HH:MM Format, z.B. "06:00").
+  modul3_deficit_end:
+    name: Modul3 Defizit-Ende
+    description: Ende des Defizit-Netzentgeltfensters (HH:MM Format, z.B. "22:00").
   modul3_surplus_rate_eur_kwh:
     name: Modul3 Ueberschuss-Tarif
     description: Netzentgelt waehrend des Ueberschussfensters in EUR/kWh.

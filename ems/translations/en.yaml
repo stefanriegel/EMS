@@ -162,18 +162,18 @@ configuration:
     description: Minimum state-of-charge for Victron battery. Default 15%.
 
   # --- Modul3 grid-fee tariff ---
-  modul3_surplus_start_min:
-    name: Modul3 Surplus Start (min)
-    description: Start of surplus grid-fee window in minutes from midnight.
-  modul3_surplus_end_min:
-    name: Modul3 Surplus End (min)
-    description: End of surplus grid-fee window in minutes from midnight.
-  modul3_deficit_start_min:
-    name: Modul3 Deficit Start (min)
-    description: Start of deficit grid-fee window in minutes from midnight.
-  modul3_deficit_end_min:
-    name: Modul3 Deficit End (min)
-    description: End of deficit grid-fee window in minutes from midnight.
+  modul3_surplus_start:
+    name: Modul3 Surplus Start
+    description: Start of surplus grid-fee window (HH:MM format, e.g. "00:30").
+  modul3_surplus_end:
+    name: Modul3 Surplus End
+    description: End of surplus grid-fee window (HH:MM format, e.g. "05:00").
+  modul3_deficit_start:
+    name: Modul3 Deficit Start
+    description: Start of deficit grid-fee window (HH:MM format, e.g. "06:00").
+  modul3_deficit_end:
+    name: Modul3 Deficit End
+    description: End of deficit grid-fee window (HH:MM format, e.g. "22:00").
   modul3_surplus_rate_eur_kwh:
     name: Modul3 Surplus Rate
     description: Grid-fee rate during surplus window in EUR/kWh.

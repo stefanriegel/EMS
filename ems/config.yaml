@@ -62,11 +62,11 @@ options:
   ha_ml_min_days: 14
   # --- Live tariff ---
   ha_octopus_entity_id: ""
-  # --- Modul3 grid-fee tariff ---
-  modul3_surplus_start_min: ""
-  modul3_surplus_end_min: ""
-  modul3_deficit_start_min: ""
-  modul3_deficit_end_min: ""
+  # --- Modul3 grid-fee tariff (HH:MM format, e.g. "00:30") ---
+  modul3_surplus_start: ""
+  modul3_surplus_end: ""
+  modul3_deficit_start: ""
+  modul3_deficit_end: ""
   modul3_surplus_rate_eur_kwh: ""
   modul3_deficit_rate_eur_kwh: ""
   # --- Feed-in tariff ---
@@ -117,11 +117,11 @@ schema:
   telegram_chat_id: str?
   # --- Auth ---
   admin_password_hash: password?
-  # --- Modul3 grid-fee tariff ---
-  modul3_surplus_start_min: int?
-  modul3_surplus_end_min: int?
-  modul3_deficit_start_min: int?
-  modul3_deficit_end_min: int?
+  # --- Modul3 grid-fee tariff (HH:MM format) ---
+  modul3_surplus_start: "match(^([01]?[0-9]|2[0-3]):[0-5][0-9]$)?"
+  modul3_surplus_end: "match(^([01]?[0-9]|2[0-3]):[0-5][0-9]$)?"
+  modul3_deficit_start: "match(^([01]?[0-9]|2[0-3]):[0-5][0-9]$)?"
+  modul3_deficit_end: "match(^([01]?[0-9]|2[0-3]):[0-5][0-9]$)?"
   modul3_surplus_rate_eur_kwh: str?
   modul3_deficit_rate_eur_kwh: str?
   # --- Feed-in tariff ---

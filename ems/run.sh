@@ -100,15 +100,16 @@ _min_hw=$(get_option 'min_soc_pct_huawei')
 _min_vic=$(get_option 'min_soc_pct_victron')
 [ -n "$_min_vic" ] && export MIN_SOC_PCT_VICTRON="$_min_vic"
 
-# --- Modul3 grid-fee tariff (optional) ---
-_m3_ss=$(get_option 'modul3_surplus_start_min')
-[ -n "$_m3_ss" ] && export MODUL3_SURPLUS_START_MIN="$_m3_ss"
-_m3_se=$(get_option 'modul3_surplus_end_min')
-[ -n "$_m3_se" ] && export MODUL3_SURPLUS_END_MIN="$_m3_se"
-_m3_ds=$(get_option 'modul3_deficit_start_min')
-[ -n "$_m3_ds" ] && export MODUL3_DEFICIT_START_MIN="$_m3_ds"
-_m3_de=$(get_option 'modul3_deficit_end_min')
-[ -n "$_m3_de" ] && export MODUL3_DEFICIT_END_MIN="$_m3_de"
+# --- Modul3 grid-fee tariff (optional, HH:MM → minutes conversion) ---
+hhmm_to_min() { IFS=: read -r h m <<< "$1"; echo $(( 10#$h * 60 + 10#$m )); }
+_m3_ss=$(get_option 'modul3_surplus_start')
+[ -n "$_m3_ss" ] && export MODUL3_SURPLUS_START_MIN="$(hhmm_to_min "$_m3_ss")"
+_m3_se=$(get_option 'modul3_surplus_end')
+[ -n "$_m3_se" ] && export MODUL3_SURPLUS_END_MIN="$(hhmm_to_min "$_m3_se")"
+_m3_ds=$(get_option 'modul3_deficit_start')
+[ -n "$_m3_ds" ] && export MODUL3_DEFICIT_START_MIN="$(hhmm_to_min "$_m3_ds")"
+_m3_de=$(get_option 'modul3_deficit_end')
+[ -n "$_m3_de" ] && export MODUL3_DEFICIT_END_MIN="$(hhmm_to_min "$_m3_de")"
 _m3_sr=$(get_option 'modul3_surplus_rate_eur_kwh')
 [ -n "$_m3_sr" ] && export MODUL3_SURPLUS_RATE_EUR_KWH="$_m3_sr"
 _m3_dr=$(get_option 'modul3_deficit_rate_eur_kwh')
