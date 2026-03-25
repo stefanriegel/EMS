@@ -157,37 +157,64 @@ class SupervisorClient:
     async def get_influxdb_service(self) -> InfluxdbServiceInfo | None:
         """Resolve the InfluxDB add-on via the Supervisor Services API.
 
-        Returns ``None`` if the InfluxDB service is unavailable (404 = normal,
-        not all HAOS installations have the HA InfluxDB add-on).
+        Falls back to direct add-on discovery if the services API doesn't
+        list InfluxDB (community add-ons don't register as Supervisor
+        services).
+
+        Returns ``None`` if InfluxDB is not installed or not running.
         """
+        # --- Strategy 1: Supervisor Services API (official integrations) ---
         try:
             async with httpx.AsyncClient(timeout=_TIMEOUT) as http:
                 r = await http.get(
                     f"{_SUPERVISOR_BASE}/services/influxdb",
                     headers=self._headers,
                 )
+                if r.status_code != 404:
+                    r.raise_for_status()
+                    data: dict[str, Any] = r.json().get("data", {})
+                    if data:
+                        info = InfluxdbServiceInfo(
+                            url=data.get("host", ""),
+                            token=data.get("token") or None,
+                        )
+                        logger.info(
+                            "Supervisor: InfluxDB service resolved — url=%s",
+                            info.url,
+                        )
+                        return info
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Supervisor: InfluxDB services lookup failed — %s", exc)
+
+        # --- Strategy 2: Direct add-on discovery (community add-on) ---
+        _INFLUX_SLUG = "a0d7b954_influxdb"
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT) as http:
+                r = await http.get(
+                    f"{_SUPERVISOR_BASE}/addons/{_INFLUX_SLUG}/info",
+                    headers=self._headers,
+                )
                 if r.status_code == 404:
-                    logger.debug("Supervisor: InfluxDB service not available (404)")
+                    logger.debug("Supervisor: InfluxDB add-on not installed")
                     return None
                 r.raise_for_status()
-                data: dict[str, Any] = r.json().get("data", {})
+                addon = r.json().get("data", {})
+                if addon.get("state") != "started":
+                    logger.debug("Supervisor: InfluxDB add-on not running")
+                    return None
+                ip = addon.get("ip_address", "")
+                if ip:
+                    url = f"http://{ip}:8086"
+                    logger.info(
+                        "Supervisor: InfluxDB discovered via add-on — url=%s",
+                        url,
+                    )
+                    return InfluxdbServiceInfo(url=url, token=None)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Supervisor: InfluxDB service lookup failed — %s", exc)
-            return None
+            logger.debug("Supervisor: InfluxDB add-on discovery failed — %s", exc)
 
-        if not data:
-            logger.debug("Supervisor: InfluxDB service not available (no providers)")
-            return None
-
-        info = InfluxdbServiceInfo(
-            url=data.get("host", ""),
-            token=data.get("token") or None,
-        )
-        logger.info(
-            "Supervisor: InfluxDB service resolved — url=%s",
-            info.url,
-        )
-        return info
+        logger.debug("Supervisor: InfluxDB not available")
+        return None
 
     async def get_addon_options(self) -> dict | None:
         """Read the current add-on options via the Supervisor API.

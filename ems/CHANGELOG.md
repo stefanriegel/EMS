@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.0
+
+- Commissioning control panel: force-advance stages, toggle shadow mode from the dashboard
+- InfluxDB auto-discovery for community add-on (direct add-on lookup fallback)
+- Dead code cleanup: removed unused entity defaults and imports
+
 ## 1.6.0
 
 - Dashboard UX rework: 3-column desktop layout, compact energy flow card, logical card ordering
