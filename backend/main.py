@@ -573,11 +573,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 current_mode = battery_data.working_mode
             except Exception:
                 current_mode = None
-            await mode_manager.activate(current_working_mode=current_mode)
-            logger.info(
-                "Huawei mode manager: activated (state=%s)",
-                mode_manager.state.value,
-            )
+            try:
+                await mode_manager.activate(current_working_mode=current_mode)
+                logger.info(
+                    "Huawei mode manager: activated (state=%s)",
+                    mode_manager.state.value,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Huawei mode manager: activation failed — running without TOU control: %s",
+                    exc,
+                )
+                mode_manager = None
         app.state.mode_manager = mode_manager
 
         # --- Victron watchdog guard (45s zero-write safety net) ---
