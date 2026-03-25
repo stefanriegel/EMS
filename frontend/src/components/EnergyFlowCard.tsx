@@ -51,7 +51,9 @@ export function EnergyFlowCard({ pool, devices }: Props) {
   const hasData = pool !== null && devices !== null;
 
   // Derive display values
-  const pvPower = devices?.huawei?.master_pv_power_w ?? 0;
+  const pvPower =
+    (devices?.huawei?.master_pv_power_w ?? 0) +
+    (devices?.huawei?.slave_pv_power_w ?? 0);
   const huaweiPower = devices?.huawei?.total_power_w ?? 0;
   const victronPower = devices?.victron?.battery_power_w ?? 0;
   const gridPower = devices?.victron?.grid_power_w ?? 0;

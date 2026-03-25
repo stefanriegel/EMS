@@ -96,6 +96,12 @@ class ControllerSnapshot:
     master_active_power_w: float | None = None
     """Huawei master inverter active power for P_target fallback."""
 
+    pv_input_power_w: int | None = None
+    """PV DC input power in watts (Huawei master inverter)."""
+
+    slave_pv_power_w: int | None = None
+    """PV DC input power in watts (Huawei slave inverter)."""
+
     grid_power_w: float | None = None
     """Total grid power in watts (Victron-specific)."""
 

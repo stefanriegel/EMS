@@ -490,8 +490,8 @@ class Coordinator:
                 "total_power_w": int(h_snap.power_w),
                 "max_charge_w": int(h_snap.max_charge_power_w or 0),
                 "max_discharge_w": int(h_snap.max_discharge_power_w or 0),
-                "master_pv_power_w": None,
-                "slave_pv_power_w": None,
+                "master_pv_power_w": h_snap.pv_input_power_w,
+                "slave_pv_power_w": h_snap.slave_pv_power_w,
             }
         else:
             huawei_dict = {

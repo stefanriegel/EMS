@@ -112,6 +112,14 @@ class HuaweiController:
             self._consecutive_failures += 1
             return await self._handle_failure(now)
 
+        # Slave PV read is best-effort — failures don't affect battery control.
+        slave_pv_w: int | None = None
+        try:
+            slave = await self._driver.read_slave()
+            slave_pv_w = slave.pv_input_power_w
+        except Exception:
+            pass  # slave may be offline or absent
+
         # Stale detection: if too long since last successful read
         stale_threshold = 2 * self._loop_interval_s
         if (
@@ -166,6 +174,8 @@ class HuaweiController:
             max_discharge_power_w=battery.max_discharge_power_w,
             charge_headroom_w=float(headroom),
             master_active_power_w=float(master.active_power_w),
+            pv_input_power_w=master.pv_input_power_w,
+            slave_pv_power_w=slave_pv_w,
         )
 
     async def _handle_failure(self, now: float) -> ControllerSnapshot:

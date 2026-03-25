@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.1
+
+- Fix: expose PV input power from both master and slave inverters to API and dashboard
+- Dashboard Solar node now shows total PV from both inverters
+
 ## 1.5.0
 
 - Configurable HA entity IDs via add-on options — no more hardcoded sensor names
