@@ -1018,6 +1018,12 @@ def _build_loads_dict(app: Any) -> dict[str, Any] | None:
     if hasattr(client, "get_all_values"):
         all_values = client.get_all_values()
         available = any(v is not None for v in all_values.values())
+        # Calculate hausverbrauch from steuerbare + base if not directly configured
+        if all_values.get("hausverbrauch_w") is None:
+            steuerbare = all_values.get("steuerbare_w")
+            base = all_values.get("base_w")
+            if steuerbare is not None and base is not None:
+                all_values["hausverbrauch_w"] = steuerbare + base
         return {**all_values, "available": available}
 
     # Single-entity fallback
