@@ -399,6 +399,24 @@ async def toggle_shadow_mode(request: Request):
     return {"ok": True, "shadow_mode": mgr.shadow_mode}
 
 
+@api_router.get("/health/history")
+async def get_health_history(request: Request, count: int = 12):
+    """Return recent health snapshots (default: last hour at 5-min intervals)."""
+    import dataclasses
+    orch = getattr(request.app.state, "orchestrator", None)
+    if orch is None:
+        return []
+    hl = getattr(orch, "_health_logger", None)
+    if hl is None:
+        return []
+    snaps = hl.get_recent(count)
+    return [
+        {k: v.isoformat() if hasattr(v, "isoformat") else v
+         for k, v in dataclasses.asdict(s).items()}
+        for s in snaps
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Tariff engine dependency
 # ---------------------------------------------------------------------------

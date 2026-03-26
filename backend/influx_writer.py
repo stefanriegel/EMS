@@ -34,6 +34,7 @@ import httpx
 
 from backend.controller_model import ControllerSnapshot, CoordinatorState, DecisionEntry
 from backend.drivers.emma_driver import EmmaSnapshot
+from backend.health_logger import HealthSnapshot
 from backend.schedule_models import ChargeSchedule
 from backend.unified_model import UnifiedPoolState
 
@@ -396,3 +397,29 @@ class InfluxMetricsWriter:
             await self._write_lines([point.to_line()])
         except Exception as exc:  # noqa: BLE001
             logger.warning("influx EMMA write failed: %s", exc)
+
+    async def write_health(self, snap: HealthSnapshot) -> None:
+        """Write a 5-minute ``ems_health`` Point for trend analysis."""
+        try:
+            point = (
+                _LineProtocolBuilder("ems_health")
+                .tag("stage", snap.commissioning_stage)
+                .tag("shadow", "true" if snap.shadow_mode else "false")
+                .tag("degraded", "true" if snap.flag_system_degraded else "false")
+                .field_float("huawei_soc_pct", snap.huawei_soc_pct)
+                .field_float("victron_soc_pct", snap.victron_soc_pct)
+                .field_float("soc_imbalance_pct", snap.soc_imbalance_pct)
+                .field_float("huawei_power_w", snap.huawei_power_w)
+                .field_float("victron_power_w", snap.victron_power_w)
+                .field_float("pv_power_w", snap.pv_power_w)
+                .field_float("true_consumption_w", snap.true_consumption_w)
+                .field_bool("cross_charge_active", snap.cross_charge_active)
+                .field_float("cross_charge_waste_wh", snap.cross_charge_waste_wh)
+                .field_int("cross_charge_episodes", snap.cross_charge_episodes)
+                .field_bool("flag_soc_imbalance", snap.flag_soc_imbalance)
+                .field_bool("flag_cross_charge", snap.flag_cross_charge)
+                .time_ns(snap.timestamp)
+            )
+            await self._write_lines([point.to_line()])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("influx health write failed: %s", exc)

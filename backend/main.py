@@ -619,6 +619,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 )
                 await emma_driver.connect()
                 coordinator._emma_driver = emma_driver
+                # Health logger — 5-minute diagnostic snapshots to InfluxDB
+                from backend.health_logger import HealthLogger  # noqa: PLC0415
+                coordinator._health_logger = HealthLogger()
                 logger.info(
                     "EMMA driver connected — host=%s:%d device_id=0",
                     huawei_cfg.host,

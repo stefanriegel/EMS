@@ -104,6 +104,7 @@ class Coordinator:
         self._vrm_client = None  # VrmClient | None
         self._emma_driver = None  # EmmaDriver | None
         self._last_emma_snap = None  # EmmaSnapshot | None
+        self._health_logger = None  # HealthLogger | None
 
         # Decision ring buffer (INT-04)
         self._decisions: deque[DecisionEntry] = deque(maxlen=100)
@@ -1663,6 +1664,37 @@ class Coordinator:
                     )
                 except Exception as exc:
                     logger.warning("influx EMMA write failed: %s", exc)
+
+            # Health logger — 5-minute snapshots for trend analysis
+            if self._health_logger is not None and self._health_logger.should_log():
+                try:
+                    emma = self._last_emma_snap
+                    v_discharge = max(0, -int(v_snap.power_w)) if v_snap.available else 0
+                    pv_w = float(emma.pv_power_w) if emma else float(h_snap.pv_input_power_w or 0)
+                    true_cons = float(emma.load_power_w + v_discharge) if emma else 0.0
+                    mgr = self._commissioning_manager
+                    xc = self._cross_charge_detector
+
+                    health_snap = self._health_logger.capture(
+                        h_soc=h_snap.soc_pct,
+                        v_soc=v_snap.soc_pct,
+                        h_power=h_snap.power_w,
+                        v_power=v_snap.power_w,
+                        pv_power=pv_w,
+                        true_consumption=true_cons,
+                        cross_charge_active=xc.active if xc else False,
+                        cross_charge_waste=xc.waste_wh if xc else 0.0,
+                        cross_charge_episodes=xc.episode_count if xc else 0,
+                        shadow_mode=mgr.shadow_mode if mgr else False,
+                        commissioning_stage=mgr.stage.value if mgr else "unknown",
+                        huawei_available=h_snap.available,
+                        victron_available=v_snap.available,
+                        emma_available=emma is not None,
+                        influx_available=self._integration_health["influxdb"].available,
+                    )
+                    await self._writer.write_health(health_snap)
+                except Exception as exc:
+                    logger.warning("health logger failed: %s", exc)
 
             # Write decision entry if one was produced this cycle
             if decision_entry is not None:
