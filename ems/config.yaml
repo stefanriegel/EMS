@@ -49,7 +49,7 @@ options:
   influxdb_username: ""
   influxdb_password: ""
   # --- Coordinator tuning (advanced) ---
-  huawei_deadband_w: 400
+  huawei_deadband_w: 200
   victron_deadband_w: 150
   ramp_rate_w_per_cycle: 500
   min_soc_pct_huawei: 10
