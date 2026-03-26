@@ -7,6 +7,22 @@
 - Config: influxdb_database/username/password replace influxdb_token/org/bucket
 - Auto-discovery sets URL automatically, just configure database name and credentials
 
+## 1.9.0
+
+- EMMA (Huawei Smart Energy Controller) integration via Modbus TCP
+- True household consumption calculated from EMMA load + Victron discharge
+- EMMA data logged to InfluxDB (ems_emma measurement)
+- EMMA feed-in limit corrected to 10kW/100%
+- Huawei deadband reduced to 200W for better PV response
+- Shadow mode disabled, commissioning advanced to DUAL_BATTERY
+
+## 1.8.x
+
+- InfluxDB v1 support (line protocol writes)
+- EVCC grid prices as primary tariff source
+- Auto-calculated hausverbrauch from steuerbare + base
+- Mode manager skips health checks during shadow mode
+
 ## 1.7.0
 
 - Commissioning control panel: force-advance stages, toggle shadow mode from the dashboard

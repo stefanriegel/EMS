@@ -1,5 +1,5 @@
 name: EMS – Energy Management System
-version: "1.8.3"
+version: "1.9.0"
 slug: ems
 description: >-
   Energy Management System for Huawei SUN2000 + Victron MultiPlus II.
@@ -38,6 +38,7 @@ options:
   huawei_port: 502
   huawei_master_unit_id: 1
   huawei_slave_unit_id: 2
+  emma_enabled: true
   victron_host: ""
   victron_port: 502
   victron_system_unit_id: 100
@@ -92,6 +93,7 @@ schema:
   huawei_port: int
   huawei_master_unit_id: int
   huawei_slave_unit_id: int
+  emma_enabled: bool?
   # --- Victron ---
   victron_host: str
   victron_port: int

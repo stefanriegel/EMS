@@ -606,6 +606,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             tariff_engine=tariff_engine,
         )
 
+        # --- EMMA driver (optional — same Modbus proxy, device_id=0) ---
+        emma_enabled = os.environ.get("EMMA_ENABLED", "").lower() in ("1", "true", "yes")
+        if emma_enabled:
+            try:
+                from backend.drivers.emma_driver import EmmaDriver  # noqa: PLC0415
+
+                emma_driver = EmmaDriver(
+                    host=huawei_cfg.host,
+                    port=huawei_cfg.port,
+                    device_id=0,
+                )
+                await emma_driver.connect()
+                coordinator._emma_driver = emma_driver
+                logger.info(
+                    "EMMA driver connected — host=%s:%d device_id=0",
+                    huawei_cfg.host,
+                    huawei_cfg.port,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("EMMA driver failed to connect — running without EMMA: %s", exc)
+        else:
+            logger.info("EMMA driver disabled — set EMMA_ENABLED=true to enable")
+
         # --- Commissioning manager (staged rollout with shadow mode) ---
         commissioning_cfg = CommissioningConfig.from_env()
         if commissioning_cfg.enabled:
@@ -872,6 +895,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         if metrics_writer is not None:
             await metrics_writer.close()
         await victron_ctrl.stop_watchdog_guard()
+        # Disconnect EMMA driver if it was created
+        emma_driver = getattr(coordinator, "_emma_driver", None)
+        if emma_driver is not None:
+            logger.info("Disconnecting EMMA driver")
+            await emma_driver.close()
         logger.info("Disconnecting Victron driver")
         await victron.close()
         logger.info("Disconnecting Huawei driver")

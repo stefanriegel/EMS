@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 import httpx
 
 from backend.controller_model import ControllerSnapshot, CoordinatorState, DecisionEntry
+from backend.drivers.emma_driver import EmmaSnapshot
 from backend.schedule_models import ChargeSchedule
 from backend.unified_model import UnifiedPoolState
 
@@ -365,3 +366,33 @@ class InfluxMetricsWriter:
             await self._write_lines([point.to_line()])
         except Exception as exc:  # noqa: BLE001
             logger.warning("influx write_charge_schedule failed: %s", exc)
+
+    async def write_emma_state(
+        self, snap: EmmaSnapshot, true_consumption_w: int
+    ) -> None:
+        """Write a single ``ems_emma`` point from an EMMA snapshot.
+
+        Fields: pv_power, load_power, feed_in, battery_power, soc,
+        ess_mode, daily counters, and computed true_consumption.
+
+        Fire-and-forget: any ``Exception`` is caught and logged as WARNING.
+        """
+        try:
+            point = (
+                _LineProtocolBuilder("ems_emma")
+                .field_int("pv_power_w", snap.pv_power_w)
+                .field_int("load_power_w", snap.load_power_w)
+                .field_int("feed_in_power_w", snap.feed_in_power_w)
+                .field_int("battery_power_w", snap.battery_power_w)
+                .field_float("battery_soc_pct", snap.battery_soc_pct)
+                .field_int("ess_control_mode", snap.ess_control_mode)
+                .field_float("pv_yield_today_kwh", snap.pv_yield_today_kwh)
+                .field_float("consumption_today_kwh", snap.consumption_today_kwh)
+                .field_float("charged_today_kwh", snap.charged_today_kwh)
+                .field_float("discharged_today_kwh", snap.discharged_today_kwh)
+                .field_int("true_consumption_w", true_consumption_w)
+                .time_ns(datetime.now(tz=timezone.utc))
+            )
+            await self._write_lines([point.to_line()])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("influx EMMA write failed: %s", exc)

@@ -102,6 +102,8 @@ class Coordinator:
         self._commissioning_manager = None  # CommissioningManager | None
         self._dess_subscriber = None  # DessMqttSubscriber | None
         self._vrm_client = None  # VrmClient | None
+        self._emma_driver = None  # EmmaDriver | None
+        self._last_emma_snap = None  # EmmaSnapshot | None
 
         # Decision ring buffer (INT-04)
         self._decisions: deque[DecisionEntry] = deque(maxlen=100)
@@ -545,7 +547,30 @@ class Coordinator:
                 "pv_on_grid_w": None,
             }
 
-        return {"huawei": huawei_dict, "victron": victron_dict}
+        # EMMA snapshot (optional)
+        emma_snap = self._last_emma_snap
+        if emma_snap is not None:
+            # True consumption = EMMA load + Victron discharge power
+            victron_discharge_w = max(0, -int(v_snap.power_w)) if (v_snap is not None and v_snap.available) else 0
+            true_consumption_w = emma_snap.load_power_w + victron_discharge_w
+            emma_dict: dict | None = {
+                "available": True,
+                "pv_power_w": emma_snap.pv_power_w,
+                "load_power_w": emma_snap.load_power_w,
+                "feed_in_power_w": emma_snap.feed_in_power_w,
+                "battery_power_w": emma_snap.battery_power_w,
+                "battery_soc_pct": emma_snap.battery_soc_pct,
+                "pv_yield_today_kwh": emma_snap.pv_yield_today_kwh,
+                "consumption_today_kwh": emma_snap.consumption_today_kwh,
+                "charged_today_kwh": emma_snap.charged_today_kwh,
+                "discharged_today_kwh": emma_snap.discharged_today_kwh,
+                "ess_control_mode": emma_snap.ess_control_mode,
+                "true_consumption_w": true_consumption_w,
+            }
+        else:
+            emma_dict = None
+
+        return {"huawei": huawei_dict, "victron": victron_dict, "emma": emma_dict}
 
     async def start(self) -> None:
         """Start the control loop as an asyncio background task."""
@@ -664,6 +689,11 @@ class Coordinator:
         v_snap = await self._victron_ctrl.poll()
         self._last_h_snap = h_snap
         self._last_v_snap = v_snap
+
+        # 1b. Poll EMMA (optional, fire-and-forget)
+        if self._emma_driver is not None:
+            emma_snap = await self._emma_driver.poll()
+            self._last_emma_snap = emma_snap
 
         # 2. Check EVCC hold mode — read live value from driver
         if self._evcc_monitor is not None:
@@ -1622,6 +1652,17 @@ class Coordinator:
                 logger.warning("influx integration failed: %s", exc)
                 self._integration_health["influxdb"].available = False
                 self._integration_health["influxdb"].last_error = str(exc)
+
+            # Write EMMA metrics if available
+            if self._last_emma_snap is not None:
+                try:
+                    v_discharge = max(0, -int(v_snap.power_w)) if v_snap.available else 0
+                    true_consumption = self._last_emma_snap.load_power_w + v_discharge
+                    await self._writer.write_emma_state(
+                        self._last_emma_snap, true_consumption
+                    )
+                except Exception as exc:
+                    logger.warning("influx EMMA write failed: %s", exc)
 
             # Write decision entry if one was produced this cycle
             if decision_entry is not None:

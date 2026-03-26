@@ -23,6 +23,9 @@ export HUAWEI_PORT=$(get_option 'huawei_port')
 export HUAWEI_MASTER_SLAVE_ID=$(get_option 'huawei_master_unit_id')
 export HUAWEI_SLAVE_SLAVE_ID=$(get_option 'huawei_slave_unit_id')
 
+_emma=$(get_option 'emma_enabled')
+[ "$_emma" = "true" ] && export EMMA_ENABLED="true"
+
 _victron_host=$(get_option 'victron_host')
 [ -n "$_victron_host" ] && export VICTRON_HOST="$_victron_host"
 export VICTRON_PORT=$(get_option 'victron_port')
