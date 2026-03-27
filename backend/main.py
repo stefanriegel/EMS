@@ -402,7 +402,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 username=influx_cfg.username,
                 password=influx_cfg.password,
             )
-            metrics_reader: InfluxMetricsReader | None = InfluxMetricsReader(
+            metrics_reader = InfluxMetricsReader(
                 url=influx_cfg.url,
                 database=influx_cfg.database,
                 username=influx_cfg.username,
