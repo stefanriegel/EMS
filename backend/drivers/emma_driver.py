@@ -101,6 +101,11 @@ _REGISTER_MAP: list[tuple[int, int, bool, int, str]] = [
     (30324, 2, False,  100, "consumption_today_kwh"), # U32, kWh gain=100
     (30306, 2, False,  100, "charged_today_kwh"),     # U32, kWh gain=100
     (30312, 2, False,  100, "discharged_today_kwh"),  # U32, kWh gain=100
+]
+
+# Optional registers: attempted but silently zeroed on EMMA exception code 3
+# (Illegal Data Value — firmware may not support these registers)
+_OPTIONAL_REGISTER_MAP: list[tuple[int, int, bool, int, str]] = [
     (30314, 2, False,  100, "chargeable_energy_kwh"),   # U32, kWh gain=100 — instantaneous headroom
     (30320, 2, False,  100, "dischargeable_energy_kwh"), # U32, kWh gain=100 — instantaneous headroom
 ]
@@ -220,6 +225,26 @@ class EmmaDriver:
             else:
                 raw = regs[0]
             values[field_name] = raw / gain if gain != 1 else raw
+
+        # Optional registers: silently default to 0.0 when firmware returns error
+        for address, count, signed, gain, field_name in _OPTIONAL_REGISTER_MAP:
+            try:
+                result = await self._client.read_holding_registers(
+                    address, count=count, device_id=self.device_id
+                )
+                if result.isError():
+                    logger.debug(
+                        "EMMA optional register %d not supported (error %s) — defaulting to 0.0",
+                        address, result
+                    )
+                    values[field_name] = 0.0
+                else:
+                    regs = list(result.registers)
+                    raw = _decode_u32(regs) if count == 2 else regs[0]
+                    values[field_name] = raw / gain if gain != 1 else float(raw)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("EMMA optional register %d read failed: %s — defaulting to 0.0", address, exc)
+                values[field_name] = 0.0
 
         # ESS control mode is a holding register
         ess_result = await self._client.read_holding_registers(

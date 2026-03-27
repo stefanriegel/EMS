@@ -24,7 +24,7 @@ from backend.drivers.emma_driver import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-_N_MAIN_REGISTERS = len(_REGISTER_MAP)  # now 11 (was 9, +2 capacity fields)
+_N_MAIN_REGISTERS = len(_REGISTER_MAP)  # 9 core registers (capacity fields are optional)
 
 
 def _ok_result(registers: list[int]) -> MagicMock:
@@ -221,13 +221,15 @@ async def test_read_all_returns_emma_snapshot() -> None:
 
 @pytest.mark.anyio
 async def test_read_all_correct_call_count() -> None:
-    """_read_all makes exactly len(_REGISTER_MAP)+1 read_holding_registers calls."""
+    """_read_all makes len(_REGISTER_MAP) + len(_OPTIONAL_REGISTER_MAP) + 1 calls."""
+    from backend.drivers.emma_driver import _OPTIONAL_REGISTER_MAP
     driver, mock_client = _make_driver()
     mock_client.read_holding_registers.side_effect = _build_side_effects()
 
     await driver._read_all()
 
-    assert mock_client.read_holding_registers.call_count == _N_MAIN_REGISTERS + 1
+    expected_calls = _N_MAIN_REGISTERS + len(_OPTIONAL_REGISTER_MAP) + 1
+    assert mock_client.read_holding_registers.call_count == expected_calls
 
 
 @pytest.mark.anyio
@@ -348,6 +350,26 @@ async def test_read_all_dischargeable_energy_kwh() -> None:
     snap = await driver._read_all()
 
     assert abs(snap.dischargeable_energy_kwh - 72.0) < 0.001
+
+
+@pytest.mark.anyio
+async def test_read_all_optional_registers_default_to_zero_on_error() -> None:
+    """When optional registers return error (firmware not supported), fields default to 0.0."""
+    driver, mock_client = _make_driver()
+    # Build side effects where optional registers return errors
+    sides = _build_side_effects()
+    # Positions [9] and [10] are optional registers — replace with error results
+    sides[9] = _err_result()   # chargeable_energy_kwh returns error
+    sides[10] = _err_result()  # dischargeable_energy_kwh returns error
+    mock_client.read_holding_registers.side_effect = sides
+
+    snap = await driver._read_all()
+
+    # Fallback to 0.0 rather than raising
+    assert snap.chargeable_energy_kwh == 0.0
+    assert snap.dischargeable_energy_kwh == 0.0
+    # Other fields should still be correct
+    assert snap.pv_power_w == 1500
 
 
 # ---------------------------------------------------------------------------
