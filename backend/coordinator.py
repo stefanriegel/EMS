@@ -1697,7 +1697,7 @@ class Coordinator:
                         v_l2_w=float(v_snap.grid_l2_power_w or 0) if v_snap.available else 0.0,
                         v_l3_w=float(v_snap.grid_l3_power_w or 0) if v_snap.available else 0.0,
                         # control state
-                        control_state=self._state.control_state.value if self._state else "UNKNOWN",
+                        control_state=self._state.control_state if self._state else "UNKNOWN",
                         pool_status=self._state.pool_status if self._state else "UNKNOWN",
                         h_role=self._prev_h_role,
                         v_role=self._prev_v_role,
