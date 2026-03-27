@@ -194,26 +194,6 @@ configuration:
     name: Victron Min SoC (%)
     description: Mindest-Ladezustand fuer Victron-Batterie. Standard 15%.
 
-  # --- Modul3 Netzentgelt ---
-  modul3_surplus_start:
-    name: Modul3 Ueberschuss-Start
-    description: Beginn des Ueberschuss-Netzentgeltfensters (HH:MM Format, z.B. "00:30").
-  modul3_surplus_end:
-    name: Modul3 Ueberschuss-Ende
-    description: Ende des Ueberschuss-Netzentgeltfensters (HH:MM Format, z.B. "05:00").
-  modul3_deficit_start:
-    name: Modul3 Defizit-Start
-    description: Beginn des Defizit-Netzentgeltfensters (HH:MM Format, z.B. "06:00").
-  modul3_deficit_end:
-    name: Modul3 Defizit-Ende
-    description: Ende des Defizit-Netzentgeltfensters (HH:MM Format, z.B. "22:00").
-  modul3_surplus_rate_eur_kwh:
-    name: Modul3 Ueberschuss-Tarif
-    description: Netzentgelt waehrend des Ueberschussfensters in EUR/kWh.
-  modul3_deficit_rate_eur_kwh:
-    name: Modul3 Defizit-Tarif
-    description: Netzentgelt waehrend des Defizitfensters in EUR/kWh.
-
   # --- Einspeiseverguetung ---
   feed_in_rate_eur_kwh:
     name: Einspeiseverguetung (EUR/kWh)
@@ -226,6 +206,18 @@ configuration:
   winter_min_soc_boost_pct:
     name: Winter Min-SoC Erhoehung (%)
     description: Zusaetzlicher Min-SoC-Prozentsatz waehrend der Wintermonate fuer hoehere Batteriereserve. Standard 10.
+
+  # --- Sicherheit / Inbetriebnahme ---
+  validation_period_hours:
+    name: Validierungszeit (Stunden)
+    description: >-
+      Beobachtungszeit nach dem ersten Start, bevor das EMS Sollwerte an
+      die Hardware schreibt. Auf 0 setzen um sofort zu aktivieren. Standard 48.
+  dry_run:
+    name: Trockenlauf-Modus
+    description: >-
+      Wenn aktiviert, berechnet das EMS Sollwerte, schreibt aber nicht
+      an die Hardware. Nützlich zum Testen. Standard aus.
 
   # --- Logging ---
   log_level:
