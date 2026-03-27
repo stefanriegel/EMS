@@ -766,8 +766,7 @@ def test_ws_state_sends_first_frame() -> None:
 
     # Tariff fields present (null is expected when no engine configured)
     assert "effective_rate_eur_kwh" in data["tariff"]
-    assert "octopus_rate_eur_kwh" in data["tariff"]
-    assert "modul3_rate_eur_kwh" in data["tariff"]
+    assert "source" in data["tariff"]
 
 
 # ---------------------------------------------------------------------------

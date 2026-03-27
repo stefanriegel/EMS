@@ -60,7 +60,7 @@ from backend.influx_reader import InfluxMetricsReader
 from backend.coordinator import Coordinator
 from backend.schedule_models import ChargeSchedule
 from backend.scheduler import Scheduler
-from backend.tariff import CompositeTariffEngine
+from backend.tariff import EvccTariffEngine
 from backend.ws_manager import manager
 
 logger = logging.getLogger(__name__)
@@ -423,8 +423,8 @@ async def get_health_history(request: Request, count: int = 12):
 # ---------------------------------------------------------------------------
 
 
-def get_tariff_engine(request: Request) -> CompositeTariffEngine:
-    """FastAPI dependency that returns the running :class:`CompositeTariffEngine`.
+def get_tariff_engine(request: Request) -> EvccTariffEngine:
+    """FastAPI dependency that returns the running tariff engine.
 
     Reads ``request.app.state.tariff_engine``.  Tests override this via::
 
@@ -441,27 +441,26 @@ def get_tariff_engine(request: Request) -> CompositeTariffEngine:
 @api_router.get("/tariff/price")
 async def get_tariff_price(
     dt: str,
-    engine: CompositeTariffEngine = Depends(get_tariff_engine),
+    engine: EvccTariffEngine = Depends(get_tariff_engine),
 ) -> dict[str, Any]:
-    """Return the composite electricity price at a given instant.
+    """Return the electricity price at a given instant from EVCC.
 
     Query parameters
     ----------------
     dt
-        ISO 8601 datetime string, e.g. ``2026-01-15T02:00:00`` or
-        ``2026-01-15T02:00:00+00:00``.  Naive strings are interpreted as
-        wall-clock time in the Octopus Go timezone.
+        ISO 8601 datetime string, e.g. ``2026-01-15T02:00:00+01:00``.
 
     Returns
     -------
     dict
-        ``dt``, ``effective_rate_eur_kwh``, ``octopus_rate_eur_kwh``,
-        ``modul3_rate_eur_kwh``.
+        ``dt``, ``effective_rate_eur_kwh``.
 
     Raises
     ------
     HTTPException(400)
         If ``dt`` cannot be parsed as an ISO 8601 datetime.
+    HTTPException(503)
+        If no EVCC price data is available.
     """
     try:
         parsed_dt = dt_type.fromisoformat(dt)
@@ -471,37 +470,22 @@ async def get_tariff_price(
             detail=f"Invalid datetime '{dt}': {exc}",
         ) from exc
 
-    from zoneinfo import ZoneInfo
-
-    oct_tz = ZoneInfo(engine._octopus.timezone)
-    m3_tz = ZoneInfo(engine._modul3.timezone)
-
-    if parsed_dt.tzinfo is None:
-        dt_oct = parsed_dt.replace(tzinfo=oct_tz)
-    else:
-        dt_oct = parsed_dt.astimezone(oct_tz)
-    dt_m3 = dt_oct.astimezone(m3_tz)
-
-    oct_minute = dt_oct.hour * 60 + dt_oct.minute
-    m3_minute = dt_m3.hour * 60 + dt_m3.minute
-
-    octopus_rate = engine._octopus_rate_at(oct_minute)
-    modul3_rate = engine._modul3_rate_at(m3_minute)
+    rate = engine.get_effective_price(parsed_dt)
+    if rate is None:
+        raise HTTPException(status_code=503, detail="No EVCC price data available")
 
     return {
         "dt": dt,
-        "effective_rate_eur_kwh": round(octopus_rate + modul3_rate, 6),
-        "octopus_rate_eur_kwh": octopus_rate,
-        "modul3_rate_eur_kwh": modul3_rate,
+        "effective_rate_eur_kwh": round(rate, 6),
     }
 
 
 @api_router.get("/tariff/schedule")
 async def get_tariff_schedule(
     date: str,
-    engine: CompositeTariffEngine = Depends(get_tariff_engine),
+    engine: EvccTariffEngine = Depends(get_tariff_engine),
 ) -> list[dict[str, Any]]:
-    """Return the full composite tariff schedule for a given date.
+    """Return the EVCC tariff schedule for a given date.
 
     Query parameters
     ----------------
@@ -511,10 +495,9 @@ async def get_tariff_schedule(
     Returns
     -------
     list[dict]
-        Ordered list of slot dicts with keys ``start``, ``end``,
-        ``octopus_rate_eur_kwh``, ``modul3_rate_eur_kwh``,
-        ``effective_rate_eur_kwh``.  Slots are contiguous and cover
-        00:00–24:00 in the Octopus timezone.
+        Ordered list of slot dicts with ``start``, ``end``,
+        ``effective_rate_eur_kwh``.  Empty list if EVCC has no data
+        for the requested date.
 
     Raises
     ------
@@ -534,8 +517,6 @@ async def get_tariff_schedule(
         {
             "start": slot.start.isoformat(),
             "end": slot.end.isoformat(),
-            "octopus_rate_eur_kwh": slot.octopus_rate_eur_kwh,
-            "modul3_rate_eur_kwh": slot.modul3_rate_eur_kwh,
             "effective_rate_eur_kwh": slot.effective_rate_eur_kwh,
         }
         for slot in slots
@@ -1054,21 +1035,17 @@ def _build_loads_dict(app: Any) -> dict[str, Any] | None:
 
 
 def _build_tariff_dict(app: Any, tariff_engine: Any) -> dict[str, Any]:
-    """Build the ``tariff`` sub-dict, preferring EVCC grid prices when available.
+    """Build the ``tariff`` sub-dict from EVCC grid prices.
 
-    Priority:
-    1. EVCC grid prices (already combined Octopus + Modul3)
-    2. CompositeTariffEngine (local calculation)
-    3. All-null fallback
+    Returns the current EVCC import rate, or all-null when EVCC data is
+    unavailable.
     """
     _null_tariff: dict[str, Any] = {
         "effective_rate_eur_kwh": None,
-        "octopus_rate_eur_kwh": None,
-        "modul3_rate_eur_kwh": None,
         "source": "none",
     }
 
-    # --- Strategy 1: EVCC grid prices (single source of truth) ---
+    # EVCC grid prices (single source of truth)
     scheduler = getattr(app.state, "scheduler", None)
     if scheduler is not None:
         gp = getattr(scheduler, "last_grid_prices", None)
@@ -1076,7 +1053,6 @@ def _build_tariff_dict(app: Any, tariff_engine: Any) -> dict[str, Any]:
             try:
                 from datetime import datetime, timezone
                 now = datetime.now(tz=timezone.utc)
-                # Find the current time slot in the price series
                 current_rate = gp.import_eur_kwh[-1]  # fallback: last known
                 for i, ts in enumerate(gp.slot_timestamps_utc):
                     if i + 1 < len(gp.slot_timestamps_utc):
@@ -1087,35 +1063,10 @@ def _build_tariff_dict(app: Any, tariff_engine: Any) -> dict[str, Any]:
                         current_rate = gp.import_eur_kwh[i]
                 return {
                     "effective_rate_eur_kwh": round(current_rate, 6),
-                    "octopus_rate_eur_kwh": None,
-                    "modul3_rate_eur_kwh": None,
                     "source": "evcc",
                 }
             except Exception:
-                pass  # fall through to engine
-
-    # --- Strategy 2: CompositeTariffEngine ---
-    if tariff_engine is not None:
-        try:
-            from datetime import datetime, timezone
-            from zoneinfo import ZoneInfo
-            now = datetime.now(tz=timezone.utc)
-            oct_tz = ZoneInfo(tariff_engine._octopus.timezone)
-            m3_tz = ZoneInfo(tariff_engine._modul3.timezone)
-            now_oct = now.astimezone(oct_tz)
-            now_m3 = now.astimezone(m3_tz)
-            oct_min = now_oct.hour * 60 + now_oct.minute
-            m3_min = now_m3.hour * 60 + now_m3.minute
-            oct_rate = tariff_engine._octopus_rate_at(oct_min)
-            m3_rate = tariff_engine._modul3_rate_at(m3_min)
-            return {
-                "effective_rate_eur_kwh": round(oct_rate + m3_rate, 6),
-                "octopus_rate_eur_kwh": oct_rate,
-                "modul3_rate_eur_kwh": m3_rate,
-                "source": "evcc" if type(tariff_engine).__name__ == "EvccTariffEngine" else "hardcoded",
-            }
-        except Exception:
-            return {**_null_tariff, "source": "error"}
+                pass
 
     return _null_tariff
 

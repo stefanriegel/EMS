@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from backend.influx_writer import InfluxMetricsWriter
     from backend.notifier import TelegramNotifier
     from backend.scheduler import Scheduler
-    from backend.tariff import CompositeTariffEngine
+    from backend.tariff import EvccTariffEngine
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +128,7 @@ class Orchestrator:
         sys_config: SystemConfig,
         orch_config: OrchestratorConfig,
         writer: "InfluxMetricsWriter | None" = None,
-        tariff_engine: "CompositeTariffEngine | None" = None,
+        tariff_engine: "EvccTariffEngine | None" = None,
     ) -> None:
         self._huawei = huawei
         self._victron = victron
@@ -400,16 +400,9 @@ class Orchestrator:
                     if self._tariff_engine is not None:
                         from datetime import datetime, timezone
                         now = datetime.now(tz=timezone.utc)
-                        from zoneinfo import ZoneInfo
-                        oct_tz = ZoneInfo(self._tariff_engine._octopus.timezone)
-                        now_oct = now.astimezone(oct_tz)
-                        oct_min = now_oct.hour * 60 + now_oct.minute
-                        m3_tz = ZoneInfo(self._tariff_engine._modul3.timezone)
-                        now_m3 = now.astimezone(m3_tz)
-                        m3_min = now_m3.hour * 60 + now_m3.minute
-                        oct_rate = self._tariff_engine._octopus_rate_at(oct_min)
-                        m3_rate = self._tariff_engine._modul3_rate_at(m3_min)
-                        await self._writer.write_tariff(now, oct_rate + m3_rate, oct_rate, m3_rate)
+                        rate = self._tariff_engine.get_effective_price(now)
+                        if rate is not None:
+                            await self._writer.write_tariff(now, rate, rate, 0.0)
 
                 logger.info(
                     "cycle state=%s huawei_setpoint_w=%d victron_setpoint_w=%.0f "

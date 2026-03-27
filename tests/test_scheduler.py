@@ -21,7 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.config import OrchestratorConfig, SystemConfig, TariffConfig
+from backend.config import OrchestratorConfig, SystemConfig
 from backend.schedule_models import (
     ChargeSchedule,
     ConsumptionForecast,
@@ -31,7 +31,7 @@ from backend.schedule_models import (
     SolarForecast,
 )
 from backend.scheduler import Scheduler, _make_fallback_schedule
-from backend.tariff import CompositeTariffEngine
+from backend.tariff import EvccTariffEngine
 
 # ---------------------------------------------------------------------------
 # Test helpers
@@ -119,8 +119,8 @@ def _make_scheduler(
     orch_config: OrchestratorConfig | None = None,
 ) -> Scheduler:
     """Build a Scheduler with AsyncMock clients and a real CompositeTariffEngine."""
-    tariff_cfg = TariffConfig.from_env()
-    tariff_engine = CompositeTariffEngine(tariff_cfg.octopus, tariff_cfg.modul3)
+    
+    tariff_engine = EvccTariffEngine()
     evcc_client = MagicMock()
     evcc_client.get_state = AsyncMock(return_value=evcc_state)
     consumption_reader = MagicMock()
@@ -543,8 +543,8 @@ async def test_fallback_when_no_slots_below_threshold():
         for h in range(24)
     ]
 
-    tariff_cfg = TariffConfig.from_env()
-    tariff_engine = CompositeTariffEngine(tariff_cfg.octopus, tariff_cfg.modul3)
+    
+    tariff_engine = EvccTariffEngine()
 
     evcc_client = MagicMock()
     evcc_client.get_state = AsyncMock(return_value=_make_evcc_state())

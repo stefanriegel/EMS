@@ -25,8 +25,6 @@ def _require_env(key: str) -> str:
         raise KeyError(key)
     return value
 
-from backend.tariff_models import Modul3Config, Modul3Window, OctopusGoConfig
-
 
 @dataclass
 class HuaweiConfig:
@@ -545,62 +543,6 @@ class HaRestConfig:
             url=os.environ.get("HA_URL", ""),
             token=os.environ.get("HA_TOKEN", ""),
         )
-
-
-@dataclass
-class TariffConfig:
-    """Combined Octopus Go supply tariff and §14a EnWG Modul 3 grid-fee config.
-
-    Both sub-configs are bundled here so a single ``TariffConfig.from_env()``
-    call produces everything the :class:`~backend.tariff.CompositeTariffEngine`
-    needs.  All defaults are realistic values that allow the test suite and
-    development server to run without any environment variables.
-
-    Attributes:
-        octopus: Octopus Go supply tariff configuration.
-        modul3: §14a EnWG Modul 3 Netzgebühren configuration.
-    """
-
-    octopus: OctopusGoConfig
-    modul3: Modul3Config
-
-    @classmethod
-    def from_env(cls) -> "TariffConfig":
-        """Construct a :class:`TariffConfig` from environment variables.
-
-        All fields have safe, realistic defaults — **no environment variables
-        are required**.  This is intentional: tariff configuration is stable
-        for months at a time and the defaults model a typical UK Octopus Go
-        customer using a German DSO with standard §14a Modul 3 windows.
-
-        Default Octopus Go:
-            off-peak 00:30–05:30 London, 0.08 €/kWh off-peak, 0.28 €/kWh peak.
-
-        Default Modul 3 windows (Europe/Berlin):
-            NT 00:00–06:00 (0.026 €/kWh), ST 06:00–17:00 (0.087 €/kWh),
-            HT 17:00–20:00 (0.125 €/kWh), ST 20:00–24:00 (0.087 €/kWh).
-        """
-        octopus = OctopusGoConfig(
-            off_peak_start_min=int(os.environ.get("OCTOPUS_OFF_PEAK_START_MIN", "30")),
-            off_peak_end_min=int(os.environ.get("OCTOPUS_OFF_PEAK_END_MIN", "330")),
-            off_peak_rate_eur_kwh=float(
-                os.environ.get("OCTOPUS_OFF_PEAK_RATE_EUR_KWH", "0.08")
-            ),
-            peak_rate_eur_kwh=float(
-                os.environ.get("OCTOPUS_PEAK_RATE_EUR_KWH", "0.28")
-            ),
-            timezone=os.environ.get("OCTOPUS_TIMEZONE", "Europe/London"),
-        )
-        modul3 = Modul3Config(
-            windows=[
-                Modul3Window(start_min=0, end_min=360, rate_eur_kwh=0.026, tier="NT"),
-                Modul3Window(start_min=360, end_min=1020, rate_eur_kwh=0.087, tier="ST"),
-                Modul3Window(start_min=1020, end_min=1200, rate_eur_kwh=0.125, tier="HT"),
-                Modul3Window(start_min=1200, end_min=1440, rate_eur_kwh=0.087, tier="ST"),
-            ],
-            timezone=os.environ.get("MODUL3_TIMEZONE", "Europe/Berlin"),
-        )
-        return cls(octopus=octopus, modul3=modul3)
 
 
 @dataclass

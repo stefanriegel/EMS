@@ -51,7 +51,7 @@ from starlette.staticfiles import StaticFiles
 from backend.api import api_router
 from backend.auth import AdminConfig, AuthMiddleware, auth_router, ensure_jwt_secret
 from backend.ingress import IngressMiddleware
-from backend.config import HardwareValidationConfig, HuaweiConfig, InfluxConfig, ModelStoreConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig, EvccConfig, SchedulerConfig, EvccMqttConfig, HaMqttConfig, TelegramConfig, HaRestConfig, HaStatisticsConfig, MultiEntityHaConfig, OpenMeteoConfig
+from backend.config import HardwareValidationConfig, HuaweiConfig, InfluxConfig, ModelStoreConfig, OrchestratorConfig, SystemConfig, VictronConfig, EvccConfig, SchedulerConfig, EvccMqttConfig, HaMqttConfig, TelegramConfig, HaRestConfig, HaStatisticsConfig, MultiEntityHaConfig, OpenMeteoConfig
 from backend.weather_client import OpenMeteoClient
 from backend.supervisor_client import SupervisorClient
 from backend.ha_rest_client import MultiEntityHaClient
@@ -69,7 +69,7 @@ from backend.orchestrator import Orchestrator
 from backend.victron_controller import VictronController
 from backend.scheduler import Scheduler
 from backend.weather_scheduler import WeatherScheduler
-from backend.tariff import CompositeTariffEngine
+from backend.tariff import EvccTariffEngine
 from backend.anomaly_detector import AnomalyDetector
 from backend.config import AnomalyDetectorConfig, CommissioningConfig, ModeManagerConfig
 from backend.huawei_mode_manager import HuaweiModeManager
@@ -381,20 +381,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         sched_cfg = SchedulerConfig.from_env()
 
         # --- Instantiate tariff engine ---
-        tariff_cfg = TariffConfig.from_env()
-        _composite = CompositeTariffEngine(
-            octopus=tariff_cfg.octopus, modul3=tariff_cfg.modul3
-        )
-        from backend.tariff import EvccTariffEngine  # noqa: PLC0415
-        tariff_engine = EvccTariffEngine(fallback=_composite)
+        tariff_engine = EvccTariffEngine()
         app.state.tariff_engine = tariff_engine
-        logger.info(
-            "Tariff engine: EvccTariffEngine with CompositeTariffEngine fallback "
-            "(Octopus tz=%s Modul3 tz=%s windows=%d)",
-            tariff_cfg.octopus.timezone,
-            tariff_cfg.modul3.timezone,
-            len(tariff_cfg.modul3.windows),
-        )
+        logger.info("Tariff engine: EvccTariffEngine (EVCC grid prices, no hardcoded fallback)")
 
         # --- Instantiate InfluxDB writer (optional, v1 line protocol) ---
         influx_cfg = InfluxConfig.from_env()

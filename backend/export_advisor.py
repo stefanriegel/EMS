@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from backend.config import SystemConfig
     from backend.consumption_forecaster import ConsumptionForecaster
-    from backend.tariff import CompositeTariffEngine
+    from backend.tariff import EvccTariffEngine
 
 logger = logging.getLogger("ems.export_advisor")
 
@@ -85,7 +85,7 @@ class ExportAdvisor:
 
     def __init__(
         self,
-        tariff_engine: "CompositeTariffEngine",
+        tariff_engine: "EvccTariffEngine",
         forecaster: "ConsumptionForecaster | None",
         sys_config: "SystemConfig",
     ) -> None:

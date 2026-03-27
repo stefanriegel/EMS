@@ -268,28 +268,34 @@ class Scheduler:
         tomorrow = date.today() + timedelta(days=1)
         all_slots = self._tariff_engine.get_price_schedule(tomorrow)
 
-        cheap_slots = [
-            s for s in all_slots if s.effective_rate_eur_kwh <= _CHEAP_THRESHOLD_EUR_KWH
-        ]
-        if not cheap_slots:
-            # Fallback: single cheapest slot
-            cheap_slots = [min(all_slots, key=lambda s: s.effective_rate_eur_kwh)]
+        if not all_slots:
+            logger.info("Scheduler: no tariff slots for %s — using midnight-05:00 default window", tomorrow)
+            # Default window: midnight to 05:00 (typical off-peak)
+            from datetime import time as _time
+            from zoneinfo import ZoneInfo
+            _tz = ZoneInfo("Europe/Berlin")
+            window_start = datetime.combine(tomorrow, _time(0, 0), tzinfo=_tz)
+            window_end = datetime.combine(tomorrow, _time(5, 0), tzinfo=_tz)
+            avg_price = 0.0
+        else:
+            cheap_slots = [
+                s for s in all_slots if s.effective_rate_eur_kwh <= _CHEAP_THRESHOLD_EUR_KWH
+            ]
+            if not cheap_slots:
+                cheap_slots = [min(all_slots, key=lambda s: s.effective_rate_eur_kwh)]
 
-        # Sort by start time to get a contiguous window
-        cheap_slots = sorted(cheap_slots, key=lambda s: s.start)
-        window_start = cheap_slots[0].start
-        window_end = cheap_slots[-1].end
+            cheap_slots = sorted(cheap_slots, key=lambda s: s.start)
+            window_start = cheap_slots[0].start
+            window_end = cheap_slots[-1].end
+            avg_price = mean(s.effective_rate_eur_kwh for s in cheap_slots)
 
         # ------------------------------------------------------------------
         # 7. Cost estimate
         # ------------------------------------------------------------------
-        # For EVopt path, use simple formula; for formula fallback, use
-        # the solar-aware net_charge_kwh already computed in step 4
         if evcc_state.evopt is not None:
             charge_energy_kwh = max(0.0, consumption.today_expected_kwh - solar_kwh)
         else:
             charge_energy_kwh = net_charge_kwh
-        avg_price = mean(s.effective_rate_eur_kwh for s in cheap_slots)
         cost_estimate_eur = charge_energy_kwh * avg_price
 
         # ------------------------------------------------------------------

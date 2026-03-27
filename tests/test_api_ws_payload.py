@@ -66,28 +66,23 @@ def test_ws_tariff_source_is_none_by_default():
     )
 
 
-def test_ws_tariff_source_is_evcc_when_evcc_tariff():
-    """WS tariff dict contains 'source': 'evcc' when tariff engine is EvccTariffEngine."""
+def test_ws_tariff_source_is_evcc_when_scheduler_has_prices():
+    """WS tariff dict contains 'source': 'evcc' when scheduler has grid prices."""
+    from datetime import datetime, timedelta, timezone
     from starlette.testclient import TestClient
+    from backend.schedule_models import GridPriceSeries
 
-    # Create a mock whose *class name* is 'EvccTariffEngine' — the ws_state
-    # function uses type(tariff_engine).__name__ to determine the source.
-    class EvccTariffEngine:  # noqa: N801 — class name must match exactly
-        def _octopus_rate_at(self, min_of_day):  # noqa: ANN001
-            return 0.28
+    # Create a mock scheduler with EVCC grid prices
+    mock_scheduler = MagicMock()
+    mock_scheduler.active_schedule = None  # prevent dataclasses.asdict crash
+    base = datetime(2026, 1, 15, 0, 0, tzinfo=timezone.utc)
+    mock_scheduler.last_grid_prices = GridPriceSeries(
+        import_eur_kwh=[0.389] * 96,
+        export_eur_kwh=[0.075] * 96,
+        slot_timestamps_utc=[base + timedelta(minutes=15 * i) for i in range(96)],
+    )
 
-        def _modul3_rate_at(self, min_of_day):  # noqa: ANN001
-            return 0.0
-
-    mock_engine = EvccTariffEngine()
-    mock_engine._octopus = MagicMock()
-    mock_engine._octopus.timezone = "Europe/London"
-    mock_engine._modul3 = MagicMock()
-    mock_engine._modul3.timezone = "Europe/Berlin"
-    mock_engine._octopus_rate_at = lambda m: 0.28
-    mock_engine._modul3_rate_at = lambda m: 0.0
-
-    app = _make_app(tariff_engine=mock_engine)
+    app = _make_app(scheduler=mock_scheduler)
 
     with TestClient(app).websocket_connect("/api/ws/state") as ws:
         data = ws.receive_json()
@@ -95,7 +90,7 @@ def test_ws_tariff_source_is_evcc_when_evcc_tariff():
     tariff = data["tariff"]
     assert "source" in tariff, f"'source' field missing from tariff dict: {tariff}"
     assert tariff["source"] == "evcc", (
-        f"Expected source='evcc' with EvccTariffEngine, got {tariff['source']!r}"
+        f"Expected source='evcc' with EVCC grid prices, got {tariff['source']!r}"
     )
 
 
