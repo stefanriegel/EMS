@@ -105,6 +105,7 @@ class Coordinator:
         self._emma_driver = None  # EmmaDriver | None
         self._last_emma_snap = None  # EmmaSnapshot | None
         self._health_logger = None  # HealthLogger | None
+        self._consumption_forecaster = None  # ConsumptionForecaster | None
 
         # Decision ring buffer (INT-04)
         self._decisions: deque[DecisionEntry] = deque(maxlen=100)
@@ -225,6 +226,10 @@ class Coordinator:
     def set_commissioning_manager(self, manager) -> None:
         """Inject the commissioning manager for shadow mode and stage gating."""
         self._commissioning_manager = manager
+
+    def set_consumption_forecaster(self, forecaster) -> None:
+        """Inject the consumption forecaster so the health logger can report ML metrics."""
+        self._consumption_forecaster = forecaster
 
     def set_cross_charge_detector(self, detector: CrossChargeDetector) -> None:
         """Inject the cross-charge detector for per-cycle safety guard."""
@@ -1674,23 +1679,48 @@ class Coordinator:
                     true_cons = float(emma.load_power_w + v_discharge) if emma else 0.0
                     mgr = self._commissioning_manager
                     xc = self._cross_charge_detector
+                    ih = self._integration_health
 
                     health_snap = self._health_logger.capture(
+                        # battery
                         h_soc=h_snap.soc_pct,
                         v_soc=v_snap.soc_pct,
                         h_power=h_snap.power_w,
                         v_power=v_snap.power_w,
+                        h_max_discharge_w=float(h_snap.max_discharge_power_w or 0),
+                        v_max_discharge_w=float(getattr(v_snap, "max_discharge_power_w", 0) or 0),
+                        # energy flows
                         pv_power=pv_w,
+                        grid_power=float(v_snap.grid_power_w or 0) if v_snap.available else 0.0,
                         true_consumption=true_cons,
+                        v_l1_w=float(v_snap.grid_l1_power_w or 0) if v_snap.available else 0.0,
+                        v_l2_w=float(v_snap.grid_l2_power_w or 0) if v_snap.available else 0.0,
+                        v_l3_w=float(v_snap.grid_l3_power_w or 0) if v_snap.available else 0.0,
+                        # control state
+                        control_state=self._state.control_state.value if self._state else "UNKNOWN",
+                        pool_status=self._state.pool_status if self._state else "UNKNOWN",
+                        h_role=self._prev_h_role,
+                        v_role=self._prev_v_role,
+                        h_setpoint_w=float(self._state.huawei_discharge_setpoint_w) if self._state else 0.0,
+                        v_setpoint_w=float(self._state.victron_discharge_setpoint_w) if self._state else 0.0,
+                        # cross-charge
                         cross_charge_active=xc.active if xc else False,
-                        cross_charge_waste=xc.waste_wh if xc else 0.0,
-                        cross_charge_episodes=xc.episode_count if xc else 0,
+                        cross_charge_waste=xc.total_waste_wh if xc else 0.0,
+                        cross_charge_episodes=xc.total_episodes if xc else 0,
+                        # commissioning
                         shadow_mode=mgr.shadow_mode if mgr else False,
-                        commissioning_stage=mgr.stage.value if mgr else "unknown",
+                        commissioning_stage=mgr.stage.value if mgr else "production",
+                        # availability
                         huawei_available=h_snap.available,
                         victron_available=v_snap.available,
                         emma_available=emma is not None,
-                        influx_available=self._integration_health["influxdb"].available,
+                        influx_available=ih["influxdb"].available,
+                        ha_mqtt_available=ih["ha_mqtt"].available,
+                        evcc_available=ih["evcc"].available,
+                        telegram_available=ih["telegram"].available,
+                        # rich ML / scheduler objects
+                        forecaster=self._consumption_forecaster,
+                        scheduler=self._scheduler,
                     )
                     await self._writer.write_health(health_snap)
                 except Exception as exc:

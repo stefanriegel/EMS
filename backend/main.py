@@ -606,6 +606,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             tariff_engine=tariff_engine,
         )
 
+        # Health logger — always enabled, unconditionally wired to coordinator
+        from backend.health_logger import HealthLogger  # noqa: PLC0415
+        coordinator._health_logger = HealthLogger()
+        coordinator.set_consumption_forecaster(app.state.consumption_forecaster)
+        logger.info("Health logger enabled — writing to ems_health every 5 min")
+
         # --- EMMA driver (optional — same Modbus proxy, device_id=0) ---
         emma_enabled = os.environ.get("EMMA_ENABLED", "").lower() in ("1", "true", "yes")
         if emma_enabled:
@@ -619,9 +625,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 )
                 await emma_driver.connect()
                 coordinator._emma_driver = emma_driver
-                # Health logger — 5-minute diagnostic snapshots to InfluxDB
-                from backend.health_logger import HealthLogger  # noqa: PLC0415
-                coordinator._health_logger = HealthLogger()
                 logger.info(
                     "EMMA driver connected — host=%s:%d device_id=0",
                     huawei_cfg.host,

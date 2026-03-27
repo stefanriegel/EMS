@@ -403,23 +403,70 @@ class InfluxMetricsWriter:
         try:
             point = (
                 _LineProtocolBuilder("ems_health")
+                # ── tags (low cardinality) ──────────────────────────────
                 .tag("stage", snap.commissioning_stage)
                 .tag("shadow", "true" if snap.shadow_mode else "false")
                 .tag("degraded", "true" if snap.flag_system_degraded else "false")
+                .tag("control_state", snap.control_state)
+                .tag("pool_status", snap.pool_status)
+                .tag("huawei_role", snap.huawei_role)
+                .tag("victron_role", snap.victron_role)
+                # ── battery ────────────────────────────────────────────
                 .field_float("huawei_soc_pct", snap.huawei_soc_pct)
                 .field_float("victron_soc_pct", snap.victron_soc_pct)
+                .field_float("combined_soc_pct", snap.combined_soc_pct)
                 .field_float("soc_imbalance_pct", snap.soc_imbalance_pct)
                 .field_float("huawei_power_w", snap.huawei_power_w)
                 .field_float("victron_power_w", snap.victron_power_w)
+                .field_float("huawei_max_discharge_w", snap.huawei_max_discharge_w)
+                .field_float("victron_max_discharge_w", snap.victron_max_discharge_w)
+                .field_float("huawei_setpoint_w", snap.huawei_setpoint_w)
+                .field_float("victron_setpoint_w", snap.victron_setpoint_w)
+                # ── energy flows ───────────────────────────────────────
                 .field_float("pv_power_w", snap.pv_power_w)
+                .field_float("grid_power_w", snap.grid_power_w)
                 .field_float("true_consumption_w", snap.true_consumption_w)
+                .field_float("victron_grid_l1_w", snap.victron_grid_l1_w)
+                .field_float("victron_grid_l2_w", snap.victron_grid_l2_w)
+                .field_float("victron_grid_l3_w", snap.victron_grid_l3_w)
+                # ── cross-charge ───────────────────────────────────────
                 .field_bool("cross_charge_active", snap.cross_charge_active)
                 .field_float("cross_charge_waste_wh", snap.cross_charge_waste_wh)
                 .field_int("cross_charge_episodes", snap.cross_charge_episodes)
+                # ── integration availability ───────────────────────────
+                .field_bool("avail_huawei", snap.huawei_available)
+                .field_bool("avail_victron", snap.victron_available)
+                .field_bool("avail_emma", snap.emma_available)
+                .field_bool("avail_influx", snap.influx_available)
+                .field_bool("avail_ha_mqtt", snap.ha_mqtt_available)
+                .field_bool("avail_evcc", snap.evcc_available)
+                .field_bool("avail_telegram", snap.telegram_available)
+                # ── ML forecaster ──────────────────────────────────────
+                .field_bool("ml_trained", snap.ml_trained)
+                .field_int("ml_days_of_history", snap.ml_days_of_history)
+                .field_int("ml_total_samples", snap.ml_total_samples)
+                # ── scheduler ─────────────────────────────────────────
+                .field_bool("sched_has_schedule", snap.sched_has_schedule)
+                .field_bool("sched_stale", snap.sched_stale)
+                .field_int("sched_slot_count", snap.sched_slot_count)
+                .field_float("sched_solar_forecast_kwh", snap.sched_solar_forecast_kwh)
+                .field_float("sched_consumption_forecast_kwh", snap.sched_consumption_forecast_kwh)
+                .field_float("sched_target_soc_pct", snap.sched_target_soc_pct)
+                # ── flags ──────────────────────────────────────────────
                 .field_bool("flag_soc_imbalance", snap.flag_soc_imbalance)
                 .field_bool("flag_cross_charge", snap.flag_cross_charge)
-                .time_ns(snap.timestamp)
+                .field_bool("flag_system_degraded", snap.flag_system_degraded)
+                .field_bool("flag_ml_stale", snap.flag_ml_stale)
+                .field_bool("flag_sched_stale", snap.flag_sched_stale)
             )
+            # Optional float fields — only appended when the value is not None
+            if snap.ml_last_prediction_kwh is not None:
+                point.field_float("ml_last_prediction_kwh", snap.ml_last_prediction_kwh)
+            if snap.ml_last_trained_age_h is not None:
+                point.field_float("ml_last_trained_age_h", snap.ml_last_trained_age_h)
+            if snap.ml_last_mape_pct is not None:
+                point.field_float("ml_last_mape_pct", snap.ml_last_mape_pct)
+            point.time_ns(snap.timestamp)
             await self._write_lines([point.to_line()])
         except Exception as exc:  # noqa: BLE001
             logger.warning("influx health write failed: %s", exc)

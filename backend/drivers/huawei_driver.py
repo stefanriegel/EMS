@@ -180,24 +180,42 @@ class HuaweiDriver:
     # ------------------------------------------------------------------
 
     async def _with_reconnect(self, coro_factory):
-        """Execute ``coro_factory()`` and retry once on connection failure.
+        """Execute ``coro_factory()``, recreating the client on hard TCP failure.
 
-        On the first ``ConnectionException`` (or any ``Exception`` from the
-        transport layer), closes the current connection, reopens it, and
-        retries the coroutine exactly once.  Logs WARNING on reconnect.
+        The huawei-solar library already handles transient failures internally:
+        ``_read_registers`` retries up to 6× with exponential backoff and fires
+        ``_reconnect()`` every 3rd retry for ``TimeoutError`` /
+        ``ConnectionInterruptedException``.  We must NOT fight that by calling
+        ``close()`` + ``connect()`` while the library's reconnect task is still
+        running — doing so cancels the library's task and creates a race.
+
+        This outer layer only handles ``ConnectionException`` — the case where
+        the library's internal backoff has already exhausted all retries and
+        given up entirely (e.g. the inverter was in night standby for hours).
+        In that case we tear down and rebuild the client from scratch, then
+        re-raise so the controller's failure counter increments normally.
+        The controller resets failures on the next successful poll, so recovery
+        is automatic once Modbus comes back.
         """
         try:
             return await coro_factory()
         except ConnectionException as exc:
             logger.warning(
-                "Connection lost to %s:%d (%s) — reconnecting and retrying",
+                "Huawei TCP connection to %s:%d exhausted retries (%s) — "
+                "rebuilding client; will recover on next successful poll",
                 self.host,
                 self.port,
                 type(exc).__name__,
             )
             await self.close()
-            await self.connect()
-            return await coro_factory()
+            try:
+                await self.connect()
+            except Exception as connect_exc:
+                logger.warning(
+                    "Huawei reconnect attempt failed: %s — will retry next cycle",
+                    connect_exc,
+                )
+            raise  # let the controller's failure counter handle it
 
     # ------------------------------------------------------------------
     # Read methods

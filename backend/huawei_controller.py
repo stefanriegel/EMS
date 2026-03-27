@@ -121,22 +121,23 @@ class HuaweiController:
         except Exception:
             pass  # slave may be offline or absent
 
-        # Stale detection: if too long since last successful read
+        # Stale gap warning: log if the inverter was unreachable for a while
+        # (e.g. night standby), but always reset failures on a successful read.
+        # Previously this incremented _consecutive_failures on stale gaps, which
+        # prevented recovery after standby — the controller would lock into
+        # available=False even though Modbus was healthy again.
         stale_threshold = 2 * self._loop_interval_s
         if (
             self._last_read_time > 0
             and (now - self._last_read_time) > stale_threshold
         ):
             logger.warning(
-                "Huawei data stale: %.1fs since last read (threshold %.1fs)",
+                "Huawei recovered after %.1fs gap (threshold %.1fs) — "
+                "inverter was likely in night standby",
                 now - self._last_read_time,
                 stale_threshold,
             )
-            self._consecutive_failures += 1
-            # Still use the fresh data we just got — but count the gap
-        else:
-            # Successful fresh read: reset failures
-            self._consecutive_failures = 0
+        self._consecutive_failures = 0  # always reset on successful read
 
         self._last_battery = battery
         self._last_master = master
@@ -156,10 +157,6 @@ class HuaweiController:
         # Skip during shadow mode — no writes should happen.
         if self._mode_manager is not None and not self._shadow_mode:
             await self._mode_manager.check_health(battery.working_mode)
-
-        # Check if we crossed the failure threshold despite stale counting
-        if self._consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
-            return await self._handle_failure(now)
 
         # Build snapshot from fresh data
         charge_power = battery.charge_power_w  # max(0, total_charge_discharge_power_w)

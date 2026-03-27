@@ -8,6 +8,15 @@ counters that neither the inverter nor Victron can provide alone.
 Uses raw pymodbus (not huawei-solar) since EMMA registers are not in
 the huawei-solar register map.
 
+Protocol notes (SmartHEMS V100R025C00SPC100 Modbus Interface Definitions):
+- ALL registers (30xxx sampled data AND 40xxx control) use function code 0x03
+  (Read Holding Registers). Function code 0x04 (Read Input Registers) is NOT
+  supported by EMMA — using it causes a timeout with no response.
+- Power registers (30354–30360) have unit kW and gain=1000, yielding raw
+  integer values that must be divided by 1000 to get watts.
+- EMMA logical device ID is always 0 (broadcast address).
+- ESS control mode register 40000: 2=max self-consumption, 5=TOU, 6=third-party dispatch.
+
 Usage::
 
     driver = EmmaDriver(host="192.168.0.10", port=502)
@@ -77,15 +86,15 @@ class EmmaSnapshot:
 # Each entry: (start_address, count, signed, gain, field_name)
 # gain: divide raw value by this to get the final value
 _REGISTER_MAP: list[tuple[int, int, bool, int, str]] = [
-    (30354, 2, False, 1, "pv_power_w"),           # U32, W
-    (30356, 2, False, 1, "load_power_w"),          # U32, W
-    (30358, 2, True, 1, "feed_in_power_w"),        # I32, W
-    (30360, 2, True, 1, "battery_power_w"),        # I32, W
-    (30368, 1, False, 100, "battery_soc_pct"),     # U16, gain 100, %
-    (30346, 2, False, 100, "pv_yield_today_kwh"),  # U32, gain 100, kWh
-    (30324, 2, False, 100, "consumption_today_kwh"),  # U32, gain 100, kWh
-    (30306, 2, False, 100, "charged_today_kwh"),   # U32, gain 100, kWh
-    (30312, 2, False, 100, "discharged_today_kwh"),  # U32, gain 100, kWh
+    (30354, 2, False, 1000, "pv_power_w"),           # U32, kW gain=1000 → W
+    (30356, 2, False, 1000, "load_power_w"),          # U32, kW gain=1000 → W
+    (30358, 2, True,  1000, "feed_in_power_w"),       # I32, kW gain=1000 → W
+    (30360, 2, True,  1000, "battery_power_w"),       # I32, kW gain=1000 → W
+    (30368, 1, False,  100, "battery_soc_pct"),       # U16, % gain=100
+    (30346, 2, False,  100, "pv_yield_today_kwh"),    # U32, kWh gain=100
+    (30324, 2, False,  100, "consumption_today_kwh"), # U32, kWh gain=100
+    (30306, 2, False,  100, "charged_today_kwh"),     # U32, kWh gain=100
+    (30312, 2, False,  100, "discharged_today_kwh"),  # U32, kWh gain=100
 ]
 
 _ESS_MODE_ADDRESS = 40000  # U16, 1 register (holding register)
@@ -166,7 +175,7 @@ class EmmaDriver:
         values: dict[str, float] = {}
 
         for address, count, signed, gain, field_name in _REGISTER_MAP:
-            result = await self._client.read_input_registers(
+            result = await self._client.read_holding_registers(
                 address, count=count, device_id=self.device_id
             )
             if result.isError():

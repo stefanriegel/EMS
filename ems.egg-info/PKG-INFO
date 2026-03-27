@@ -7,7 +7,6 @@ Requires-Dist: pymodbus<4,>=3.11
 Requires-Dist: fastapi
 Requires-Dist: uvicorn[standard]
 Requires-Dist: paho-mqtt>=2.1
-Requires-Dist: influxdb-client[async]>=1.45
 Requires-Dist: httpx
 Requires-Dist: python-jose[cryptography]
 Requires-Dist: passlib[bcrypt]

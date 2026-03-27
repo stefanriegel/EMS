@@ -41,11 +41,13 @@ scripts/uat_docker.sh                       # run UAT smoke tests in Docker
 
 **Entry**: `backend/main.py` (FastAPI lifespan) · `frontend/src/main.tsx` (React SPA)
 
-**Drivers** (`backend/drivers/`): `huawei_driver.py` (Modbus TCP via `huawei-solar`), `victron_driver.py` (Modbus TCP via `pymodbus`) · Protocol contracts in `protocol.py` · Models: `huawei_models.py`, `victron_models.py`
+**Drivers** (`backend/drivers/`): `huawei_driver.py` (Modbus TCP via `huawei-solar`), `victron_driver.py` (Modbus TCP via `pymodbus`), `emma_driver.py` (EMMA Smart Energy Controller via `pymodbus`, unit_id=0) · Protocol contracts in `protocol.py` · Models: `huawei_models.py`, `victron_models.py`
 
 **Controllers**: `huawei_controller.py`, `victron_controller.py` — wrap drivers with failure counting, safe-state, sign-convention translation · Produce `ControllerSnapshot`, consume `ControllerCommand` from `controller_model.py`
 
 **Orchestration**: `orchestrator.py` (5s control loop) · `coordinator.py` (role dispatch) · State: `unified_model.py` (`UnifiedPoolState`, `ControlState` enum) · `controller_model.py` (`BatteryRole`, `PoolStatus`, `CoordinatorState`, `DecisionEntry`)
+
+**Monitoring**: `health_logger.py` (5-min diagnostic snapshots to InfluxDB `ems_health` measurement)
 
 **Scheduling**: `scheduler.py` + `weather_scheduler.py` (3-day outlook) · `consumption_forecaster.py` (ML via scikit-learn) · `weather_client.py` (Open-Meteo cascade) · Models: `schedule_models.py` (`ChargeSlot`, `ChargeSchedule`, `DayPlan`)
 
@@ -55,7 +57,7 @@ scripts/uat_docker.sh                       # run UAT smoke tests in Docker
 
 **Integrations**: `evcc_client.py` (HTTP), `evcc_mqtt_driver.py` (MQTT) · `ha_rest_client.py` (`MultiEntityHaClient`), `ha_mqtt_client.py` · `ha_statistics_reader.py` (SQLite) · `notifier.py` (Telegram) · `supervisor_client.py` (HA Supervisor auto-discovery) · `influx_writer.py`, `influx_reader.py` (optional InfluxDB)
 
-**Frontend** (`frontend/src/`): Components — `EnergyFlowCard.tsx`, `BatteryStatus.tsx`, `DeviceDetail.tsx`, `TariffCard.tsx`, `OptimizationCard.tsx`, `ForecastCard.tsx`, `EvccCard.tsx`, `LoadsCard.tsx`, `DecisionLog.tsx`, `PoolOverview.tsx` · Hooks — `useEmsSocket.ts` (WebSocket), `useEmsState.ts` (polling fallback), `useDecisions.ts`, `useForecast.ts` · Pages — `Login.tsx` · Types — `types.ts` · Routing — `wouter` in `App.tsx`
+**Frontend** (`frontend/src/`): Components — `EnergyFlowCard.tsx`, `BatteryStatus.tsx`, `DeviceDetail.tsx`, `TariffCard.tsx`, `OptimizationCard.tsx`, `ForecastCard.tsx`, `EvccCard.tsx`, `LoadsCard.tsx`, `DecisionLog.tsx`, `PoolOverview.tsx`, `CommissioningCard.tsx` · Hooks — `useEmsSocket.ts` (WebSocket), `useEmsState.ts` (polling fallback), `useDecisions.ts`, `useForecast.ts` · Pages — `Login.tsx` · Types — `types.ts` · Routing — `wouter` in `App.tsx`
 
 **Config**: `backend/config.py` (dataclass configs with `from_env()` classmethods) · `ems/config.yaml` (HA Add-on options/schema) · `ems/run.sh` (env mapping) · `.env.example`, `docker-compose.yml`
 
