@@ -13,12 +13,7 @@
  *   K045 — mock /api/setup/status → {setup_complete: true} to prevent wizard redirect
  */
 import { test, expect } from '@playwright/test';
-import { fileURLToPath } from 'url';
-import * as path from 'path';
 import type { LoadsPayload } from '../src/types';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 // ---------------------------------------------------------------------------
 // Mock payload builders

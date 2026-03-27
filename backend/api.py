@@ -203,6 +203,7 @@ async def get_state(
     return _state_to_dict(state)
 
 
+# intentionally public — exempt from auth (see AuthMiddleware in auth.py: /api/health is always allowed)
 @api_router.get("/health")
 async def get_health(
     request: Request,
@@ -1158,6 +1159,7 @@ def _get_ha_mqtt_connected(app: Any) -> bool:
     return bool(client._connected)
 
 
+# intentionally public — exempt from auth (WS handshakes do not carry cookies reliably; auth is middleware-based)
 @api_router.websocket("/ws/state")
 async def ws_state(
     ws: WebSocket,

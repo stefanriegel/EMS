@@ -21,10 +21,10 @@ Live-hardware verification checklist (manual UAT)
 --------------------------------------------------
 After running the probe:
 
-1. ``slave_id=0 input_power`` shows a non-negative integer (watts) — PV DC input
-2. ``slave_id=0 storage_unit_1_state_of_capacity`` shows 0–100 (% SoC)
-3. ``slave_id=0 storage_unit_2_state_of_capacity`` shows 0–100 or ERROR (single-pack OK)
-4. ``slave_id=2 active_power`` shows a non-zero integer when the slave is generating
+1. ``slave_id=2 input_power`` shows a non-negative integer (watts) — PV DC input
+2. ``slave_id=2 storage_unit_1_state_of_capacity`` shows 0–100 (% SoC)
+3. ``slave_id=2 storage_unit_2_state_of_capacity`` shows 0–100 or ERROR (single-pack OK)
+4. ``slave_id=8 active_power`` shows a non-zero integer when the slave is generating
 
 Exit codes
 ----------
@@ -140,7 +140,7 @@ async def main(args: argparse.Namespace) -> int:
         for slave_id in slave_ids:
             print(f"\n# --- slave_id={slave_id} ---", flush=True)
 
-            if slave_id == 0:
+            if slave_id == 2:  # master inverter ID for this installation (K059)
                 # Master inverter: PV + device status
                 await _probe_slave(client, slave_id, [
                     "state_1",
@@ -213,8 +213,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--slave-ids",
-        default="0,2",
-        help="Comma-separated Modbus slave IDs to probe (default: '0,2')",
+        default="2,8",
+        help="Comma-separated Modbus slave IDs to probe (default: '2,8')",
     )
     parser.add_argument(
         "--connect-timeout",
