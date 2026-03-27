@@ -337,15 +337,18 @@ class TestReadMaster:
 
 class TestReadBattery:
     def _pack1_results(self):
-        """Return values for _BATTERY_PACK1_REGISTERS (6 registers)."""
+        """Return values for _BATTERY_PACK1_REGISTERS (5 registers, working_mode_b excluded)."""
         return [
             _result(1),      # storage_unit_1_running_status
             _result(3000),   # storage_unit_1_charge_discharge_power (charging)
             _result(72.5),   # storage_unit_1_state_of_capacity
-            _result(2),      # storage_unit_1_working_mode_b
             _result(5000),   # storage_maximum_charge_power
             _result(5000),   # storage_maximum_discharge_power
         ]
+
+    def _working_mode_results(self):
+        """Return value for the isolated storage_unit_1_working_mode_b call."""
+        return [_result(2)]
 
     def _pack2_results(self):
         """Return values for _BATTERY_PACK2_REGISTERS (5 registers)."""
@@ -362,6 +365,7 @@ class TestReadBattery:
         """read_battery() must call get_multiple at least twice (pack1 + pack2)."""
         mock_client.get_multiple.side_effect = [
             self._pack1_results(),
+            self._working_mode_results(),    # isolated working_mode_b call
             self._pack2_results(),
             [_result(1.0), _result(0.5)],   # day charge/discharge stats
             [_result(100.0), _result(99.0)], # total charge/discharge
@@ -371,15 +375,16 @@ class TestReadBattery:
 
         await driver.read_battery()
 
-        # 2 core calls + up to 3 best-effort stats calls
+        # 3 core calls (pack1 + working_mode + pack2) + up to 3 best-effort stats calls
         assert mock_client.get_multiple.call_count >= 2
 
     @pytest.mark.anyio
     async def test_read_battery_pack1_registers_come_first(self, driver, mock_client):
-        """First get_multiple call must use pack-1 register list."""
+        """First get_multiple call must use pack-1 register list; pack2 comes after working_mode."""
         from backend.drivers.huawei_driver import _BATTERY_PACK1_REGISTERS, _BATTERY_PACK2_REGISTERS
         mock_client.get_multiple.side_effect = [
             self._pack1_results(),
+            self._working_mode_results(),    # isolated working_mode_b call
             self._pack2_results(),
             [_result(1.0), _result(0.5)],
             [_result(100.0), _result(99.0)],
@@ -390,15 +395,16 @@ class TestReadBattery:
         await driver.read_battery()
 
         first_call_args, first_call_kwargs = mock_client.get_multiple.call_args_list[0]
-        second_call_args, second_call_kwargs = mock_client.get_multiple.call_args_list[1]
+        third_call_args, third_call_kwargs = mock_client.get_multiple.call_args_list[2]
         assert first_call_args[0] == _BATTERY_PACK1_REGISTERS
-        assert second_call_args[0] == _BATTERY_PACK2_REGISTERS
+        assert third_call_args[0] == _BATTERY_PACK2_REGISTERS
 
     @pytest.mark.anyio
     async def test_read_battery_pack2_absent_returns_none_fields(self, driver, mock_client):
         """If pack-2 get_multiple raises, pack-2 fields are None; no exception is raised."""
         mock_client.get_multiple.side_effect = [
             self._pack1_results(),
+            self._working_mode_results(),    # isolated working_mode_b call
             Exception("IllegalAddress: register 37738 not available"),
         ]
         driver._client = mock_client
@@ -418,6 +424,7 @@ class TestReadBattery:
         """Full two-pack read populates all HuaweiBatteryData fields."""
         mock_client.get_multiple.side_effect = [
             self._pack1_results(),
+            self._working_mode_results(),    # isolated working_mode_b call
             self._pack2_results(),
         ]
         driver._client = mock_client

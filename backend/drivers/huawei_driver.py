@@ -82,11 +82,13 @@ _SLAVE_REGISTERS: list[str] = [
 ]
 
 # Battery pack 1 + system limits (37000–37050, all within 64-reg gap)
+# NOTE: storage_unit_1_working_mode_b (37006) is intentionally excluded —
+# this register throws DecodeError on some firmware versions and poisons the
+# entire get_multiple batch.  It is read separately below with suppress().
 _BATTERY_PACK1_REGISTERS: list[str] = [
     "storage_unit_1_running_status",          # 37000
     "storage_unit_1_charge_discharge_power",  # 37001
     "storage_unit_1_state_of_capacity",       # 37004
-    "storage_unit_1_working_mode_b",          # 37006
     "storage_maximum_charge_power",           # 37046
     "storage_maximum_discharge_power",        # 37048
 ]
@@ -351,6 +353,14 @@ class HuaweiDriver:
                 for name, result in zip(_BATTERY_PACK1_REGISTERS, pack1_results)
             }
             logger.debug("read_battery pack1 slave_id=%d raw=%s", self.master_slave_id, p1)
+
+            # --- Call 1b: working_mode_b (optional — DecodeError on some firmware) ---
+            with contextlib.suppress(Exception):
+                wm_results = await self._client.get_multiple(
+                    ["storage_unit_1_working_mode_b"],
+                    slave_id=self.master_slave_id,
+                )
+                p1["storage_unit_1_working_mode_b"] = wm_results[0].value
 
             # --- Call 2: Pack 2 + combined (optional) ---
             p2: dict[str, Any] = {}
