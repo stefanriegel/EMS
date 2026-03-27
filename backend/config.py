@@ -936,3 +936,55 @@ class CommissioningConfig:
                 os.environ.get("EMS_SINGLE_BATTERY_MIN_HOURS", "24")
             ),
         )
+
+
+@dataclass
+class SupervisoryConfig:
+    """Configuration for the supervisory EMS control mode.
+
+    Attributes:
+        control_mode: Active control mode (``"supervisory"`` or ``"legacy"``).
+        observation_interval_s: Control loop interval in seconds.
+        soc_balance_threshold_pct: SoC gap (%) that triggers balancing.
+        soc_balance_hysteresis_pct: SoC gap (%) at which balancing stops.
+        min_soc_pct: SoC floor (%) below which min-SoC guard activates.
+        min_soc_hysteresis_pct: SoC margin (%) above floor before guard clears.
+
+    Environment variables:
+        ``EMS_CONTROL_MODE``               -- control mode (default ``supervisory``).
+        ``EMS_OBSERVATION_INTERVAL_S``     -- loop interval (default ``5``).
+        ``EMS_SOC_BALANCE_THRESHOLD_PCT``  -- balance trigger (default ``10``).
+        ``EMS_SOC_BALANCE_HYSTERESIS_PCT`` -- balance clear (default ``5``).
+        ``EMS_MIN_SOC_PCT``                -- min SoC floor (default ``10``).
+        ``EMS_MIN_SOC_HYSTERESIS_PCT``     -- min SoC clear (default ``5``).
+    """
+
+    control_mode: str = "supervisory"
+    observation_interval_s: float = 5.0
+    soc_balance_threshold_pct: float = 10.0
+    soc_balance_hysteresis_pct: float = 5.0
+    min_soc_pct: float = 10.0
+    min_soc_hysteresis_pct: float = 5.0
+
+    @classmethod
+    def from_env(cls) -> "SupervisoryConfig":
+        """Construct a :class:`SupervisoryConfig` from environment variables.
+
+        All fields have safe defaults -- **no env vars are required**.
+        """
+        return cls(
+            control_mode=os.environ.get("EMS_CONTROL_MODE", "supervisory"),
+            observation_interval_s=float(
+                os.environ.get("EMS_OBSERVATION_INTERVAL_S", "5")
+            ),
+            soc_balance_threshold_pct=float(
+                os.environ.get("EMS_SOC_BALANCE_THRESHOLD_PCT", "10")
+            ),
+            soc_balance_hysteresis_pct=float(
+                os.environ.get("EMS_SOC_BALANCE_HYSTERESIS_PCT", "5")
+            ),
+            min_soc_pct=float(os.environ.get("EMS_MIN_SOC_PCT", "10")),
+            min_soc_hysteresis_pct=float(
+                os.environ.get("EMS_MIN_SOC_HYSTERESIS_PCT", "5")
+            ),
+        )
