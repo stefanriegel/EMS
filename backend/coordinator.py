@@ -881,11 +881,40 @@ class Coordinator(HaCommandsMixin):
         Negative = surplus (PV exceeds load, can charge).
 
         Primary source: Victron grid_power_w (Venus OS grid meter).
+
+        **ESS-override**: when Victron ESS autonomously self-consumes
+        (grid ≈ 0 but consumption > 0 and no PV), grid_power_w is ~0
+        because the Victron battery is already covering the load. In this
+        case, use consumption_w as the demand signal so the coordinator
+        can dispatch both batteries to share the load instead of letting
+        Victron drain alone.
+
         Fallback: Huawei master_active_power_w (sign-flipped).
         """
         if v_snap.grid_power_w is not None and v_snap.available:
-            logger.debug("P_target source: grid_meter (%.0f W)", v_snap.grid_power_w)
-            return float(v_snap.grid_power_w)
+            grid_w = float(v_snap.grid_power_w)
+            consumption_w = float(v_snap.consumption_w or 0.0)
+            pv_w = float(v_snap.pv_on_grid_w or 0.0)
+
+            # ESS-override: Victron ESS is autonomously covering load.
+            # grid ≈ 0 (within deadband) but consumption is significant
+            # and no PV is producing → use consumption as the demand signal.
+            if (
+                abs(grid_w) < self._p_target_deadband_w
+                and consumption_w > self._p_target_deadband_w
+                and pv_w < 50.0
+            ):
+                logger.debug(
+                    "P_target source: consumption_w (%.0f W) — "
+                    "Victron ESS self-consuming (grid=%.0f W, pv=%.0f W)",
+                    consumption_w,
+                    grid_w,
+                    pv_w,
+                )
+                return consumption_w
+
+            logger.debug("P_target source: grid_meter (%.0f W)", grid_w)
+            return grid_w
 
         if h_snap.master_active_power_w is not None:
             # Huawei active_power: positive=export → negate for P_target
