@@ -97,8 +97,23 @@ class TestVictronControllerPoll:
         ctrl = _make_controller(driver)
         snap = await ctrl.poll()
 
-        # charge_headroom_w = max(0.0, charge_power_w) where charge_power_w = max(0.0, battery_power_w)
-        assert snap.charge_headroom_w == 1500.0
+        # charge_headroom_w = max_charge_w - current_charge_power
+        # default max_charge_w=10000, current charge=1500 → headroom=8500
+        assert snap.charge_headroom_w == 8500.0
+
+    @pytest.mark.anyio
+    async def test_poll_charge_headroom_when_discharging(self):
+        """When battery is discharging, headroom = full max_charge_w (no current charge)."""
+        driver = AsyncMock()
+        driver.read_system_state = AsyncMock(
+            return_value=_make_victron_data(battery_power_w=-3000.0)
+        )
+
+        ctrl = _make_controller(driver)
+        snap = await ctrl.poll()
+
+        # charge_power_w = 0 when discharging → headroom = 10000 - 0 = 10000
+        assert snap.charge_headroom_w == 10000.0
 
     @pytest.mark.anyio
     async def test_poll_includes_ess_mode(self):

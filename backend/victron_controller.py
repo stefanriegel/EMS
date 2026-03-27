@@ -47,11 +47,13 @@ class VictronController:
         sys_config: SystemConfig,
         loop_interval_s: float = 5.0,
         validation_config: HardwareValidationConfig | None = None,
+        max_charge_w: float = 10000.0,
     ) -> None:
         self._driver = driver
         self._sys_config = sys_config
         self._loop_interval_s = loop_interval_s
         self._validation_config = validation_config
+        self._max_charge_w = max_charge_w
         self._first_read_at: float | None = None
 
         self._role: BatteryRole = BatteryRole.HOLDING
@@ -132,7 +134,8 @@ class VictronController:
             return await self._handle_failure(now)
 
         # Build snapshot from fresh data
-        headroom = max(0.0, data.charge_power_w)
+        # charge_headroom = configured max charge - current charge power (0 when discharging)
+        headroom = max(0.0, self._max_charge_w - data.charge_power_w)
 
         return ControllerSnapshot(
             soc_pct=data.battery_soc_pct,

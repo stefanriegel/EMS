@@ -657,6 +657,22 @@ class Coordinator(HaCommandsMixin):
                 return
 
             surplus_w = abs(p_target)
+
+            # PV guard: only charge batteries from genuine PV surplus.
+            # When pv_on_grid_w == 0 and batteries are discharging to cover load,
+            # grid_power_w can go slightly negative (battery over-delivering load) —
+            # this is NOT real surplus. Charging would cross-charge from one battery
+            # into another rather than from PV.
+            pv_available = (v_snap.pv_on_grid_w or 0.0) > 0.0
+            if not pv_available:
+                logger.debug(
+                    "surplus_w=%.0f W but pv_on_grid_w=%.0f W — battery over-delivery,"
+                    " not PV surplus; holding at zero",
+                    surplus_w,
+                    v_snap.pv_on_grid_w or 0.0,
+                )
+                surplus_w = 0.0
+
             h_charge_w, v_charge_w = self._allocate_charge(
                 surplus_w, h_snap, v_snap
             )
@@ -1029,8 +1045,11 @@ class Coordinator(HaCommandsMixin):
         v_share = surplus_w * (v_headroom_soc / total_headroom)
 
         # Clamp to charge rate limits
+        # Huawei: charge_headroom_w = max_charge - current_charge (from HuaweiController)
+        # Victron: charge_headroom_w is incorrectly set to current_charge_power (always 0
+        # when discharging). Use the configured max directly instead.
         h_max = h_snap.charge_headroom_w
-        v_max = v_snap.charge_headroom_w
+        v_max = self._cfg.victron_max_charge_w
 
         h_charge = min(h_share, h_max)
         v_charge = min(v_share, v_max)

@@ -570,6 +570,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             victron, sys_cfg,
             loop_interval_s=orch_cfg.loop_interval_s,
             validation_config=validation_cfg,
+            max_charge_w=orch_cfg.victron_max_charge_w,
         )
 
         # --- Huawei mode manager ---
