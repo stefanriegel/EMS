@@ -1112,7 +1112,7 @@ def _build_tariff_dict(app: Any, tariff_engine: Any) -> dict[str, Any]:
                 "effective_rate_eur_kwh": round(oct_rate + m3_rate, 6),
                 "octopus_rate_eur_kwh": oct_rate,
                 "modul3_rate_eur_kwh": m3_rate,
-                "source": "live" if type(tariff_engine).__name__ == "LiveOctopusTariff" else "hardcoded",
+                "source": "evcc" if type(tariff_engine).__name__ == "EvccTariffEngine" else "hardcoded",
             }
         except Exception:
             return {**_null_tariff, "source": "error"}

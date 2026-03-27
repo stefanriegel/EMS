@@ -66,29 +66,26 @@ def test_ws_tariff_source_is_none_by_default():
     )
 
 
-def test_ws_tariff_source_is_live_when_live_tariff():
-    """WS tariff dict contains 'source': 'live' when tariff engine is LiveOctopusTariff."""
+def test_ws_tariff_source_is_evcc_when_evcc_tariff():
+    """WS tariff dict contains 'source': 'evcc' when tariff engine is EvccTariffEngine."""
     from starlette.testclient import TestClient
 
-    # Create a mock whose *class name* is 'LiveOctopusTariff' — the ws_state
+    # Create a mock whose *class name* is 'EvccTariffEngine' — the ws_state
     # function uses type(tariff_engine).__name__ to determine the source.
-    class LiveOctopusTariff:  # noqa: N801 — class name must match exactly
-        timezone = "Europe/London"
-
+    class EvccTariffEngine:  # noqa: N801 — class name must match exactly
         def _octopus_rate_at(self, min_of_day):  # noqa: ANN001
-            return 0.15
+            return 0.28
 
         def _modul3_rate_at(self, min_of_day):  # noqa: ANN001
-            return 0.05
+            return 0.0
 
-    mock_engine = LiveOctopusTariff()
-    # The ws_state code accesses _octopus.timezone and _modul3.timezone
+    mock_engine = EvccTariffEngine()
     mock_engine._octopus = MagicMock()
     mock_engine._octopus.timezone = "Europe/London"
     mock_engine._modul3 = MagicMock()
-    mock_engine._modul3.timezone = "Europe/London"
-    mock_engine._octopus_rate_at = lambda m: 0.15
-    mock_engine._modul3_rate_at = lambda m: 0.05
+    mock_engine._modul3.timezone = "Europe/Berlin"
+    mock_engine._octopus_rate_at = lambda m: 0.28
+    mock_engine._modul3_rate_at = lambda m: 0.0
 
     app = _make_app(tariff_engine=mock_engine)
 
@@ -97,8 +94,8 @@ def test_ws_tariff_source_is_live_when_live_tariff():
 
     tariff = data["tariff"]
     assert "source" in tariff, f"'source' field missing from tariff dict: {tariff}"
-    assert tariff["source"] == "live", (
-        f"Expected source='live' with LiveOctopusTariff engine, got {tariff['source']!r}"
+    assert tariff["source"] == "evcc", (
+        f"Expected source='evcc' with EvccTariffEngine, got {tariff['source']!r}"
     )
 
 

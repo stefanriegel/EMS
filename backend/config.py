@@ -688,27 +688,6 @@ class MultiEntityHaConfig:
 
 
 @dataclass
-class LiveTariffConfig:
-    """Configuration for the live Octopus tariff from HA entity.
-
-    Parameters
-    ----------
-    octopus_entity_id:
-        HA entity ID to poll for the raw Octopus electricity price.
-        Empty string disables the live tariff — falls back to CompositeTariffEngine.
-    """
-
-    octopus_entity_id: str = ""
-
-    @classmethod
-    def from_env(cls) -> "LiveTariffConfig":
-        """Construct from environment variables."""
-        return cls(
-            octopus_entity_id=os.environ.get("HA_OCTOPUS_ENTITY_ID", ""),
-        )
-
-
-@dataclass
 class OpenMeteoConfig:
     """Configuration for the Open-Meteo solar forecast fallback.
 

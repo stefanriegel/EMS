@@ -155,14 +155,6 @@ configuration:
       Vorhersagen erstellt. Unterhalb dieses Schwellenwerts wird ein einfacher
       saisonaler Durchschnitt verwendet. Standard ist 14 Tage.
 
-  # --- Live Octopus Tarif ---
-  ha_octopus_entity_id:
-    name: Octopus Strompreis Entity
-    description: >-
-      HA-Entity-ID mit dem aktuellen Octopus-Strompreis (z.B. von der
-      Octopus Energy Integration). Wenn gesetzt, verwendet EMS Live-Preise
-      statt des statischen HT/NT-Zeitplans.
-      Beispiel: sensor.octopus_a_7721404e_electricity_price.
 
   # --- Telegram Benachrichtigungen ---
   telegram_bot_token:

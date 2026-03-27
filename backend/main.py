@@ -51,7 +51,7 @@ from starlette.staticfiles import StaticFiles
 from backend.api import api_router
 from backend.auth import AdminConfig, AuthMiddleware, auth_router, ensure_jwt_secret
 from backend.ingress import IngressMiddleware
-from backend.config import HardwareValidationConfig, HuaweiConfig, InfluxConfig, ModelStoreConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig, EvccConfig, SchedulerConfig, EvccMqttConfig, HaMqttConfig, TelegramConfig, HaRestConfig, HaStatisticsConfig, MultiEntityHaConfig, LiveTariffConfig, OpenMeteoConfig
+from backend.config import HardwareValidationConfig, HuaweiConfig, InfluxConfig, ModelStoreConfig, OrchestratorConfig, SystemConfig, TariffConfig, VictronConfig, EvccConfig, SchedulerConfig, EvccMqttConfig, HaMqttConfig, TelegramConfig, HaRestConfig, HaStatisticsConfig, MultiEntityHaConfig, OpenMeteoConfig
 from backend.weather_client import OpenMeteoClient
 from backend.supervisor_client import SupervisorClient
 from backend.ha_rest_client import MultiEntityHaClient
@@ -382,12 +382,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         # --- Instantiate tariff engine ---
         tariff_cfg = TariffConfig.from_env()
-        tariff_engine = CompositeTariffEngine(
+        _composite = CompositeTariffEngine(
             octopus=tariff_cfg.octopus, modul3=tariff_cfg.modul3
         )
+        from backend.tariff import EvccTariffEngine  # noqa: PLC0415
+        tariff_engine = EvccTariffEngine(fallback=_composite)
         app.state.tariff_engine = tariff_engine
         logger.info(
-            "Tariff engine initialised — Octopus tz=%s Modul3 tz=%s windows=%d",
+            "Tariff engine: EvccTariffEngine with CompositeTariffEngine fallback "
+            "(Octopus tz=%s Modul3 tz=%s windows=%d)",
             tariff_cfg.octopus.timezone,
             tariff_cfg.modul3.timezone,
             len(tariff_cfg.modul3.windows),
@@ -812,13 +815,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             multi_ha_cfg = MultiEntityHaConfig.from_env()
             entity_map = multi_ha_cfg.entity_map
 
-            # Add Octopus entity to the map if live tariff is configured
-            live_tariff_cfg = LiveTariffConfig.from_env()
-            if live_tariff_cfg.octopus_entity_id:
-                octopus_field = "octopus_electricity_price"
-                from backend.ha_rest_client import _float_converter  # noqa: PLC0415
-                entity_map[octopus_field] = (live_tariff_cfg.octopus_entity_id, _float_converter)
-
             ha_rest_client = MultiEntityHaClient(
                 ha_rest_cfg.url,
                 ha_rest_cfg.token,
@@ -830,21 +826,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 "HA REST multi-entity client configured — %d entities",
                 len(entity_map),
             )
-
-            # --- LiveOctopusTariff conditional wrap ---
-            if live_tariff_cfg.octopus_entity_id:
-                from backend.live_tariff import LiveOctopusTariff  # noqa: PLC0415
-                tariff_engine = LiveOctopusTariff(
-                    ha_client=ha_rest_client,
-                    octopus_entity_field=octopus_field,
-                    fallback=tariff_engine,
-                )
-                app.state.tariff_engine = tariff_engine
-                logger.info(
-                    "Live Octopus tariff configured — entity=%s field=%s",
-                    live_tariff_cfg.octopus_entity_id,
-                    octopus_field,
-                )
         else:
             app.state.ha_rest_client = None
             logger.info("HA REST client not configured — HA_URL / HA_TOKEN not set")

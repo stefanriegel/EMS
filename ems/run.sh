@@ -92,10 +92,6 @@ _ha_stat_dhw=$(get_option 'ha_statistics_entity_dhw')
 _ha_ml_min=$(get_option 'ha_ml_min_days')
 [ -n "$_ha_ml_min" ] && export HA_ML_MIN_DAYS="$_ha_ml_min"
 
-# --- Optional: Live Octopus tariff from HA entity ---
-_ha_octopus=$(get_option 'ha_octopus_entity_id')
-[ -n "$_ha_octopus" ] && export HA_OCTOPUS_ENTITY_ID="$_ha_octopus"
-
 # --- Optional: Telegram alerts ---
 _tg_token=$(get_option 'telegram_bot_token')
 [ -n "$_tg_token" ] && export TELEGRAM_BOT_TOKEN="$_tg_token"

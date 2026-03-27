@@ -70,8 +70,6 @@ options:
   ha_entity_hausverbrauch: ""
   ha_entity_steuerbare: ""
   ha_entity_base_load: ""
-  # --- Live tariff ---
-  ha_octopus_entity_id: ""
   # --- Modul3 grid-fee tariff (HH:MM format, e.g. "00:30") ---
   modul3_surplus_start: ""
   modul3_surplus_end: ""
@@ -129,7 +127,6 @@ schema:
   ha_statistics_entity_heat_pump: str
   ha_statistics_entity_dhw: str?
   ha_ml_min_days: int
-  ha_octopus_entity_id: str?
   # --- Telegram alerts ---
   telegram_bot_token: password?
   telegram_chat_id: str?

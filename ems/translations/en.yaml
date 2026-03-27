@@ -155,14 +155,6 @@ configuration:
       forecaster starts producing predictions. Below this threshold,
       the system uses a simple seasonal average. Default is 14 days.
 
-  # --- Live Octopus tariff ---
-  ha_octopus_entity_id:
-    name: Octopus Energy Price Entity
-    description: >-
-      HA entity ID providing the current Octopus electricity price
-      (e.g. from the Octopus Energy integration). When set, EMS uses
-      live prices instead of the static off-peak/peak schedule.
-      Example: sensor.octopus_a_7721404e_electricity_price.
 
   # --- Telegram alerts ---
   telegram_bot_token:

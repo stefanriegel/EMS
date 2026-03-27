@@ -267,3 +267,133 @@ class CompositeTariffEngine:
             slots[-1].end.isoformat() if slots else "n/a",
         )
         return slots
+
+
+class EvccTariffEngine:
+    """Tariff engine driven entirely by EVCC's grid-price timeseries.
+
+    EVCC already computes the fully-inclusive import price (supply rate +
+    all grid fees).  This engine caches the latest ``GridPriceSeries``
+    received from EVCC and exposes the same ``get_effective_price`` /
+    ``get_price_schedule`` interface as ``CompositeTariffEngine``, falling
+    back to the composite engine when no EVCC prices are available.
+
+    The scheduler calls :meth:`update` after each successful EVCC fetch;
+    the engine is otherwise stateless.
+
+    Parameters
+    ----------
+    fallback:
+        :class:`CompositeTariffEngine` used when no EVCC prices have
+        been received yet.
+    """
+
+    def __init__(self, fallback: "CompositeTariffEngine") -> None:
+        self._fallback = fallback
+        self._grid_prices: "GridPriceSeries | None" = None  # type: ignore[name-defined]
+
+    # ------------------------------------------------------------------
+    # Delegate attributes so existing api.py / WS code keeps working
+    # ------------------------------------------------------------------
+
+    @property
+    def _octopus(self):  # type: ignore[return]
+        return self._fallback._octopus
+
+    @property
+    def _modul3(self):  # type: ignore[return]
+        return self._fallback._modul3
+
+    def _octopus_rate_at(self, minute: int) -> float:
+        return self._fallback._octopus_rate_at(minute)
+
+    def _modul3_rate_at(self, minute: int) -> float:
+        return self._fallback._modul3_rate_at(minute)
+
+    # ------------------------------------------------------------------
+    # Mutator — called by the scheduler
+    # ------------------------------------------------------------------
+
+    def update(self, grid_prices: "GridPriceSeries") -> None:  # type: ignore[name-defined]
+        """Replace the cached EVCC grid-price series."""
+        self._grid_prices = grid_prices
+
+    # ------------------------------------------------------------------
+    # Public tariff API
+    # ------------------------------------------------------------------
+
+    def get_effective_price(self, dt: datetime) -> float:
+        """Return the effective import price in €/kWh at *dt*.
+
+        Looks up *dt* in the cached EVCC timeseries.  Falls back to the
+        composite engine when no series is available.
+        """
+        gp = self._grid_prices
+        if gp is None or not gp.import_eur_kwh:
+            log.debug("EvccTariffEngine: no EVCC prices — fallback for dt=%s", dt)
+            return self._fallback.get_effective_price(dt)
+
+        from datetime import timezone as _tz
+        dt_utc = dt if dt.tzinfo is not None else dt.replace(tzinfo=_tz.utc)
+
+        # Walk timeseries to find current slot
+        price = gp.import_eur_kwh[-1]  # default: last known
+        for i, ts in enumerate(gp.slot_timestamps_utc):
+            if i + 1 < len(gp.slot_timestamps_utc):
+                if ts <= dt_utc < gp.slot_timestamps_utc[i + 1]:
+                    price = gp.import_eur_kwh[i]
+                    break
+            elif ts <= dt_utc:
+                price = gp.import_eur_kwh[i]
+
+        log.debug("EvccTariffEngine: dt=%s price=%.6f", dt, price)
+        return price
+
+    def get_price_schedule(self, target_date: date) -> list[TariffSlot]:
+        """Return tariff slots for *target_date* from EVCC prices.
+
+        Aligns the EVCC 15-minute timeseries to the requested date,
+        merges contiguous slots at the same price into half-hour blocks,
+        and falls back to :class:`CompositeTariffEngine` when no EVCC
+        data covers the date.
+        """
+        gp = self._grid_prices
+        if gp is None or not gp.import_eur_kwh:
+            log.debug("EvccTariffEngine: no EVCC prices — fallback for date=%s", target_date)
+            return self._fallback.get_price_schedule(target_date)
+
+        from datetime import timezone as _tz
+        oct_tz = ZoneInfo(self._fallback._octopus.timezone)
+        day_start = datetime.combine(target_date, time(0, 0), tzinfo=oct_tz)
+        day_end = day_start + timedelta(days=1)
+
+        # Filter EVCC slots that fall within target_date
+        slots: list[TariffSlot] = []
+        for i, ts in enumerate(gp.slot_timestamps_utc):
+            ts_local = ts.astimezone(oct_tz)
+            if not (day_start <= ts_local < day_end):
+                continue
+            # Determine slot end: next slot start or 15 min
+            if i + 1 < len(gp.slot_timestamps_utc):
+                slot_end = gp.slot_timestamps_utc[i + 1].astimezone(oct_tz)
+                # Cap at day boundary
+                if slot_end > day_end:
+                    slot_end = day_end
+            else:
+                slot_end = ts_local + timedelta(minutes=15)
+
+            price = gp.import_eur_kwh[i]
+            slots.append(TariffSlot(
+                start=ts_local,
+                end=slot_end,
+                octopus_rate_eur_kwh=price,
+                modul3_rate_eur_kwh=0.0,
+                effective_rate_eur_kwh=price,
+            ))
+
+        if not slots:
+            log.debug("EvccTariffEngine: no slots for date=%s — fallback", target_date)
+            return self._fallback.get_price_schedule(target_date)
+
+        log.debug("EvccTariffEngine: date=%s slots=%d from EVCC", target_date, len(slots))
+        return slots

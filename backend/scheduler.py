@@ -148,9 +148,12 @@ class Scheduler:
         # ------------------------------------------------------------------
         evcc_state = await self._evcc_client.get_state()
 
-        # Cache grid prices for live tariff display
+        # Cache grid prices for live tariff display and EvccTariffEngine
         if evcc_state is not None and evcc_state.grid_prices is not None:
             self.last_grid_prices = evcc_state.grid_prices
+            # Push to tariff engine if it supports live updates
+            if hasattr(self._tariff_engine, "update"):
+                self._tariff_engine.update(evcc_state.grid_prices)
 
         if evcc_state is None:
             self.schedule_stale = True
