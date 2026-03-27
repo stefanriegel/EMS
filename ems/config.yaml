@@ -1,5 +1,5 @@
 name: EMS – Energy Management System
-version: "1.11.6"
+version: "1.11.7"
 slug: ems
 description: >-
   Energy Management System for Huawei SUN2000 + Victron MultiPlus II.
