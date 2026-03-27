@@ -213,11 +213,9 @@ class TestInfluxLifespanWiring:
                                 assert app.state.metrics_reader is None
 
     def test_influx_writer_connected_when_url_configured(self, caplog):
-        """InfluxDB writer must be created when INFLUXDB_URL is set.
-
-        Note: metrics_reader is currently None (v2 reader not yet migrated to v1).
-        """
+        """InfluxDB writer and reader must be created when INFLUXDB_URL is set."""
         import logging
+        from backend.influx_reader import InfluxMetricsReader
 
         extra = {"INFLUXDB_URL": "http://influx:8086"}
         with patch("backend.main.HuaweiDriver", return_value=_make_mock_huawei()):
@@ -227,8 +225,8 @@ class TestInfluxLifespanWiring:
                         with patch.dict("os.environ", {**_REQUIRED_ENV, **extra}):
                             with caplog.at_level(logging.INFO, logger="backend.main"):
                                 with TestClient(app) as client:
-                                    # Reader disabled until v1 migration
-                                    assert app.state.metrics_reader is None
+                                    # Reader now wired — v1 InfluxQL migration complete
+                                    assert isinstance(app.state.metrics_reader, InfluxMetricsReader)
         assert any("InfluxDB writer connected" in r.message for r in caplog.records)
 
     def test_influx_disabled_log_message(self, caplog):

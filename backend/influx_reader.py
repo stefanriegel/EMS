@@ -1,40 +1,49 @@
-"""InfluxMetricsReader -- async Flux query wrapper for EMS metrics history.
+"""InfluxMetricsReader -- async InfluxQL query wrapper for EMS metrics history.
 
-TODO: This module still uses the InfluxDB v2 ``influxdb_client`` Flux query
-API.  It needs migration to InfluxDB v1 InfluxQL queries via direct HTTP
-(``GET /query?db=<database>&q=<influxql>``).  Until then, the reader is
-disabled in ``main.py`` and callers receive ``None``.
+Uses the InfluxDB v1 HTTP query API (``GET /query?db=<database>&q=<influxql>``)
+via a direct ``httpx.AsyncClient``.  No external InfluxDB client library required
+— mirrors the implementation pattern of :class:`~backend.influx_writer.InfluxMetricsWriter`.
 
-Wraps the async ``influxdb_client`` query API and provides two read surfaces:
+Three read surfaces are provided:
 
 ``query_range(measurement, start, stop)``
     Returns a flattened list of ``{"time", "field", "value"}`` dicts for all
-    records in the given time window.
+    field values in the given time window.  InfluxQL returns wide-format rows
+    (one column per field); this method pivots them to the long/flat format
+    expected by callers.
 
 ``query_latest(measurement)``
     Returns the single most-recent record dict for the measurement, or ``None``
     if the measurement has no data.
 
-Both methods are fire-and-forget on errors: exceptions are swallowed after a
+``query_consumption_history(days, tz)``
+    Returns a weekday-aware rolling mean of household consumption expressed as
+    :class:`~backend.schedule_models.ConsumptionForecast`.
+
+All methods are fire-and-forget on errors: exceptions are swallowed after a
 ``WARNING`` log so a query failure never surfaces to the caller.  The caller
-receives an empty list / ``None`` respectively.
+receives an empty list / ``None`` / fallback ConsumptionForecast respectively.
 
 Observability
 -------------
-- ``WARNING`` log on query failure: ``influx query failed: <exc>`` — grep this
-  to detect InfluxDB connectivity or query-syntax issues at runtime.
+- ``INFO  "InfluxDB reader connected -- url=... database=..."`` on construction.
+- ``WARNING "influx query failed: <exc>"`` — connectivity or query-syntax error
+  in ``query_range`` or ``query_latest``.
+- ``WARNING "influx consumption query failed: <exc>"`` — error in
+  ``query_consumption_history``.
+- ``WARNING "consumption history: only N days of data, using seasonal fallback"``
+  — cold-start or data-gap condition.
 """
 from __future__ import annotations
 
 import datetime
 import logging
+import urllib.parse
 from collections import defaultdict
-from typing import TYPE_CHECKING
+
+import httpx
 
 from backend.schedule_models import ConsumptionForecast
-
-if TYPE_CHECKING:
-    from influxdb_client.client.influxdb_client_async import InfluxDBClientAsync
 
 logger = logging.getLogger(__name__)
 
@@ -51,29 +60,103 @@ def _seasonal_fallback_kwh(today: datetime.date) -> float:
     return 25.0
 
 
+def _flux_duration_to_influxql(value: str) -> str:
+    """Translate a Flux-style duration to an InfluxQL time expression.
+
+    Examples
+    --------
+    ``"-1h"``   → ``"now() - 1h"``
+    ``"-14d"``  → ``"now() - 14d"``
+    ``"now()"`` → ``"now()"``
+    ``"-30d"``  → ``"now() - 30d"``
+    """
+    stripped = value.strip()
+    if stripped == "now()":
+        return "now()"
+    if stripped.startswith("-"):
+        # Insert a space between 'now()' and the negative duration for readability:
+        # "-1h" → "now() - 1h"
+        return f"now() - {stripped[1:]}"
+    return stripped
+
+
 class InfluxMetricsReader:
-    """Async Flux query client for EMS measurement history.
+    """Async InfluxQL query client for EMS measurement history.
+
+    Uses GET ``/query?db=<database>&q=<influxql>`` to read from InfluxDB v1.
 
     Parameters
     ----------
-    client:
-        Live ``InfluxDBClientAsync`` instance (constructed in lifespan).
-    org:
-        InfluxDB organisation name.
-    bucket:
-        InfluxDB bucket to query.
+    url:
+        Base URL of the InfluxDB instance (e.g. ``http://localhost:8086``).
+    database:
+        Target InfluxDB database name.
+    username:
+        Optional InfluxDB username for basic auth.
+    password:
+        Optional InfluxDB password for basic auth.
     """
 
     def __init__(
         self,
-        client: "InfluxDBClientAsync",
-        org: str,
-        bucket: str,
+        url: str,
+        database: str,
+        username: str = "",
+        password: str = "",
     ) -> None:
-        self._client = client
-        self._org = org
-        self._bucket = bucket
-        self._query_api = client.query_api()
+        self._url = url.rstrip("/")
+        self._database = database
+        self._query_url = f"{self._url}/query"
+
+        auth: tuple[str, str] | None = None
+        if username and password:
+            auth = (username, password)
+
+        self._http = httpx.AsyncClient(auth=auth, timeout=10.0)
+
+        logger.info(
+            "InfluxDB reader connected -- url=%s database=%s",
+            self._url,
+            database,
+        )
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    async def _run_query(self, influxql: str) -> dict:
+        """Execute an InfluxQL query and return the parsed JSON response.
+
+        Raises ``httpx.HTTPError`` on non-2xx responses.
+        """
+        params = {"db": self._database, "q": influxql}
+        resp = await self._http.get(self._query_url, params=params)
+        resp.raise_for_status()
+        return resp.json()
+
+    @staticmethod
+    def _iter_series(response: dict):
+        """Yield each series dict from an InfluxDB v1 JSON response.
+
+        InfluxDB v1 response shape::
+
+            {
+              "results": [
+                {
+                  "series": [
+                    {
+                      "name": "measurement",
+                      "columns": ["time", "col1", "col2"],
+                      "values": [["2026-01-01T00:00:00Z", 1.0, 2.0], ...]
+                    }
+                  ]
+                }
+              ]
+            }
+        """
+        for result in response.get("results", []):
+            for series in result.get("series", []):
+                yield series
 
     # ------------------------------------------------------------------
     # Public async interface
@@ -87,12 +170,18 @@ class InfluxMetricsReader:
     ) -> list[dict]:
         """Return all records in *[start, stop)* for *measurement*.
 
+        InfluxQL returns wide-format rows (one column per field per timestamp).
+        This method pivots them to the long/flat format::
+
+            [{"time": str, "field": str, "value": Any}, ...]
+
         Parameters
         ----------
         measurement:
             InfluxDB measurement name, e.g. ``"ems_system"``.
         start:
-            Flux-compatible start value, e.g. ``"-1h"`` or an RFC3339 string.
+            Flux-compatible start value, e.g. ``"-1h"`` or ``"now()"`` or an
+            RFC3339 string.  Translated to InfluxQL time expression internally.
         stop:
             Flux-compatible stop value, e.g. ``"now()"`` or an RFC3339 string.
 
@@ -102,23 +191,31 @@ class InfluxMetricsReader:
             Flat list of ``{"time": str, "field": str, "value": Any}`` dicts.
             Returns ``[]`` on any query error (exception is logged at WARNING).
         """
-        flux = (
-            f'from(bucket:"{self._bucket}")'
-            f" |> range(start:{start}, stop:{stop})"
-            f' |> filter(fn: (r) => r._measurement == "{measurement}")'
-        )
+        start_expr = _flux_duration_to_influxql(start)
+        stop_expr = _flux_duration_to_influxql(stop)
+
+        if stop_expr == "now()":
+            where = f"time >= {start_expr}"
+        else:
+            where = f"time >= {start_expr} AND time < {stop_expr}"
+
+        influxql = f"SELECT * FROM {measurement} WHERE {where}"
+
         try:
-            tables = await self._query_api.query(query=flux, org=self._org)
+            response = await self._run_query(influxql)
             result: list[dict] = []
-            for table in tables:
-                for record in table.records:
-                    result.append(
-                        {
-                            "time": str(record.get_time()),
-                            "field": record.get_field(),
-                            "value": record.get_value(),
-                        }
-                    )
+            for series in self._iter_series(response):
+                columns = series.get("columns", [])
+                for row in series.get("values", []):
+                    row_dict = dict(zip(columns, row))
+                    time_val = str(row_dict.get("time", ""))
+                    # Pivot: one dict per (timestamp, field) pair
+                    for col, val in row_dict.items():
+                        if col == "time":
+                            continue
+                        if val is None:
+                            continue
+                        result.append({"time": time_val, "field": col, "value": val})
             return result
         except Exception as exc:  # noqa: BLE001
             logger.warning("influx query failed: %s", exc)
@@ -135,25 +232,26 @@ class InfluxMetricsReader:
         Returns
         -------
         dict | None
-            Single ``{"time": str, "field": str, "value": Any}`` dict, or
+            Single ``{"time": str, "field": str, "value": Any}`` dict
+            (for the first non-null field in the most-recent row), or
             ``None`` if the measurement has no data or the query fails.
         """
-        flux = (
-            f'from(bucket:"{self._bucket}")'
-            " |> range(start:-30d)"
-            f' |> filter(fn: (r) => r._measurement == "{measurement}")'
-            " |> last()"
-            " |> limit(n:1)"
-        )
+        influxql = f"SELECT * FROM {measurement} ORDER BY time DESC LIMIT 1"
         try:
-            tables = await self._query_api.query(query=flux, org=self._org)
-            for table in tables:
-                for record in table.records:
-                    return {
-                        "time": str(record.get_time()),
-                        "field": record.get_field(),
-                        "value": record.get_value(),
-                    }
+            response = await self._run_query(influxql)
+            for series in self._iter_series(response):
+                columns = series.get("columns", [])
+                values = series.get("values", [])
+                if not values:
+                    continue
+                row_dict = dict(zip(columns, values[0]))
+                time_val = str(row_dict.get("time", ""))
+                for col, val in row_dict.items():
+                    if col == "time":
+                        continue
+                    if val is None:
+                        continue
+                    return {"time": time_val, "field": col, "value": val}
             return None
         except Exception as exc:  # noqa: BLE001
             logger.warning("influx query failed: %s", exc)
@@ -167,14 +265,14 @@ class InfluxMetricsReader:
         """Return a weekday-aware rolling mean of household consumption.
 
         Uses battery-discharge periods (``combined_power_w < 0``) as a
-        consumption proxy.  Weekday grouping is done in Python, not in Flux.
+        consumption proxy.  Grouped by day via InfluxQL ``GROUP BY time(1d)``.
 
         Parameters
         ----------
         days:
             Rolling window in calendar days (default 14).
         tz:
-            Timezone label surfaced in the Flux query comment for auditability
+            Timezone label included in the query comment for auditability
             (default ``"Europe/Berlin"``).
 
         Returns
@@ -189,38 +287,45 @@ class InfluxMetricsReader:
         - ``WARNING "consumption history: only N days of data, using seasonal fallback"``
           — cold-start or data-gap condition; ``fallback_used=True`` in result
         """
-        flux = (
-            f'from(bucket:"{self._bucket}")'
-            f" |> range(start:-{days}d)"
-            f' |> filter(fn: (r) => r._measurement == "ems_system")'
-            f' |> filter(fn: (r) => r._field == "combined_power_w")'
-            f" |> filter(fn: (r) => r._value < 0.0)"
-            f" |> aggregateWindow(every: 1d, fn: mean, createEmpty: false)"
-            f" |> map(fn: (r) => ({{r with _value: -r._value}}))"
-            f" // tz:{tz}"
+        # InfluxQL: group daily means of discharge (negative combined_power_w)
+        # The sign is kept negative; we flip it when computing kWh.
+        # Comment embeds tz for ops auditability.
+        influxql = (
+            f"SELECT mean(combined_power_w) FROM ems_system "
+            f"WHERE time >= now() - {days}d "
+            f"AND combined_power_w < 0 "
+            f"GROUP BY time(1d) -- tz:{tz}"
         )
         try:
-            tables = await self._query_api.query(query=flux, org=self._org)
+            response = await self._run_query(influxql)
 
-            # Group daily means (positive watts after sign-flip) by weekday
             watts_by_weekday: dict[int, list[float]] = defaultdict(list)
             dates_seen: set[datetime.date] = set()
 
-            for table in tables:
-                for record in table.records:
-                    raw_time = record.get_time()
+            for series in self._iter_series(response):
+                columns = series.get("columns", [])  # ["time", "mean"]
+                for row in series.get("values", []):
+                    row_dict = dict(zip(columns, row))
+                    raw_time = row_dict.get("time")
+                    mean_w = row_dict.get("mean")
+
+                    # Skip null-valued buckets (no data in that day)
+                    if raw_time is None or mean_w is None:
+                        continue
+
+                    # Parse the timestamp
                     if isinstance(raw_time, str):
                         dt = datetime.datetime.fromisoformat(
                             raw_time.replace("Z", "+00:00")
                         )
                     else:
-                        # Already a datetime-like object
                         dt = raw_time  # type: ignore[assignment]
 
                     dates_seen.add(dt.date())
-                    weekday = dt.weekday()  # 0=Monday…6=Sunday
-                    value_w = record.get_value()
-                    watts_by_weekday[weekday].append(float(value_w))
+                    weekday = dt.weekday()  # 0=Monday … 6=Sunday
+
+                    # mean_w is negative (discharge); negate to get positive watts
+                    watts_by_weekday[weekday].append(float(-mean_w))
 
             days_of_history = len(dates_seen)
             today = datetime.date.today()
@@ -237,7 +342,7 @@ class InfluxMetricsReader:
                     fallback_used=True,
                 )
 
-            # Convert mean watts → kWh (mean W × 24h / 1000)
+            # Convert mean watts → kWh (mean W × 24 h / 1000)
             kwh_by_weekday = {
                 wd: (sum(vals) / len(vals)) * 24 / 1000
                 for wd, vals in watts_by_weekday.items()
@@ -261,3 +366,7 @@ class InfluxMetricsReader:
                 days_of_history=0,
                 fallback_used=True,
             )
+
+    async def close(self) -> None:
+        """Close the underlying HTTP client."""
+        await self._http.aclose()

@@ -402,10 +402,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 username=influx_cfg.username,
                 password=influx_cfg.password,
             )
-            # TODO: InfluxMetricsReader still uses the v2 Flux query API.
-            # It needs migration to v1 InfluxQL or direct HTTP queries.
-            # For now, disable it to avoid import errors.
-            metrics_reader: InfluxMetricsReader | None = None
+            metrics_reader: InfluxMetricsReader | None = InfluxMetricsReader(
+                url=influx_cfg.url,
+                database=influx_cfg.database,
+                username=influx_cfg.username,
+                password=influx_cfg.password,
+            )
             logger.info(
                 "InfluxDB writer connected -- url=%s database=%s",
                 influx_cfg.url,
@@ -907,9 +909,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if app.state.ha_rest_client is not None:
         await app.state.ha_rest_client.stop()
     if app.state.orchestrator is not None:
-        # Close InfluxDB writer HTTP client if it was created
+        # Close InfluxDB writer and reader HTTP clients if they were created
         if metrics_writer is not None:
             await metrics_writer.close()
+        if metrics_reader is not None:
+            await metrics_reader.close()
         await victron_ctrl.stop_watchdog_guard()
         # Disconnect EMMA driver if it was created
         emma_driver = getattr(coordinator, "_emma_driver", None)
