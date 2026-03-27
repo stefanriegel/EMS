@@ -58,9 +58,9 @@ def _make_ha_client(return_value) -> MagicMock:
 
 
 def test_get_effective_price_live_path():
-    """Live path: effective price = raw Octopus entity value + Modul 3 rate."""
+    """Live path: effective price = HA entity value directly (no Modul 3 adder)."""
     fallback = _make_engine()
-    ha_client = _make_ha_client(0.08)  # raw Octopus price in €/kWh
+    ha_client = _make_ha_client(0.389)  # fully-inclusive price from e.g. sensor.evcc_tariff_grid
 
     live = LiveOctopusTariff(
         ha_client=ha_client,
@@ -68,14 +68,11 @@ def test_get_effective_price_live_path():
         fallback=fallback,
     )
 
-    # NT window: 02:00 Berlin time (UTC+1) → Berlin minute = 120
-    # Modul 3 NT rate = 0.026 €/kWh  (00:00–06:00 Berlin)
-    dt = datetime(2026, 1, 15, 1, 0, 0, tzinfo=timezone.utc)  # 02:00 Berlin (UTC+1)
+    dt = datetime(2026, 1, 15, 1, 0, 0, tzinfo=timezone.utc)
     result = live.get_effective_price(dt)
 
-    m3_rate = fallback._modul3_rate_at(120)  # 02:00 Berlin → NT → 0.026
-    expected = 0.08 + m3_rate
-    assert abs(result - expected) < 1e-9
+    # Entity value is returned as-is — no Modul 3 added
+    assert abs(result - 0.389) < 1e-9
 
 
 def test_get_effective_price_fallback_when_none(caplog):
