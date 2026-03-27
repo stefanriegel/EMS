@@ -1,6 +1,15 @@
 # Changelog
 
-## 1.8.0
+## 1.11.0
+
+- InfluxDB reader migrated from v2 Flux API to v1 InfluxQL (httpx, no influxdb_client dependency) — ML forecaster now reads real `ems_system` history directly from InfluxDB v1
+- Coordinator split: HA command handling extracted to `coordinator_ha_commands.py` — reduces coordinator.py from 1897 to 1714 lines
+- PhaseBar component in DeviceDetail: L1/L2/L3 grid power with directional colour coding (import=red, export=green)
+- OptimizationCard: solar forecast line and EVopt status badge
+- Auth endpoints documented (`/api/health`, `/api/ws/state` marked intentionally public)
+- `probe_huawei.py` slave ID defaults corrected to `2,8` per K059
+- Codebase hardening: 6 previously untested modules now have baseline test coverage (config, ws_manager, schedule_models, tariff_models, evcc_models, dess_models)
+- Test suite: 1971 backend tests, 18 Playwright E2E tests, 0 failures
 
 - InfluxDB v1 support: replaced v2 client with native line protocol writes via httpx
 - Works with the HA community InfluxDB add-on (v1.8.x) out of the box
