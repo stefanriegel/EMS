@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.11.1
+
+- Fix: Huawei battery SoC always 0% after restart — `storage_unit_1_working_mode_b` register (37006) throws DecodeError on some firmware versions and was poisoning the entire pack1 Modbus batch. Now read in isolation with error suppression, matching the existing pattern for optional registers.
+
 ## 1.11.0
 
 - InfluxDB reader migrated from v2 Flux API to v1 InfluxQL (httpx, no influxdb_client dependency) — ML forecaster now reads real `ems_system` history directly from InfluxDB v1
