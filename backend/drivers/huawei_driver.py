@@ -362,6 +362,20 @@ class HuaweiDriver:
                 )
                 p1["storage_unit_1_working_mode_b"] = wm_results[0].value
 
+            # Fallback: if _b register failed, read the settings register (47004)
+            # which is the writable working-mode target and always responds.
+            if "storage_unit_1_working_mode_b" not in p1:
+                with contextlib.suppress(Exception):
+                    wm_settings = await self._client.get_multiple(
+                        ["storage_working_mode_settings"],
+                        slave_id=self.master_slave_id,
+                    )
+                    p1["storage_unit_1_working_mode_b"] = wm_settings[0].value
+                    logger.debug(
+                        "working_mode from settings register: %r",
+                        wm_settings[0].value,
+                    )
+
             # --- Call 2: Pack 2 + combined (optional) ---
             p2: dict[str, Any] = {}
             logger.debug(
