@@ -54,6 +54,7 @@ _SYS_REG_GRID_L1_POWER = 820     # int16,  scale 1  (W)
 _SYS_REG_GRID_L2_POWER = 821     # int16,  scale 1  (W)
 _SYS_REG_GRID_L3_POWER = 822     # int16,  scale 1  (W)
 _SYS_REG_PV_ON_GRID_L1 = 808     # int16,  scale 1  (W) — AC-coupled PV-on-grid L1
+_SYS_REG_CONSUMPTION_L1 = 817    # int16,  scale 1  (W) — AC consumption L1 (system/0/Ac/Consumption)
 
 # VE.Bus registers (unit_id=227 default)
 _VB_REG_AC_OUT_L1_V = 15   # uint16, scale 10 (raw / 10 -> V)
@@ -269,6 +270,18 @@ class VictronDriver:
             pv_l3_w = float(_signed16(sys_pv.registers[2]))
             pv_on_grid_total_w = pv_l1_w + pv_l2_w + pv_l3_w
 
+            # --- System consumption registers 817-819 (3 consecutive) ---
+            # com.victronenergy.system: /Ac/Consumption/L1/Power … L3/Power
+            sys_cons = await self._client.read_holding_registers(
+                address=_SYS_REG_CONSUMPTION_L1,
+                count=3,
+                device_id=self._system_unit_id,
+            )
+            cons_l1_w = float(_signed16(sys_cons.registers[0]))
+            cons_l2_w = float(_signed16(sys_cons.registers[1]))
+            cons_l3_w = float(_signed16(sys_cons.registers[2]))
+            consumption_total_w = cons_l1_w + cons_l2_w + cons_l3_w
+
             # --- VE.Bus AC output voltage 15-17 (3 consecutive) ---
             vb_volt = await self._client.read_holding_registers(
                 address=_VB_REG_AC_OUT_L1_V,
@@ -345,7 +358,7 @@ class VictronDriver:
                 grid_l1_power_w=grid_l1_w,
                 grid_l2_power_w=grid_l2_w,
                 grid_l3_power_w=grid_l3_w,
-                consumption_w=None,   # Not available via Modbus
+                consumption_w=consumption_total_w,
                 pv_on_grid_w=pv_on_grid_total_w,
                 timestamp=time.monotonic(),
             )

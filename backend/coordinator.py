@@ -139,6 +139,7 @@ class Coordinator(HaCommandsMixin):
         self._soc_gap_threshold_pct: float = 5.0
         self._swap_hysteresis_pct: float = 3.0
         self._full_soc_pct: float = 95.0
+        self._p_target_deadband_w: float = 50.0  # suppress tiny grid fluctuations
 
         # HA command handling (CTRL-07..CTRL-10)
         self._mode_override: str | None = None
@@ -344,12 +345,12 @@ class Coordinator(HaCommandsMixin):
                 "l1_voltage_v": 0.0,
                 "l2_voltage_v": 0.0,
                 "l3_voltage_v": 0.0,
-                "grid_power_w": 0.0,
-                "grid_l1_power_w": 0.0,
-                "grid_l2_power_w": 0.0,
-                "grid_l3_power_w": 0.0,
-                "consumption_w": None,
-                "pv_on_grid_w": None,
+                "grid_power_w": v_snap.grid_power_w or 0.0,
+                "grid_l1_power_w": v_snap.grid_l1_power_w or 0.0,
+                "grid_l2_power_w": v_snap.grid_l2_power_w or 0.0,
+                "grid_l3_power_w": v_snap.grid_l3_power_w or 0.0,
+                "consumption_w": v_snap.consumption_w,
+                "pv_on_grid_w": v_snap.pv_on_grid_w,
             }
         else:
             victron_dict = {
@@ -606,6 +607,16 @@ class Coordinator(HaCommandsMixin):
 
         # 4. Compute P_target
         p_target = self._compute_p_target(h_snap, v_snap)
+
+        # Zero-crossing dead-band: suppress small P_target values that cause
+        # rapid CHARGE↔DISCHARGE oscillation when grid power hovers near zero.
+        if abs(p_target) < self._p_target_deadband_w:
+            logger.debug(
+                "P_target %.0f W within deadband ±%.0f W — holding at zero",
+                p_target,
+                self._p_target_deadband_w,
+            )
+            p_target = 0.0
 
         # 5. PV surplus → charge routing
         if p_target < 0:

@@ -629,6 +629,16 @@ class Orchestrator:
         )
         P_target = max(0.0, min(P_target, max_discharge))
 
+        # Zero-crossing dead-band: suppress tiny P_target values that cause
+        # rapid CHARGE↔DISCHARGE oscillation when grid power hovers near zero.
+        if abs(P_target) < self._cfg.p_target_deadband_w:
+            logger.debug(
+                "P_target %.0f W within deadband ±%.0f W — holding at zero",
+                P_target,
+                self._cfg.p_target_deadband_w,
+            )
+            P_target = 0.0
+
         # --- SoC-balanced split ---
         huawei_cap = max(
             0.0, battery.total_soc_pct - self._sys.huawei_min_soc_pct

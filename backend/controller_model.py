@@ -114,6 +114,14 @@ class ControllerSnapshot:
     grid_l3_power_w: float | None = None
     """Per-phase L3 grid power in watts (Victron-specific)."""
 
+    consumption_w: float | None = None
+    """Total house consumption in watts, all phases (Victron-specific).
+    Sourced from Victron system registers 817-819."""
+
+    pv_on_grid_w: float | None = None
+    """Total AC-coupled PV power in watts, all phases (Victron-specific).
+    Sourced from Victron system registers 808-810."""
+
     ess_mode: int | None = None
     """Victron ESS mode register value for guard check."""
 

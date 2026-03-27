@@ -208,9 +208,16 @@ class OrchestratorConfig:
     Prevents micro-oscillations when load hovers near a threshold.
     """
 
-    debounce_cycles: int = 2
+    p_target_deadband_w: float = 50.0
+    """Zero-crossing dead-band for P_target in watts (default 50 W).
+    P_target values in the range (-deadband, +deadband) are treated as zero
+    to prevent rapid CHARGE↔DISCHARGE oscillation when grid power hovers
+    near zero.
+    """
+
+    debounce_cycles: int = 3
     """Number of consecutive cycles a new state must persist before the
-    orchestrator commits the transition (default 2 cycles).
+    orchestrator commits the transition (default 3 cycles = 15 s at 5 s loop).
     """
 
     stale_threshold_s: float = 30.0
