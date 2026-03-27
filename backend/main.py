@@ -570,9 +570,37 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # --- Huawei mode manager ---
         mode_cfg = ModeManagerConfig.from_env()
         mode_manager: HuaweiModeManager | None = None
+
+        # --- EMMA driver (optional — same Modbus proxy, device_id=0) ---
+        # Connect EMMA before mode_manager.activate() so mode 6 path is used
+        emma_enabled = os.environ.get("EMMA_ENABLED", "").lower() in ("1", "true", "yes")
+        emma_driver_instance = None
+        if emma_enabled:
+            try:
+                from backend.drivers.emma_driver import EmmaDriver  # noqa: PLC0415
+
+                emma_driver_instance = EmmaDriver(
+                    host=huawei_cfg.host,
+                    port=huawei_cfg.port,
+                    device_id=0,
+                )
+                await emma_driver_instance.connect()
+                coordinator._emma_driver = emma_driver_instance
+                huawei_ctrl.set_emma_driver(emma_driver_instance)
+                logger.info(
+                    "EMMA driver connected — host=%s:%d device_id=0",
+                    huawei_cfg.host,
+                    huawei_cfg.port,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("EMMA driver failed to connect — running without EMMA: %s", exc)
+
         if mode_cfg.enabled:
             mode_manager = HuaweiModeManager(huawei, mode_cfg)
             huawei_ctrl.set_mode_manager(mode_manager)
+            # Wire EMMA before activate so mode 6 path is taken when EMMA is available
+            if emma_driver_instance is not None:
+                mode_manager.set_emma_driver(emma_driver_instance)
             # Read current mode for crash recovery detection
             try:
                 battery_data = await huawei.read_battery()
@@ -612,31 +640,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         coordinator.set_consumption_forecaster(app.state.consumption_forecaster)
         logger.info("Health logger enabled — writing to ems_health every 5 min")
 
-        # --- EMMA driver (optional — same Modbus proxy, device_id=0) ---
-        emma_enabled = os.environ.get("EMMA_ENABLED", "").lower() in ("1", "true", "yes")
-        if emma_enabled:
-            try:
-                from backend.drivers.emma_driver import EmmaDriver  # noqa: PLC0415
-
-                emma_driver = EmmaDriver(
-                    host=huawei_cfg.host,
-                    port=huawei_cfg.port,
-                    device_id=0,
-                )
-                await emma_driver.connect()
-                coordinator._emma_driver = emma_driver
-                # Wire EMMA driver into mode manager and controller for mode 6 dispatch
-                if mode_manager is not None:
-                    mode_manager.set_emma_driver(emma_driver)
-                huawei_ctrl.set_emma_driver(emma_driver)
-                logger.info(
-                    "EMMA driver connected — host=%s:%d device_id=0",
-                    huawei_cfg.host,
-                    huawei_cfg.port,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("EMMA driver failed to connect — running without EMMA: %s", exc)
-        else:
+        # EMMA driver was connected above (before mode_manager.activate())
+        # Wire coordinator reference (already set on coordinator._emma_driver above if enabled)
+        if not emma_enabled:
             logger.info("EMMA driver disabled — set EMMA_ENABLED=true to enable")
 
         # --- Commissioning manager (staged rollout with shadow mode) ---
