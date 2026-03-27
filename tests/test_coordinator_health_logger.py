@@ -215,6 +215,8 @@ def _make_emma_snap() -> EmmaSnapshot:
         charged_today_kwh=4.1,
         discharged_today_kwh=2.0,
         ess_control_mode=2,
+        chargeable_energy_kwh=20.0,
+        dischargeable_energy_kwh=15.0,
     )
 
 

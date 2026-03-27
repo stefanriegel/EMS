@@ -533,26 +533,20 @@ class TestContextManager:
 class TestReconnect:
     @pytest.mark.anyio
     async def test_reconnect_on_connection_exception(self, driver, mock_client):
-        """On ConnectionException, driver reconnects and retries — result succeeds."""
+        """On ConnectionException, driver re-raises but rebuilds the internal client.
+
+        The huawei-solar library already handles transient failures internally.
+        _with_reconnect only fires when all retries are exhausted (ConnectionException).
+        In that case the driver rebuilds the client for recovery on the next cycle,
+        then re-raises so the controller's failure counter can increment normally.
+        """
         from huawei_solar import ConnectionException
 
-        # First get_multiple raises; after reconnect the second succeeds
-        good_results = [
-            _result(0x0002), _result(380.5), _result(5.2),
-            _result(375.0), _result(5.0), _result(4200),
-            _result(233.0), _result(234.0), _result(235.0),
-            _result(3800), _result(50.0), _result(97.5), _result(42.0),
-        ]
-        yield_results = [_result(28000.0), _result(15.0)]
-        mock_client.get_multiple.side_effect = [
-            ConnectionException("Connection lost"),
-            good_results,
-            yield_results,
-        ]
+        mock_client.get_multiple.side_effect = ConnectionException("Connection lost")
 
         fresh_client = AsyncMock()
         fresh_client.stop = AsyncMock()
-        fresh_client.get_multiple = AsyncMock(side_effect=[good_results, yield_results])
+        fresh_client.get_multiple = AsyncMock()
 
         driver._client = mock_client
 
@@ -561,10 +555,13 @@ class TestReconnect:
             new_callable=AsyncMock,
             return_value=fresh_client,
         ):
-            data = await driver.read_master()
+            with pytest.raises(ConnectionException):
+                await driver.read_master()
 
-        assert data.pv_input_power_w == 4200
-        mock_client.stop.assert_called_once()  # close() was called on the old client
+        # Old client must have been stopped (close() was called)
+        mock_client.stop.assert_called_once()
+        # New client must have been installed for the next cycle
+        assert driver._client is fresh_client
 
 
 # ---------------------------------------------------------------------------
