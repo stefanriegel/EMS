@@ -104,7 +104,7 @@ export interface TariffPayload {
   effective_rate_eur_kwh: number | null;
   octopus_rate_eur_kwh: number | null;
   modul3_rate_eur_kwh: number | null;
-  source?: "live" | "hardcoded";
+  source?: "evcc" | "live" | "hardcoded";
 }
 
 // ---------------------------------------------------------------------------

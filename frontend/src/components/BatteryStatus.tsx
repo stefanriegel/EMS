@@ -46,6 +46,15 @@ function formatPower(watts: number): string {
   return `${(abs / 1000).toFixed(1)} kW`;
 }
 
+/** Returns a short power-direction annotation for the role badge.
+ *  Shows actual battery activity when it differs from the EMS role label
+ *  (e.g. Victron ESS self-consuming while coordinator says HOLDING). */
+function powerAnnotation(powerW: number | null): string {
+  if (powerW === null || Math.abs(powerW) < 10) return "";
+  if (powerW < 0) return ` · ${formatPower(powerW)} out`;
+  return ` · ${formatPower(powerW)} in`;
+}
+
 export function BatteryStatus({ pool, devices, connected }: Props) {
   const combinedSoc = pool?.combined_soc_pct ?? null;
   const poolStatus = pool?.pool_status ?? "OFFLINE";
@@ -143,7 +152,7 @@ export function BatteryStatus({ pool, devices, connected }: Props) {
               className="role-badge"
               style={{ background: roleColors[huaweiRole] ?? "#6b7280" }}
             >
-              {roleLabels[huaweiRole] ?? "---"}
+              {roleLabels[huaweiRole] ?? "---"}{powerAnnotation(huaweiPower)}
             </span>
           </div>
 
@@ -192,7 +201,7 @@ export function BatteryStatus({ pool, devices, connected }: Props) {
               className="role-badge"
               style={{ background: roleColors[victronRole] ?? "#6b7280" }}
             >
-              {roleLabels[victronRole] ?? "---"}
+              {roleLabels[victronRole] ?? "---"}{powerAnnotation(victronPower)}
             </span>
           </div>
 

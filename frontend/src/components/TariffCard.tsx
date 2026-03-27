@@ -1,7 +1,9 @@
 /**
  * TariffCard — current electricity tariff rates.
  *
- * Shows effective_rate_eur_kwh prominently, with octopus/modul3 breakdown.
+ * Shows effective_rate_eur_kwh prominently, with optional breakdown.
+ * Hides the Modul3 / grid-fee row when the value is 0 or null (EVCC source
+ * provides a fully-inclusive price, so Modul3 is always 0).
  * Renders "Tariff unavailable" when tariff data is null or all rates are null.
  */
 import type { TariffPayload } from "../types";
@@ -26,6 +28,15 @@ export function TariffCard({ tariff }: Props) {
     <section className="card tariff-card">
       <h2 className="card-title">Current Tariff</h2>
 
+      {tariff?.source === "evcc" && (
+        <span
+          data-testid="tariff-source-badge"
+          className="badge badge--live"
+          style={{ color: "var(--color-pv)", borderColor: "var(--color-pv)" }}
+        >
+          EVCC ⚡
+        </span>
+      )}
       {tariff?.source === "live" && (
         <span
           data-testid="tariff-source-badge"
@@ -57,13 +68,15 @@ export function TariffCard({ tariff }: Props) {
           </div>
           <div className="tariff-breakdown">
             <div className="tariff-row">
-              <span className="tariff-source">Octopus Go</span>
+              <span className="tariff-source">Supply Rate</span>
               <span className="tariff-rate">{rate(tariff?.octopus_rate_eur_kwh)}</span>
             </div>
-            <div className="tariff-row">
-              <span className="tariff-source">Modul3</span>
-              <span className="tariff-rate">{rate(tariff?.modul3_rate_eur_kwh)}</span>
-            </div>
+            {tariff?.modul3_rate_eur_kwh != null && tariff.modul3_rate_eur_kwh > 0 && (
+              <div className="tariff-row">
+                <span className="tariff-source">Grid Fee (§14a)</span>
+                <span className="tariff-rate">{rate(tariff.modul3_rate_eur_kwh)}</span>
+              </div>
+            )}
           </div>
         </>
       )}
