@@ -194,26 +194,6 @@ configuration:
     name: Victron Min SoC (%)
     description: Minimum state-of-charge for Victron battery. Default 15%.
 
-  # --- Modul3 grid-fee tariff ---
-  modul3_surplus_start:
-    name: Modul3 Surplus Start
-    description: Start of surplus grid-fee window (HH:MM format, e.g. "00:30").
-  modul3_surplus_end:
-    name: Modul3 Surplus End
-    description: End of surplus grid-fee window (HH:MM format, e.g. "05:00").
-  modul3_deficit_start:
-    name: Modul3 Deficit Start
-    description: Start of deficit grid-fee window (HH:MM format, e.g. "06:00").
-  modul3_deficit_end:
-    name: Modul3 Deficit End
-    description: End of deficit grid-fee window (HH:MM format, e.g. "22:00").
-  modul3_surplus_rate_eur_kwh:
-    name: Modul3 Surplus Rate
-    description: Grid-fee rate during surplus window in EUR/kWh.
-  modul3_deficit_rate_eur_kwh:
-    name: Modul3 Deficit Rate
-    description: Grid-fee rate during deficit window in EUR/kWh.
-
   # --- Feed-in tariff ---
   feed_in_rate_eur_kwh:
     name: Feed-in Rate (EUR/kWh)
@@ -226,6 +206,18 @@ configuration:
   winter_min_soc_boost_pct:
     name: Winter Min-SoC Boost (%)
     description: Additional min-SoC percentage during winter months to prioritize battery reserves. Default 10.
+
+  # --- Safety / commissioning ---
+  validation_period_hours:
+    name: Validation Period (hours)
+    description: >-
+      Read-only observation period after first boot before the EMS writes
+      setpoints to hardware. Set to 0 to enable writes immediately. Default 48.
+  dry_run:
+    name: Dry-Run Mode
+    description: >-
+      When enabled, the EMS calculates setpoints but never writes to hardware.
+      Useful for testing. Default off.
 
   # --- Logging ---
   log_level:
