@@ -625,6 +625,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 )
                 await emma_driver.connect()
                 coordinator._emma_driver = emma_driver
+                # Wire EMMA driver into mode manager and controller for mode 6 dispatch
+                if mode_manager is not None:
+                    mode_manager.set_emma_driver(emma_driver)
+                huawei_ctrl.set_emma_driver(emma_driver)
                 logger.info(
                     "EMMA driver connected — host=%s:%d device_id=0",
                     huawei_cfg.host,

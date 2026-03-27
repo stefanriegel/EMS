@@ -391,6 +391,8 @@ class InfluxMetricsWriter:
                 .field_float("consumption_today_kwh", snap.consumption_today_kwh)
                 .field_float("charged_today_kwh", snap.charged_today_kwh)
                 .field_float("discharged_today_kwh", snap.discharged_today_kwh)
+                .field_float("chargeable_energy_kwh", snap.chargeable_energy_kwh)
+                .field_float("dischargeable_energy_kwh", snap.dischargeable_energy_kwh)
                 .field_int("true_consumption_w", true_consumption_w)
                 .time_ns(datetime.now(tz=timezone.utc))
             )

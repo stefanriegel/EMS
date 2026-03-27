@@ -270,3 +270,88 @@ class TestTransitionSafety:
         # Should have at least 2 settle sleeps (after clamp, after switch)
         assert len(sleep_calls) >= 2
         assert all(d == 0.5 for d in sleep_calls)
+
+
+# -----------------------------------------------------------------------
+# EMMA mode 6 path
+# -----------------------------------------------------------------------
+
+
+def _make_emma_driver() -> AsyncMock:
+    """Mock EmmaDriver with write_ess_mode async method."""
+    emma = AsyncMock()
+    emma.write_ess_mode = AsyncMock()
+    return emma
+
+
+class TestEmmaActivation:
+    """HuaweiModeManager with EMMA driver uses mode 6 via EMMA reg 40000."""
+
+    @pytest.mark.anyio
+    async def test_emma_activation_writes_ess_mode_6(self):
+        """activate() calls emma.write_ess_mode(6) when EMMA driver is set."""
+        driver = _make_driver()
+        mgr = HuaweiModeManager(driver, _make_config())
+        emma = _make_emma_driver()
+        mgr.set_emma_driver(emma)
+
+        await mgr.activate()
+
+        emma.write_ess_mode.assert_awaited_once_with(6)
+        assert mgr.state == ModeState.ACTIVE
+
+    @pytest.mark.anyio
+    async def test_emma_activation_skips_inverter_clamping(self):
+        """activate() via EMMA does NOT write max_charge/max_discharge_power."""
+        driver = _make_driver()
+        mgr = HuaweiModeManager(driver, _make_config())
+        mgr.set_emma_driver(_make_emma_driver())
+
+        await mgr.activate()
+
+        driver.write_max_charge_power.assert_not_called()
+        driver.write_max_discharge_power.assert_not_called()
+        driver.write_battery_mode.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_emma_health_check_skipped_when_emma_driver_set(self):
+        """check_health() skips reversion detection when EMMA driver is set."""
+        driver = _make_driver()
+        mgr = HuaweiModeManager(driver, _make_config(health_check_interval_s=0.0))
+        mgr.set_emma_driver(_make_emma_driver())
+        mgr._state = ModeState.ACTIVE
+        mgr._last_health_check = 0.0  # force interval to elapse
+
+        # Even with wrong working_mode, no reversion attempt should happen
+        await mgr.check_health(current_working_mode=2)
+
+        driver.write_max_charge_power.assert_not_called()
+        driver.write_max_discharge_power.assert_not_called()
+        driver.write_battery_mode.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_emma_restore_writes_mode_2(self):
+        """restore() calls emma.write_ess_mode(2) when EMMA driver is set."""
+        driver = _make_driver()
+        mgr = HuaweiModeManager(driver, _make_config())
+        emma = _make_emma_driver()
+        mgr.set_emma_driver(emma)
+        mgr._state = ModeState.ACTIVE
+
+        await mgr.restore()
+
+        emma.write_ess_mode.assert_awaited_once_with(2)
+        driver.write_battery_mode.assert_not_called()
+        assert mgr.state == ModeState.IDLE
+
+    @pytest.mark.anyio
+    async def test_no_emma_driver_uses_tou_fallback(self):
+        """Without EMMA driver, activate() uses TOU mode 5 via inverter (unchanged)."""
+        driver = _make_driver()
+        mgr = HuaweiModeManager(driver, _make_config())
+
+        await mgr.activate()
+
+        driver.write_battery_mode.assert_awaited_once_with(
+            StorageWorkingModesC.TIME_OF_USE_LUNA2000
+        )

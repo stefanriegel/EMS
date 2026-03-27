@@ -222,19 +222,22 @@ class TestVictronDriverRead:
            (voltage=48.2V, current=5.2A, power=1500W, SoC=60%)
         2. System grid: regs 820-822 -> [100, 200, 65486]
            (L1=100W, L2=200W, L3=-50W as unsigned)
-        3. VE.Bus voltage: regs 15-17 -> [2300, 2310, 2290]
+        3. System PV-on-grid: regs 808-810 -> [500, 600, 400]
+           (L1=500W, L2=600W, L3=400W, total=1500W)
+        4. VE.Bus voltage: regs 15-17 -> [2300, 2310, 2290]
            (L1=230.0V, L2=231.0V, L3=229.0V)
-        4. VE.Bus current: regs 18-20 -> [43, 52, 56]
+        5. VE.Bus current: regs 18-20 -> [43, 52, 56]
            (L1=4.3A, L2=5.2A, L3=5.6A)
-        5. VE.Bus power: regs 23-25 -> [15000, 12000, 13000]
+        6. VE.Bus power: regs 23-25 -> [15000, 12000, 13000]
            (L1=1500.0W, L2=1200.0W, L3=1300.0W after *0.1 scale)
-        6. VE.Bus state: reg 31 -> [9]
-        7. VE.Bus mode: reg 33 -> [3]
+        7. VE.Bus state: reg 31 -> [9]
+        8. VE.Bus mode: reg 33 -> [3]
         """
         def read_handler(address, count=1, device_id=0):
             responses = {
                 (840, 4, 100): _mock_register_response([482, 52, 1500, 60]),
                 (820, 3, 100): _mock_register_response([100, 200, 65486]),
+                (808, 3, 100): _mock_register_response([500, 600, 400]),
                 (15, 3, 227): _mock_register_response([2300, 2310, 2290]),
                 (18, 3, 227): _mock_register_response([43, 52, 56]),
                 (23, 3, 227): _mock_register_response([15000, 12000, 13000]),
@@ -290,6 +293,7 @@ class TestVictronDriverRead:
             responses = {
                 (840, 4, 100): _mock_register_response([482, 52, 65036, 60]),
                 (820, 3, 100): _mock_register_response([0, 0, 0]),
+                (808, 3, 100): _mock_register_response([0, 0, 0]),
                 (15, 3, 227): _mock_register_response([2300, 2300, 2300]),
                 (18, 3, 227): _mock_register_response([0, 0, 0]),
                 (23, 3, 227): _mock_register_response([0, 0, 0]),
@@ -305,12 +309,58 @@ class TestVictronDriverRead:
 
     @pytest.mark.anyio
     async def test_read_system_state_consumption_none(self, driver, mock_client):
-        """consumption_w and pv_on_grid_w are always None (not available via Modbus)."""
+        """consumption_w is always None (not available via Modbus).
+        pv_on_grid_w is now populated from regs 808-810."""
         self._configure_read_responses(mock_client)
 
         state = await driver.read_system_state()
         assert state.consumption_w is None
-        assert state.pv_on_grid_w is None
+        # pv_on_grid_w is now read from registers 808-810; with default fixture
+        # values [500, 600, 400] the total should be 1500 W
+        assert state.pv_on_grid_w == pytest.approx(1500.0)
+
+    @pytest.mark.anyio
+    async def test_pv_on_grid_w_is_sum_of_three_phases(self, driver, mock_client):
+        """pv_on_grid_w = sum of regs 808, 809, 810 as signed int16 (W)."""
+        def read_handler(address, count=1, device_id=0):
+            responses = {
+                (840, 4, 100): _mock_register_response([482, 52, 1500, 60]),
+                (820, 3, 100): _mock_register_response([0, 0, 0]),
+                # PV: L1=1000W, L2=800W, L3=600W → total=2400W
+                (808, 3, 100): _mock_register_response([1000, 800, 600]),
+                (15, 3, 227): _mock_register_response([2300, 2300, 2300]),
+                (18, 3, 227): _mock_register_response([0, 0, 0]),
+                (23, 3, 227): _mock_register_response([0, 0, 0]),
+                (31, 1, 227): _mock_register_response([0]),
+                (33, 1, 227): _mock_register_response([0]),
+            }
+            return responses.get((address, count, device_id), _mock_register_response([0]))
+
+        mock_client.read_holding_registers = AsyncMock(side_effect=read_handler)
+
+        state = await driver.read_system_state()
+        assert state.pv_on_grid_w == pytest.approx(2400.0)
+
+    @pytest.mark.anyio
+    async def test_pv_on_grid_w_zero_when_no_pv(self, driver, mock_client):
+        """pv_on_grid_w is 0.0 when all PV registers read zero."""
+        def read_handler(address, count=1, device_id=0):
+            responses = {
+                (840, 4, 100): _mock_register_response([482, 52, 0, 60]),
+                (820, 3, 100): _mock_register_response([0, 0, 0]),
+                (808, 3, 100): _mock_register_response([0, 0, 0]),
+                (15, 3, 227): _mock_register_response([2300, 2300, 2300]),
+                (18, 3, 227): _mock_register_response([0, 0, 0]),
+                (23, 3, 227): _mock_register_response([0, 0, 0]),
+                (31, 1, 227): _mock_register_response([0]),
+                (33, 1, 227): _mock_register_response([0]),
+            }
+            return responses.get((address, count, device_id), _mock_register_response([0]))
+
+        mock_client.read_holding_registers = AsyncMock(side_effect=read_handler)
+
+        state = await driver.read_system_state()
+        assert state.pv_on_grid_w == pytest.approx(0.0)
 
     @pytest.mark.anyio
     async def test_read_system_state_timestamp(self, driver, mock_client):
@@ -411,6 +461,7 @@ class TestVictronDriverSignConvention:
             responses = {
                 (840, 4, 100): _mock_register_response([480, 50, 1500, 60]),
                 (820, 3, 100): _mock_register_response([0, 0, 0]),
+                (808, 3, 100): _mock_register_response([0, 0, 0]),
                 (15, 3, 227): _mock_register_response([2300, 2300, 2300]),
                 (18, 3, 227): _mock_register_response([0, 0, 0]),
                 (23, 3, 227): _mock_register_response([0, 0, 0]),
@@ -434,6 +485,7 @@ class TestVictronDriverSignConvention:
             responses = {
                 (840, 4, 100): _mock_register_response([480, 50, 64036, 60]),
                 (820, 3, 100): _mock_register_response([0, 0, 0]),
+                (808, 3, 100): _mock_register_response([0, 0, 0]),
                 (15, 3, 227): _mock_register_response([2300, 2300, 2300]),
                 (18, 3, 227): _mock_register_response([0, 0, 0]),
                 (23, 3, 227): _mock_register_response([0, 0, 0]),
@@ -477,6 +529,7 @@ class TestVictronDriverUnitIds:
                 (843, 1, 101): _mock_register_response([60]),  # health check
                 (840, 4, 101): _mock_register_response([480, 50, 0, 60]),
                 (820, 3, 101): _mock_register_response([0, 0, 0]),
+                (808, 3, 101): _mock_register_response([0, 0, 0]),
                 (15, 3, 228): _mock_register_response([2300, 2300, 2300]),
                 (18, 3, 228): _mock_register_response([0, 0, 0]),
                 (23, 3, 228): _mock_register_response([0, 0, 0]),

@@ -565,3 +565,120 @@ class TestReconnect:
 
         assert data.pv_input_power_w == 4200
         mock_client.stop.assert_called_once()  # close() was called on the old client
+
+
+# ---------------------------------------------------------------------------
+# Test: forcible charge / discharge / stop methods
+# ---------------------------------------------------------------------------
+
+
+class TestForcibleMethods:
+    """Tests for write_forcible_discharge, write_forcible_charge, write_forcible_stop."""
+
+    @pytest.mark.anyio
+    async def test_write_forcible_discharge_sets_power_then_command(
+        self, driver, mock_client
+    ):
+        """write_forcible_discharge sets power register then fires DISCHARGE command."""
+        from huawei_solar.register_values import StorageForcibleChargeDischarge
+
+        driver._client = mock_client
+        mock_client.set = AsyncMock(return_value=True)
+
+        await driver.write_forcible_discharge(5000)
+
+        calls = mock_client.set.call_args_list
+        assert len(calls) == 2
+        # First call: set discharge power
+        assert calls[0].args[0] == "storage_forcible_discharge_power"
+        assert calls[0].args[1] == 5000
+        # Second call: arm the DISCHARGE command
+        assert calls[1].args[0] == "forcible_charge_discharge_write"
+        assert calls[1].args[1] == StorageForcibleChargeDischarge.DISCHARGE
+
+    @pytest.mark.anyio
+    async def test_write_forcible_discharge_dry_run_skips_set(
+        self, driver, mock_client, caplog
+    ):
+        """write_forcible_discharge(dry_run=True) logs and does not call set()."""
+        import logging
+
+        driver._client = mock_client
+        mock_client.set = AsyncMock(return_value=True)
+
+        with caplog.at_level(logging.INFO, logger="backend.drivers.huawei_driver"):
+            await driver.write_forcible_discharge(5000, dry_run=True)
+
+        mock_client.set.assert_not_called()
+        assert "DRY RUN" in caplog.text
+        assert "forcible_discharge" in caplog.text
+
+    @pytest.mark.anyio
+    async def test_write_forcible_charge_sets_power_then_command(
+        self, driver, mock_client
+    ):
+        """write_forcible_charge sets power register then fires CHARGE command."""
+        from huawei_solar.register_values import StorageForcibleChargeDischarge
+
+        driver._client = mock_client
+        mock_client.set = AsyncMock(return_value=True)
+
+        await driver.write_forcible_charge(3000)
+
+        calls = mock_client.set.call_args_list
+        assert len(calls) == 2
+        assert calls[0].args[0] == "storage_forcible_charge_power"
+        assert calls[0].args[1] == 3000
+        assert calls[1].args[0] == "forcible_charge_discharge_write"
+        assert calls[1].args[1] == StorageForcibleChargeDischarge.CHARGE
+
+    @pytest.mark.anyio
+    async def test_write_forcible_charge_dry_run_skips_set(
+        self, driver, mock_client, caplog
+    ):
+        """write_forcible_charge(dry_run=True) logs and does not call set()."""
+        import logging
+
+        driver._client = mock_client
+        mock_client.set = AsyncMock(return_value=True)
+
+        with caplog.at_level(logging.INFO, logger="backend.drivers.huawei_driver"):
+            await driver.write_forcible_charge(3000, dry_run=True)
+
+        mock_client.set.assert_not_called()
+        assert "DRY RUN" in caplog.text
+        assert "forcible_charge" in caplog.text
+
+    @pytest.mark.anyio
+    async def test_write_forcible_stop_sends_stop_command(
+        self, driver, mock_client
+    ):
+        """write_forcible_stop sends a single STOP command to the forcible register."""
+        from huawei_solar.register_values import StorageForcibleChargeDischarge
+
+        driver._client = mock_client
+        mock_client.set = AsyncMock(return_value=True)
+
+        await driver.write_forcible_stop()
+
+        mock_client.set.assert_called_once()
+        call = mock_client.set.call_args
+        assert call.args[0] == "forcible_charge_discharge_write"
+        assert call.args[1] == StorageForcibleChargeDischarge.STOP
+
+    @pytest.mark.anyio
+    async def test_write_forcible_stop_dry_run_skips_set(
+        self, driver, mock_client, caplog
+    ):
+        """write_forcible_stop(dry_run=True) logs and does not call set()."""
+        import logging
+
+        driver._client = mock_client
+        mock_client.set = AsyncMock(return_value=True)
+
+        with caplog.at_level(logging.INFO, logger="backend.drivers.huawei_driver"):
+            await driver.write_forcible_stop(dry_run=True)
+
+        mock_client.set.assert_not_called()
+        assert "DRY RUN" in caplog.text
+        assert "forcible_stop" in caplog.text

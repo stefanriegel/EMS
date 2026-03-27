@@ -24,7 +24,7 @@ from backend.drivers.emma_driver import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-_N_MAIN_REGISTERS = len(_REGISTER_MAP)  # currently 9
+_N_MAIN_REGISTERS = len(_REGISTER_MAP)  # now 11 (was 9, +2 capacity fields)
 
 
 def _ok_result(registers: list[int]) -> MagicMock:
@@ -110,21 +110,25 @@ def _build_side_effects(
     cons_today_raw: int = 50000,   # 500 kWh (U32, gain=100)
     charged_raw: int = 20000,      # 200 kWh (U32, gain=100)
     discharged_raw: int = 15000,   # 150 kWh (U32, gain=100)
+    chargeable_raw: int = 5000,    # 50 kWh  (U32, gain=100)
+    dischargeable_raw: int = 8000, # 80 kWh  (U32, gain=100)
     ess_mode: int = 2,
 ) -> list[MagicMock]:
     """Build the ordered list of mock results matching _REGISTER_MAP + ESS mode.
 
     Order in _REGISTER_MAP:
-      [0] pv_power_w        U32 gain=1000
-      [1] load_power_w      U32 gain=1000
-      [2] feed_in_power_w   I32 gain=1000
-      [3] battery_power_w   I32 gain=1000
-      [4] battery_soc_pct   U16 gain=100
-      [5] pv_yield_today_kwh  U32 gain=100
-      [6] consumption_today_kwh U32 gain=100
-      [7] charged_today_kwh   U32 gain=100
-      [8] discharged_today_kwh U32 gain=100
-      [9] ess_control_mode  U16 (separate call)
+      [0]  pv_power_w              U32 gain=1000
+      [1]  load_power_w            U32 gain=1000
+      [2]  feed_in_power_w         I32 gain=1000
+      [3]  battery_power_w         I32 gain=1000
+      [4]  battery_soc_pct         U16 gain=100
+      [5]  pv_yield_today_kwh      U32 gain=100
+      [6]  consumption_today_kwh   U32 gain=100
+      [7]  charged_today_kwh       U32 gain=100
+      [8]  discharged_today_kwh    U32 gain=100
+      [9]  chargeable_energy_kwh   U32 gain=100
+      [10] dischargeable_energy_kwh U32 gain=100
+      [11] ess_control_mode        U16 (separate call)
     """
     def u32_regs(v: int) -> list[int]:
         return [(v >> 16) & 0xFFFF, v & 0xFFFF]
@@ -144,6 +148,8 @@ def _build_side_effects(
         _ok_result(u32_regs(cons_today_raw)),
         _ok_result(u32_regs(charged_raw)),
         _ok_result(u32_regs(discharged_raw)),
+        _ok_result(u32_regs(chargeable_raw)),
+        _ok_result(u32_regs(dischargeable_raw)),
         _ok_result([ess_mode]),              # ESS mode U16
     ]
 
@@ -309,3 +315,85 @@ async def test_close_delegates_to_client() -> None:
     await driver.close()
 
     mock_client.close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# New capacity fields (chargeable / dischargeable kWh)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_read_all_chargeable_energy_kwh() -> None:
+    """chargeable_energy_kwh = U32 at 30314 / 100 → kWh (float)."""
+    driver, mock_client = _make_driver()
+    # 4500 raw / 100 = 45.0 kWh
+    mock_client.read_holding_registers.side_effect = _build_side_effects(
+        chargeable_raw=4500,
+    )
+
+    snap = await driver._read_all()
+
+    assert abs(snap.chargeable_energy_kwh - 45.0) < 0.001
+
+
+@pytest.mark.anyio
+async def test_read_all_dischargeable_energy_kwh() -> None:
+    """dischargeable_energy_kwh = U32 at 30320 / 100 → kWh (float)."""
+    driver, mock_client = _make_driver()
+    # 7200 raw / 100 = 72.0 kWh
+    mock_client.read_holding_registers.side_effect = _build_side_effects(
+        dischargeable_raw=7200,
+    )
+
+    snap = await driver._read_all()
+
+    assert abs(snap.dischargeable_energy_kwh - 72.0) < 0.001
+
+
+# ---------------------------------------------------------------------------
+# write_ess_mode()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_write_ess_mode_calls_write_registers() -> None:
+    """write_ess_mode(6) writes register 40000 with value [6] at device_id=0."""
+    driver, mock_client = _make_driver()
+    ok_write = MagicMock()
+    ok_write.isError.return_value = False
+    mock_client.write_registers = AsyncMock(return_value=ok_write)
+
+    await driver.write_ess_mode(6)
+
+    mock_client.write_registers.assert_awaited_once_with(
+        40000, [6], device_id=0
+    )
+
+
+@pytest.mark.anyio
+async def test_write_ess_mode_raises_on_error() -> None:
+    """write_ess_mode raises RuntimeError when the write returns an error response."""
+    driver, mock_client = _make_driver()
+    err_write = MagicMock()
+    err_write.isError.return_value = True
+    mock_client.write_registers = AsyncMock(return_value=err_write)
+
+    with pytest.raises(RuntimeError, match="EMMA write error"):
+        await driver.write_ess_mode(6)
+
+
+@pytest.mark.anyio
+async def test_write_ess_mode_restores_mode() -> None:
+    """write_ess_mode can be called twice: set mode 6, restore mode 2."""
+    driver, mock_client = _make_driver()
+    ok_write = MagicMock()
+    ok_write.isError.return_value = False
+    mock_client.write_registers = AsyncMock(return_value=ok_write)
+
+    await driver.write_ess_mode(6)
+    await driver.write_ess_mode(2)
+
+    assert mock_client.write_registers.await_count == 2
+    calls = mock_client.write_registers.call_args_list
+    assert calls[0].args == (40000, [6])
+    assert calls[1].args == (40000, [2])

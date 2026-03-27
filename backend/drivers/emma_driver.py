@@ -75,6 +75,12 @@ class EmmaSnapshot:
     discharged_today_kwh: float
     """Energy discharged from batteries today (kWh)."""
 
+    chargeable_energy_kwh: float
+    """Remaining chargeable energy capacity (kWh) — instantaneous headroom."""
+
+    dischargeable_energy_kwh: float
+    """Remaining dischargeable energy capacity (kWh) — instantaneous headroom."""
+
     ess_control_mode: int
     """ESS control mode register value (read-only)."""
 
@@ -95,6 +101,8 @@ _REGISTER_MAP: list[tuple[int, int, bool, int, str]] = [
     (30324, 2, False,  100, "consumption_today_kwh"), # U32, kWh gain=100
     (30306, 2, False,  100, "charged_today_kwh"),     # U32, kWh gain=100
     (30312, 2, False,  100, "discharged_today_kwh"),  # U32, kWh gain=100
+    (30314, 2, False,  100, "chargeable_energy_kwh"),   # U32, kWh gain=100 — instantaneous headroom
+    (30320, 2, False,  100, "dischargeable_energy_kwh"), # U32, kWh gain=100 — instantaneous headroom
 ]
 
 _ESS_MODE_ADDRESS = 40000  # U16, 1 register (holding register)
@@ -159,6 +167,30 @@ class EmmaDriver:
         self._client.close()
         logger.debug("EMMA connection closed to %s:%d", self.host, self.port)
 
+    async def write_ess_mode(self, mode: int) -> None:
+        """Write the ESS control mode register (address 40000).
+
+        Parameters
+        ----------
+        mode:
+            2 = max self-consumption, 5 = TOU, 6 = third-party dispatch.
+
+        Raises
+        ------
+        RuntimeError
+            If the Modbus write returns an error response.
+        """
+        result = await self._client.write_registers(
+            40000, [mode], device_id=self.device_id
+        )
+        if result.isError():
+            raise RuntimeError(
+                f"EMMA write error for ESS mode register 40000: {result}"
+            )
+        logger.info(
+            "EMMA ESS mode set to %d on %s:%d", mode, self.host, self.port
+        )
+
     async def poll(self) -> EmmaSnapshot | None:
         """Read all EMMA registers and return a snapshot.
 
@@ -209,5 +241,7 @@ class EmmaDriver:
             consumption_today_kwh=float(values["consumption_today_kwh"]),
             charged_today_kwh=float(values["charged_today_kwh"]),
             discharged_today_kwh=float(values["discharged_today_kwh"]),
+            chargeable_energy_kwh=float(values["chargeable_energy_kwh"]),
+            dischargeable_energy_kwh=float(values["dischargeable_energy_kwh"]),
             ess_control_mode=ess_mode,
         )

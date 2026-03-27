@@ -30,7 +30,10 @@ import logging
 from typing import Any
 
 from huawei_solar import AsyncHuaweiSolar, ConnectionException
-from huawei_solar.register_values import StorageWorkingModesC  # noqa: F401 — re-exported for callers
+from huawei_solar.register_values import (
+    StorageForcibleChargeDischarge,
+    StorageWorkingModesC,  # noqa: F401 — re-exported for callers
+)
 
 from backend.drivers.huawei_models import (
     HuaweiBatteryData,
@@ -653,6 +656,116 @@ class HuaweiDriver:
             await self._client.set(
                 "storage_maximum_discharging_power",
                 watts,
+                slave_id=self.master_slave_id,
+            )
+
+        await self._with_reconnect(_do)
+
+    # ------------------------------------------------------------------
+    # Forcible charge / discharge (mode 6 / THIRD_PARTY_DISPATCH)
+    # ------------------------------------------------------------------
+
+    async def write_forcible_discharge(
+        self, watts: int, *, dry_run: bool = False
+    ) -> None:
+        """Trigger a forcible discharge at the specified power level.
+
+        Used in THIRD_PARTY_DISPATCH (mode 6) where the EMS has direct
+        control over battery power.  Writes the forcible command register
+        (47100) and the discharge power register (47249).
+
+        Parameters
+        ----------
+        watts:
+            Target discharge power in watts (positive value).
+        dry_run:
+            If ``True``, log the intended write but do not execute it.
+        """
+
+        async def _do() -> None:
+            assert self._client is not None, "Driver not connected — call connect() first"
+            if dry_run:
+                logger.info(
+                    "DRY RUN: would write forcible_discharge=%dw slave_id=%d",
+                    watts,
+                    self.master_slave_id,
+                )
+                return
+            logger.debug(
+                "write forcible_discharge=%dw slave_id=%d", watts, self.master_slave_id
+            )
+            await self._client.set(
+                "storage_forcible_discharge_power",
+                watts,
+                slave_id=self.master_slave_id,
+            )
+            await self._client.set(
+                "forcible_charge_discharge_write",
+                StorageForcibleChargeDischarge.DISCHARGE,
+                slave_id=self.master_slave_id,
+            )
+
+        await self._with_reconnect(_do)
+
+    async def write_forcible_charge(
+        self, watts: int, *, dry_run: bool = False
+    ) -> None:
+        """Trigger a forcible charge at the specified power level.
+
+        Parameters
+        ----------
+        watts:
+            Target charge power in watts (positive value).
+        dry_run:
+            If ``True``, log the intended write but do not execute it.
+        """
+
+        async def _do() -> None:
+            assert self._client is not None, "Driver not connected — call connect() first"
+            if dry_run:
+                logger.info(
+                    "DRY RUN: would write forcible_charge=%dw slave_id=%d",
+                    watts,
+                    self.master_slave_id,
+                )
+                return
+            logger.debug(
+                "write forcible_charge=%dw slave_id=%d", watts, self.master_slave_id
+            )
+            await self._client.set(
+                "storage_forcible_charge_power",
+                watts,
+                slave_id=self.master_slave_id,
+            )
+            await self._client.set(
+                "forcible_charge_discharge_write",
+                StorageForcibleChargeDischarge.CHARGE,
+                slave_id=self.master_slave_id,
+            )
+
+        await self._with_reconnect(_do)
+
+    async def write_forcible_stop(self, *, dry_run: bool = False) -> None:
+        """Stop any active forcible charge or discharge command.
+
+        Parameters
+        ----------
+        dry_run:
+            If ``True``, log the intended write but do not execute it.
+        """
+
+        async def _do() -> None:
+            assert self._client is not None, "Driver not connected — call connect() first"
+            if dry_run:
+                logger.info(
+                    "DRY RUN: would write forcible_stop slave_id=%d",
+                    self.master_slave_id,
+                )
+                return
+            logger.debug("write forcible_stop slave_id=%d", self.master_slave_id)
+            await self._client.set(
+                "forcible_charge_discharge_write",
+                StorageForcibleChargeDischarge.STOP,
                 slave_id=self.master_slave_id,
             )
 

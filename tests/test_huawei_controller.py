@@ -586,3 +586,116 @@ class TestHuaweiModeManagerIntegration:
         await ctrl.poll()
 
         assert ctrl.get_working_mode() == 5
+
+
+# ---------------------------------------------------------------------------
+# Test: forcible path (mode 6 / THIRD_PARTY_DISPATCH via EMMA)
+# ---------------------------------------------------------------------------
+
+
+def _make_controller_mode6(driver=None):
+    """Return a controller with mode 6 active (EMMA driver set, mode manager active)."""
+    from backend.huawei_mode_manager import HuaweiModeManager, ModeState
+    from backend.config import ModeManagerConfig
+
+    if driver is None:
+        driver = AsyncMock()
+        driver.write_forcible_discharge = AsyncMock()
+        driver.write_forcible_charge = AsyncMock()
+        driver.write_forcible_stop = AsyncMock()
+        driver.write_max_discharge_power = AsyncMock()
+        driver.write_max_charge_power = AsyncMock()
+        driver.write_ac_charging = AsyncMock()
+
+    ctrl = _make_controller(driver)
+
+    # Create a mode manager already in ACTIVE state
+    mm = HuaweiModeManager(driver, ModeManagerConfig(
+        enabled=True, settle_delay_s=0.0, health_check_interval_s=60.0, reapply_cooldown_s=30.0
+    ))
+    mm._state = ModeState.ACTIVE
+    ctrl.set_mode_manager(mm)
+
+    # Set a mock EMMA driver (just needs to be not-None)
+    emma = AsyncMock()
+    ctrl.set_emma_driver(emma)
+    mm.set_emma_driver(emma)
+
+    return ctrl, driver
+
+
+class TestForciblePath:
+    """HuaweiController uses forcible registers when mode 6 is active."""
+
+    @pytest.mark.anyio
+    async def test_execute_discharge_uses_forcible_when_mode_6_active(self):
+        """PRIMARY_DISCHARGE with mode 6 active calls write_forcible_discharge."""
+        from backend.controller_model import BatteryRole, ControllerCommand
+        ctrl, driver = _make_controller_mode6()
+        driver.write_forcible_discharge = AsyncMock()
+
+        await ctrl.execute(ControllerCommand(
+            role=BatteryRole.PRIMARY_DISCHARGE,
+            target_watts=-5000.0,
+        ))
+
+        driver.write_forcible_discharge.assert_awaited_once_with(5000, dry_run=False)
+        driver.write_max_discharge_power.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_execute_charge_uses_forcible_when_mode_6_active(self):
+        """CHARGING with mode 6 active calls write_forcible_charge."""
+        from backend.controller_model import BatteryRole, ControllerCommand
+        ctrl, driver = _make_controller_mode6()
+        driver.write_forcible_charge = AsyncMock()
+
+        await ctrl.execute(ControllerCommand(
+            role=BatteryRole.CHARGING,
+            target_watts=3000.0,
+        ))
+
+        driver.write_forcible_charge.assert_awaited_once_with(3000, dry_run=False)
+        driver.write_max_charge_power.assert_not_called()
+        driver.write_ac_charging.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_execute_holding_uses_forcible_stop_when_mode_6_active(self):
+        """HOLDING with mode 6 active calls write_forcible_stop."""
+        from backend.controller_model import BatteryRole, ControllerCommand
+        ctrl, driver = _make_controller_mode6()
+        driver.write_forcible_stop = AsyncMock()
+
+        await ctrl.execute(ControllerCommand(
+            role=BatteryRole.HOLDING,
+            target_watts=0.0,
+        ))
+
+        driver.write_forcible_stop.assert_awaited_once_with(dry_run=False)
+        driver.write_max_discharge_power.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_execute_discharge_uses_legacy_path_when_no_emma(self):
+        """PRIMARY_DISCHARGE without EMMA driver uses write_max_discharge_power."""
+        from backend.controller_model import BatteryRole, ControllerCommand
+        driver = AsyncMock()
+        driver.write_max_discharge_power = AsyncMock()
+        ctrl = _make_controller(driver)
+
+        await ctrl.execute(ControllerCommand(
+            role=BatteryRole.PRIMARY_DISCHARGE,
+            target_watts=-5000.0,
+        ))
+
+        driver.write_max_discharge_power.assert_awaited_once_with(5000, dry_run=False)
+
+    @pytest.mark.anyio
+    async def test_mode_6_active_false_without_emma_driver(self):
+        """_mode_6_active is False when no EMMA driver is set."""
+        ctrl = _make_controller(AsyncMock())
+        assert ctrl._mode_6_active is False
+
+    @pytest.mark.anyio
+    async def test_mode_6_active_true_with_emma_and_active_manager(self):
+        """_mode_6_active is True when EMMA driver set and mode manager is ACTIVE."""
+        ctrl, _ = _make_controller_mode6()
+        assert ctrl._mode_6_active is True

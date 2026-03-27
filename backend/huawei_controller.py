@@ -57,6 +57,7 @@ class HuaweiController:
         self._last_read_time: float = 0.0
         self._mode_manager: HuaweiModeManager | None = None
         self._shadow_mode: bool = False
+        self._emma_driver = None  # EmmaDriver | None
 
     @property
     def role(self) -> BatteryRole:
@@ -66,6 +67,19 @@ class HuaweiController:
     def set_mode_manager(self, manager: HuaweiModeManager) -> None:
         """Inject the mode manager for transition-safe power writes."""
         self._mode_manager = manager
+
+    def set_emma_driver(self, driver) -> None:
+        """Inject the EMMA driver reference for mode 6 dispatch detection."""
+        self._emma_driver = driver
+
+    @property
+    def _mode_6_active(self) -> bool:
+        """True when mode 6 (THIRD_PARTY_DISPATCH) is active via EMMA."""
+        return (
+            self._emma_driver is not None
+            and self._mode_manager is not None
+            and self._mode_manager.is_active
+        )
 
     def get_working_mode(self) -> int | None:
         """Return the last-read working mode register value, or ``None``."""
@@ -211,15 +225,20 @@ class HuaweiController:
     async def execute(self, cmd: ControllerCommand) -> None:
         """Translate a coordinator command into Huawei driver calls.
 
+        When mode 6 (THIRD_PARTY_DISPATCH) is active via EMMA, uses the
+        forcible charge/discharge registers for real setpoints.
+
+        When mode 6 is not active (TOU fallback or no EMMA), uses the
+        legacy max_charge/max_discharge path.
+
         Sign conventions:
         - Coordinator: positive=charge, negative=discharge
-        - Huawei write_max_discharge_power: takes positive watts (discharge limit)
-        - Huawei write_ac_charging: enable/disable + write_max_charge_power
+        - Huawei forcible/max_discharge: takes positive watts
 
         Role mapping:
-        - PRIMARY_DISCHARGE / SECONDARY_DISCHARGE: write_max_discharge_power(abs(watts))
-        - CHARGING / GRID_CHARGE: write_ac_charging(True) + write_max_charge_power(watts)
-        - HOLDING: write_max_discharge_power(0)
+        - PRIMARY_DISCHARGE / SECONDARY_DISCHARGE: forcible_discharge or max_discharge
+        - CHARGING / GRID_CHARGE: forcible_charge or (write_ac_charging + max_charge)
+        - HOLDING: forcible_stop or max_discharge(0)
         """
         self._role = cmd.role
 
@@ -238,21 +257,34 @@ class HuaweiController:
                 remaining,
             )
 
-        if cmd.role in (BatteryRole.PRIMARY_DISCHARGE, BatteryRole.SECONDARY_DISCHARGE):
-            # Discharge: coordinator sends negative watts, Huawei wants positive
-            await self._driver.write_max_discharge_power(
-                int(abs(cmd.target_watts)), dry_run=dry_run
-            )
-
-        elif cmd.role in (BatteryRole.CHARGING, BatteryRole.GRID_CHARGE):
-            # Charge: coordinator sends positive watts
-            watts = int(cmd.target_watts)
-            await self._driver.write_ac_charging(True, dry_run=dry_run)
-            await self._driver.write_max_charge_power(watts, dry_run=dry_run)
-
-        elif cmd.role == BatteryRole.HOLDING:
-            # Hold: zero discharge
-            await self._driver.write_max_discharge_power(0, dry_run=dry_run)
-
+        if self._mode_6_active:
+            # Mode 6 (THIRD_PARTY_DISPATCH): use forcible registers
+            if cmd.role in (BatteryRole.PRIMARY_DISCHARGE, BatteryRole.SECONDARY_DISCHARGE):
+                await self._driver.write_forcible_discharge(
+                    int(abs(cmd.target_watts)), dry_run=dry_run
+                )
+            elif cmd.role in (BatteryRole.CHARGING, BatteryRole.GRID_CHARGE):
+                await self._driver.write_forcible_charge(
+                    int(cmd.target_watts), dry_run=dry_run
+                )
+            elif cmd.role == BatteryRole.HOLDING:
+                await self._driver.write_forcible_stop(dry_run=dry_run)
+            else:
+                logger.warning("Unhandled role %s for Huawei controller (mode 6)", cmd.role)
         else:
-            logger.warning("Unhandled role %s for Huawei controller", cmd.role)
+            # Legacy TOU / no-EMMA path: max_charge / max_discharge
+            if cmd.role in (BatteryRole.PRIMARY_DISCHARGE, BatteryRole.SECONDARY_DISCHARGE):
+                # Discharge: coordinator sends negative watts, Huawei wants positive
+                await self._driver.write_max_discharge_power(
+                    int(abs(cmd.target_watts)), dry_run=dry_run
+                )
+            elif cmd.role in (BatteryRole.CHARGING, BatteryRole.GRID_CHARGE):
+                # Charge: coordinator sends positive watts
+                watts = int(cmd.target_watts)
+                await self._driver.write_ac_charging(True, dry_run=dry_run)
+                await self._driver.write_max_charge_power(watts, dry_run=dry_run)
+            elif cmd.role == BatteryRole.HOLDING:
+                # Hold: zero discharge
+                await self._driver.write_max_discharge_power(0, dry_run=dry_run)
+            else:
+                logger.warning("Unhandled role %s for Huawei controller", cmd.role)

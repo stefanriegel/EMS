@@ -1,31 +1,41 @@
 """Huawei working mode lifecycle manager.
 
 Manages the Huawei inverter's storage working mode transitions:
-  - Startup: switch from self-consumption to TOU mode with power clamping
+  - Startup: switch to THIRD_PARTY_DISPATCH (mode 6) via EMMA reg 40000,
+    OR fall back to TOU mode 5 via the inverter if no EMMA driver is set.
   - Shutdown: restore self-consumption mode (idempotent)
-  - Health check: detect and re-apply TOU mode if reverted by inverter
+  - Health check: when EMMA is managing mode 6, skip inverter-level reversion
+    detection (EMMA firmware owns mode 6 — the inverter register may show a
+    different value and that is expected).
 
 State machine states::
 
-    IDLE -> CLAMPING -> SWITCHING -> ACTIVE
-    ACTIVE -> CLAMPING -> SWITCHING -> ACTIVE  (health check re-apply)
-    ACTIVE -> RESTORING -> IDLE                (shutdown)
-    Any    -> FAILED                           (unrecoverable error)
+    IDLE -> SWITCHING -> ACTIVE
+    ACTIVE -> RESTORING -> IDLE        (shutdown)
+    IDLE -> CLAMPING -> SWITCHING -> ACTIVE  (TOU fallback path, no EMMA)
+    ACTIVE -> CLAMPING -> SWITCHING -> ACTIVE  (TOU health check re-apply)
+    Any    -> FAILED                   (unrecoverable error)
 """
 from __future__ import annotations
 
 import enum
 import logging
 import time
+from typing import TYPE_CHECKING
 
 import anyio
 
 from backend.config import ModeManagerConfig
 from backend.drivers.huawei_driver import HuaweiDriver, StorageWorkingModesC
 
+if TYPE_CHECKING:
+    from backend.drivers.emma_driver import EmmaDriver
+
 logger = logging.getLogger(__name__)
 
-_TOU_MODE_VALUE = 5  # StorageWorkingModesC.TIME_OF_USE_LUNA2000
+_TOU_MODE_VALUE = 5    # StorageWorkingModesC.TIME_OF_USE_LUNA2000 (fallback)
+_EMMA_MODE = 6         # THIRD_PARTY_DISPATCH via EMMA reg 40000
+_SELF_CONS_MODE = 2    # MAXIMISE_SELF_CONSUMPTION
 
 
 class ModeState(enum.Enum):
@@ -53,9 +63,19 @@ class HuaweiModeManager:
     def __init__(self, driver: HuaweiDriver, config: ModeManagerConfig) -> None:
         self._driver = driver
         self._config = config
+        self._emma_driver: "EmmaDriver | None" = None
         self._state = ModeState.IDLE
         self._last_health_check: float = 0.0
         self._last_reapply: float = 0.0
+
+    def set_emma_driver(self, driver: "EmmaDriver | None") -> None:
+        """Attach the EMMA driver for mode 6 (THIRD_PARTY_DISPATCH) control.
+
+        When set, ``activate()`` writes mode 6 via EMMA register 40000 instead
+        of TOU mode 5 via the inverter register.  ``check_health()`` skips
+        inverter-level reversion detection because EMMA firmware owns mode 6.
+        """
+        self._emma_driver = driver
 
     @property
     def state(self) -> ModeState:
@@ -64,7 +84,7 @@ class HuaweiModeManager:
 
     @property
     def is_active(self) -> bool:
-        """Whether the mode manager is in the ACTIVE state (TOU confirmed)."""
+        """Whether the mode manager is in the ACTIVE state."""
         return self._state == ModeState.ACTIVE
 
     @property
@@ -77,18 +97,45 @@ class HuaweiModeManager:
         return self._state in (ModeState.CLAMPING, ModeState.SWITCHING, ModeState.RESTORING)
 
     async def activate(self, current_working_mode: int | None = None) -> None:
-        """Switch the inverter to TOU mode for EMS control.
+        """Switch to the appropriate control mode for EMS dispatch.
 
-        If *current_working_mode* is already ``TIME_OF_USE_LUNA2000`` (5),
-        skips the transition (crash recovery path) and goes straight to
-        ACTIVE.
+        If an EMMA driver is set, writes THIRD_PARTY_DISPATCH (mode 6) via
+        EMMA register 40000 — no inverter clamping needed.
+
+        If no EMMA driver is set, falls back to TOU mode 5 via the inverter
+        register with the original clamp-then-switch sequence.
 
         Parameters
         ----------
         current_working_mode:
             The current working mode register value from ``read_battery()``.
-            Pass this at startup to enable crash recovery detection.
+            Used only by the TOU fallback path for crash recovery detection.
         """
+        if self._emma_driver is not None:
+            await self._activate_via_emma()
+        else:
+            await self._activate_via_tou(current_working_mode)
+
+    async def _activate_via_emma(self) -> None:
+        """Set THIRD_PARTY_DISPATCH (mode 6) via EMMA register 40000."""
+        assert self._emma_driver is not None
+        try:
+            self._state = ModeState.SWITCHING
+            logger.info(
+                "Mode transition: setting THIRD_PARTY_DISPATCH (mode 6) via EMMA reg 40000"
+            )
+            await self._emma_driver.write_ess_mode(_EMMA_MODE)
+            await anyio.sleep(self._config.settle_delay_s)
+            self._state = ModeState.ACTIVE
+            self._last_health_check = time.monotonic()
+            logger.info("Mode transition complete: THIRD_PARTY_DISPATCH active via EMMA")
+        except Exception:
+            self._state = ModeState.FAILED
+            logger.exception("EMMA mode 6 activation failed")
+            raise
+
+    async def _activate_via_tou(self, current_working_mode: int | None) -> None:
+        """Set TOU mode 5 via the inverter register (fallback, no EMMA)."""
         if current_working_mode == _TOU_MODE_VALUE:
             logger.info(
                 "Crash recovery: inverter already in TOU mode (value=%d), "
@@ -130,17 +177,26 @@ class HuaweiModeManager:
             raise
 
     async def restore(self) -> None:
-        """Restore the inverter to self-consumption mode on shutdown.
+        """Restore a safe operating mode on shutdown.
+
+        When EMMA driver is set: writes self-consumption mode 2 via EMMA reg 40000.
+        Fallback: writes MAXIMISE_SELF_CONSUMPTION via the inverter register.
 
         Idempotent: logs WARNING and swallows exceptions if the driver
         is unresponsive (e.g. connection already closed).
         """
         try:
             self._state = ModeState.RESTORING
-            logger.info("Restoring to MAXIMISE_SELF_CONSUMPTION")
-            await self._driver.write_battery_mode(
-                StorageWorkingModesC.MAXIMISE_SELF_CONSUMPTION
-            )
+            if self._emma_driver is not None:
+                logger.info(
+                    "Restoring via EMMA: setting mode %d (max self-consumption)", _SELF_CONS_MODE
+                )
+                await self._emma_driver.write_ess_mode(_SELF_CONS_MODE)
+            else:
+                logger.info("Restoring to MAXIMISE_SELF_CONSUMPTION")
+                await self._driver.write_battery_mode(
+                    StorageWorkingModesC.MAXIMISE_SELF_CONSUMPTION
+                )
             self._state = ModeState.IDLE
             logger.info("Mode restored to self-consumption")
         except Exception:
@@ -151,17 +207,25 @@ class HuaweiModeManager:
             self._state = ModeState.IDLE
 
     async def check_health(self, current_working_mode: int | None) -> None:
-        """Verify the inverter is still in TOU mode and re-apply if reverted.
+        """Verify the active control mode and re-apply if reverted.
+
+        When an EMMA driver is set (mode 6 path): reversion detection is
+        skipped — EMMA firmware owns mode 6 and the Huawei inverter register
+        value is expected to differ.
+
+        When no EMMA driver is set (TOU fallback): checks inverter register
+        and re-applies TOU mode 5 if reverted.
 
         Skips if:
           - Not in ACTIVE state
           - Health check interval has not elapsed
-          - Re-apply cooldown is active (prevents infinite re-apply loop)
+          - (TOU path only) Re-apply cooldown is active
 
         Parameters
         ----------
         current_working_mode:
             The current working mode register value from ``read_battery()``.
+            Relevant only for the TOU fallback path.
         """
         if self._state != ModeState.ACTIVE:
             return
@@ -174,7 +238,11 @@ class HuaweiModeManager:
 
         self._last_health_check = now
 
-        # Check if mode matches expected
+        # EMMA path: mode 6 is managed by EMMA firmware — no inverter reversion check
+        if self._emma_driver is not None:
+            return
+
+        # TOU fallback path: check inverter register and re-apply if reverted
         if current_working_mode == _TOU_MODE_VALUE:
             return
 
