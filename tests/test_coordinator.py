@@ -57,6 +57,8 @@ def _snap(
     grid_l2_power_w: float | None = None,
     grid_l3_power_w: float | None = None,
     ess_mode: int | None = None,
+    consumption_w: float | None = None,
+    pv_on_grid_w: float | None = None,
 ) -> ControllerSnapshot:
     """Build a ControllerSnapshot with sensible defaults."""
     return ControllerSnapshot(
@@ -75,6 +77,8 @@ def _snap(
         grid_l2_power_w=grid_l2_power_w,
         grid_l3_power_w=grid_l3_power_w,
         ess_mode=ess_mode,
+        consumption_w=consumption_w,
+        pv_on_grid_w=pv_on_grid_w,
     )
 
 
@@ -125,6 +129,47 @@ class TestPTargetComputation:
         v_snap = _snap(soc=50.0, grid_power_w=None)
         p = coord._compute_p_target(h_snap, v_snap)
         assert p == 0.0
+
+    async def test_ess_override_uses_consumption_when_grid_near_zero(self):
+        """When Victron ESS is self-consuming (grid ≈ 0, consumption > 0, no PV),
+        P_target should be consumption_w, not grid_power_w."""
+        coord, _, _ = _make_coordinator()
+        h_snap = _snap(soc=80.0)
+        v_snap = _snap(
+            soc=70.0,
+            grid_power_w=5.0,       # grid near zero — ESS covering load
+            consumption_w=4500.0,   # house consuming 4.5 kW
+            pv_on_grid_w=0.0,      # no PV
+        )
+        p = coord._compute_p_target(h_snap, v_snap)
+        assert p == 4500.0  # should use consumption, not grid
+
+    async def test_ess_override_not_triggered_when_pv_producing(self):
+        """When PV is producing, grid near zero is genuine self-consumption —
+        use grid_power_w normally."""
+        coord, _, _ = _make_coordinator()
+        h_snap = _snap(soc=80.0)
+        v_snap = _snap(
+            soc=70.0,
+            grid_power_w=-20.0,
+            consumption_w=3000.0,
+            pv_on_grid_w=3500.0,   # PV is producing
+        )
+        p = coord._compute_p_target(h_snap, v_snap)
+        assert p == -20.0  # should use grid_power (PV surplus)
+
+    async def test_ess_override_not_triggered_when_grid_outside_deadband(self):
+        """When grid is significantly non-zero, use it directly even without PV."""
+        coord, _, _ = _make_coordinator()
+        h_snap = _snap(soc=80.0)
+        v_snap = _snap(
+            soc=70.0,
+            grid_power_w=500.0,    # significant grid import
+            consumption_w=5000.0,
+            pv_on_grid_w=0.0,
+        )
+        p = coord._compute_p_target(h_snap, v_snap)
+        assert p == 500.0  # should use grid_power directly
 
 
 # ===========================================================================
