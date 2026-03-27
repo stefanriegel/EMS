@@ -125,6 +125,7 @@ export interface OptimizationReasoningPayload {
   expected_consumption_kwh: number;
   charge_energy_kwh: number;
   cost_estimate_eur: number;
+  evopt_status?: string;
 }
 
 export interface OptimizationPayload {

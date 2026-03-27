@@ -54,6 +54,30 @@ function Row({ label, value }: RowProps) {
   );
 }
 
+interface PhaseBarProps {
+  label: string;
+  valueW: number | null;
+}
+
+function PhaseBar({ label, valueW }: PhaseBarProps) {
+  const MAX_W = 3680; // 16A × 230V single-phase max
+  const isNull = valueW === null || valueW === undefined;
+  const pct = isNull ? 0 : Math.min(Math.abs(valueW) / MAX_W * 100, 100);
+  const direction = isNull ? 'null' : valueW >= 0 ? 'import' : 'export';
+  return (
+    <div className="phase-bar-row">
+      <span className="phase-bar-label">{label}</span>
+      <div className="phase-bar-track">
+        <div
+          className={`phase-bar-fill${!isNull ? ` phase-bar-fill--${direction}` : ''}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <span className="phase-bar-value">{isNull ? 'N/A' : `${valueW.toFixed(0)} W`}</span>
+    </div>
+  );
+}
+
 export function DeviceDetail({ devices, pool }: Props) {
   const hw = devices?.huawei ?? null;
   const vc = devices?.victron ?? null;
@@ -64,7 +88,7 @@ export function DeviceDetail({ devices, pool }: Props) {
   const victronSetpoint = pool?.victron_discharge_setpoint_w ?? null;
 
   return (
-    <section className="card device-detail">
+    <section className="card device-detail" data-testid="device-detail">
       <h2 className="card-title">Device Detail</h2>
 
       {/* Huawei LUNA2000 */}
@@ -139,6 +163,10 @@ export function DeviceDetail({ devices, pool }: Props) {
             <Row label="Consumption" value={n(vc?.consumption_w, "W", 0)} />
           </div>
         </details>
+
+        <PhaseBar label="Grid L1" valueW={vc?.grid_l1_power_w ?? null} />
+        <PhaseBar label="Grid L2" valueW={vc?.grid_l2_power_w ?? null} />
+        <PhaseBar label="Grid L3" valueW={vc?.grid_l3_power_w ?? null} />
       </div>
     </section>
   );

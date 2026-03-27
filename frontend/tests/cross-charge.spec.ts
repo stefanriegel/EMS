@@ -1,7 +1,12 @@
 import { test, expect } from '@playwright/test';
 
 /**
- * Full mock PoolState with cross-charge fields for route interception.
+ * Full mock PoolState with cross-charge fields for WebSocket interception.
+ *
+ * K052: pool data flows via WebSocket (/api/ws/state), not REST /api/state.
+ * The route handler IS the onopen callback — call ws.send() directly.
+ * K045: mock /api/setup/status → {setup_complete: true} to prevent wizard redirect.
+ * K043: mock /api/tariff/schedule to suppress TariffCard fetch noise.
  */
 function mockPool(overrides: Record<string, unknown> = {}) {
   return {
@@ -74,15 +79,55 @@ function mockWsPayload(poolOverrides: Record<string, unknown> = {}) {
   };
 }
 
-test('cross-charge badge is hidden by default (no active cross-charge)', async ({ page }) => {
-  // Intercept state endpoint with cross_charge_active=false
+/** Wire all route mocks for a given page */
+async function setupRoutes(
+  page: import('@playwright/test').Page,
+  poolOverrides: Record<string, unknown> = {}
+) {
+  // K045: prevent setup wizard redirect
+  await page.route('**/api/setup/status', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ setup_complete: true }),
+    })
+  );
+
+  // K043: suppress TariffCard fetch noise
+  await page.route('**/api/tariff/schedule', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([]),
+    })
+  );
+
+  // Mock REST fallback — needed to suppress fetch errors from FallbackConsumer
   await page.route('**/api/state', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(mockWsPayload({ cross_charge_active: false })),
+      body: JSON.stringify({
+        control_state: 'IDLE',
+        combined_power_w: 0,
+        huawei_discharge_setpoint_w: 0,
+        victron_discharge_setpoint_w: 0,
+        grid_charge_slot_active: false,
+        tariff: null,
+        optimization: null,
+      }),
     })
   );
+
+  // K052: mock WebSocket — send one WsPayload frame on connect.
+  // The handler IS the onopen callback; call ws.send() directly.
+  await page.routeWebSocket('**/api/ws/state', async (ws) => {
+    ws.send(JSON.stringify(mockWsPayload(poolOverrides)));
+  });
+}
+
+test('cross-charge badge is hidden by default (no active cross-charge)', async ({ page }) => {
+  await setupRoutes(page, { cross_charge_active: false });
 
   await page.goto('/');
   await expect(page.locator('[data-testid="energy-flow-card"]')).toBeVisible({ timeout: 10_000 });
@@ -91,20 +136,11 @@ test('cross-charge badge is hidden by default (no active cross-charge)', async (
 });
 
 test('cross-charge badge appears when cross_charge_active is true', async ({ page }) => {
-  // Intercept state endpoint with cross_charge_active=true
-  await page.route('**/api/state', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(
-        mockWsPayload({
-          cross_charge_active: true,
-          cross_charge_waste_wh: 1500,
-          cross_charge_episode_count: 3,
-        })
-      ),
-    })
-  );
+  await setupRoutes(page, {
+    cross_charge_active: true,
+    cross_charge_waste_wh: 1500,
+    cross_charge_episode_count: 3,
+  });
 
   await page.goto('/');
   await expect(page.locator('[data-testid="energy-flow-card"]')).toBeVisible({ timeout: 10_000 });
@@ -115,19 +151,11 @@ test('cross-charge badge appears when cross_charge_active is true', async ({ pag
 });
 
 test('cross-charge history section appears in OptimizationCard when episodes > 0', async ({ page }) => {
-  await page.route('**/api/state', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(
-        mockWsPayload({
-          cross_charge_active: false,
-          cross_charge_waste_wh: 1500,
-          cross_charge_episode_count: 3,
-        })
-      ),
-    })
-  );
+  await setupRoutes(page, {
+    cross_charge_active: false,
+    cross_charge_waste_wh: 1500,
+    cross_charge_episode_count: 3,
+  });
 
   await page.goto('/');
   await expect(page.locator('[data-testid="energy-flow-card"]')).toBeVisible({ timeout: 10_000 });

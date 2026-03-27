@@ -42,6 +42,18 @@ export function OptimizationCard({ optimization, pool }: Props) {
             </span>
           </p>
 
+          {optimization.reasoning.tomorrow_solar_kwh > 0 && (
+            <div data-testid="opt-solar-forecast" className="opt-solar-forecast">
+              ☀️ Tomorrow: {optimization.reasoning.tomorrow_solar_kwh.toFixed(1)} kWh
+            </div>
+          )}
+
+          {optimization.reasoning.evopt_status && (
+            <span data-testid="opt-evopt-badge" className="opt-evopt-badge">
+              {optimization.reasoning.evopt_status === 'Optimal' ? 'EVopt ✓' : optimization.reasoning.evopt_status}
+            </span>
+          )}
+
           <div className="opt-slots">
             {optimization.slots.length === 0 ? (
               <p className="opt-no-slots">No charge windows scheduled</p>

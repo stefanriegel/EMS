@@ -213,7 +213,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--slave-ids",
-        default="2,8",
+        default='2,8',
         help="Comma-separated Modbus slave IDs to probe (default: '2,8')",
     )
     parser.add_argument(
