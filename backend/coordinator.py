@@ -883,11 +883,12 @@ class Coordinator(HaCommandsMixin):
         Primary source: Victron grid_power_w (Venus OS grid meter).
 
         **ESS-override**: when Victron ESS autonomously self-consumes
-        (grid ≈ 0 but consumption > 0 and no PV), grid_power_w is ~0
-        because the Victron battery is already covering the load. In this
-        case, use consumption_w as the demand signal so the coordinator
-        can dispatch both batteries to share the load instead of letting
-        Victron drain alone.
+        (grid small relative to consumption, no PV), use consumption_w as
+        the demand signal so the coordinator can dispatch both batteries.
+
+        Detection: grid magnitude is less than 10% of consumption AND
+        no PV producing. This catches both near-zero grid AND moderate
+        overshoot (e.g. grid = -138W when consumption = 2660W = 5%).
 
         Fallback: Huawei master_active_power_w (sign-flipped).
         """
@@ -897,13 +898,14 @@ class Coordinator(HaCommandsMixin):
             pv_w = float(v_snap.pv_on_grid_w or 0.0)
 
             # ESS-override: Victron ESS is autonomously covering load.
-            # grid ≈ 0 (within deadband) but consumption is significant
-            # and no PV is producing → use consumption as the demand signal.
-            if (
-                abs(grid_w) < self._p_target_deadband_w
-                and consumption_w > self._p_target_deadband_w
-                and pv_w < 50.0
-            ):
+            # Grid power is small relative to consumption (< 10%) and no PV
+            # → Victron's ESS control loop is managing the house load alone.
+            # Use consumption as the demand signal for dual-battery dispatch.
+            grid_is_small = (
+                consumption_w > self._p_target_deadband_w
+                and abs(grid_w) < consumption_w * 0.10
+            )
+            if grid_is_small and pv_w < 50.0:
                 logger.debug(
                     "P_target source: consumption_w (%.0f W) — "
                     "Victron ESS self-consuming (grid=%.0f W, pv=%.0f W)",

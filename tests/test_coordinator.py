@@ -144,6 +144,21 @@ class TestPTargetComputation:
         p = coord._compute_p_target(h_snap, v_snap)
         assert p == 4500.0  # should use consumption, not grid
 
+    async def test_ess_override_covers_moderate_grid_overshoot(self):
+        """Grid at -138W with 2660W consumption (5.2%) is ESS overshoot, not surplus.
+        Should still use consumption as P_target."""
+        coord, _, _ = _make_coordinator()
+        h_snap = _snap(soc=80.0)
+        v_snap = _snap(
+            soc=70.0,
+            grid_power_w=-138.0,    # Victron ESS over-delivered by 138W
+            consumption_w=2660.0,   # house consuming 2.66 kW
+            pv_on_grid_w=0.0,      # no PV
+        )
+        p = coord._compute_p_target(h_snap, v_snap)
+        # 138/2660 = 5.2% < 10% → ESS-override fires
+        assert p == 2660.0
+
     async def test_ess_override_not_triggered_when_pv_producing(self):
         """When PV is producing, grid near zero is genuine self-consumption —
         use grid_power_w normally."""
