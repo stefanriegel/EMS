@@ -146,6 +146,8 @@ class VictronController:
             grid_l1_power_w=data.grid_l1_power_w,
             grid_l2_power_w=data.grid_l2_power_w,
             grid_l3_power_w=data.grid_l3_power_w,
+            consumption_w=data.consumption_w,
+            pv_on_grid_w=data.pv_on_grid_w,
             ess_mode=data.ess_mode,
         )
 

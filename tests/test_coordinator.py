@@ -367,8 +367,9 @@ class TestDebounce:
         result = coord._debounce_role("huawei", BatteryRole.PRIMARY_DISCHARGE)
         assert result == BatteryRole.HOLDING  # Not yet committed
 
-    async def test_role_committed_after_two_cycles(self):
+    async def test_role_committed_after_three_cycles(self):
         coord, _, _ = _make_coordinator()
+        coord._debounce_role("huawei", BatteryRole.PRIMARY_DISCHARGE)
         coord._debounce_role("huawei", BatteryRole.PRIMARY_DISCHARGE)
         result = coord._debounce_role("huawei", BatteryRole.PRIMARY_DISCHARGE)
         assert result == BatteryRole.PRIMARY_DISCHARGE
@@ -386,7 +387,9 @@ class TestDebounce:
     async def test_debounce_resets_on_different_proposal(self):
         coord, _, _ = _make_coordinator()
         coord._debounce_role("huawei", BatteryRole.PRIMARY_DISCHARGE)
+        coord._debounce_role("huawei", BatteryRole.PRIMARY_DISCHARGE)
         # Switch to a different proposal → counter resets
+        coord._debounce_role("huawei", BatteryRole.CHARGING)
         coord._debounce_role("huawei", BatteryRole.CHARGING)
         result = coord._debounce_role("huawei", BatteryRole.CHARGING)
         assert result == BatteryRole.CHARGING
@@ -984,7 +987,8 @@ class TestDecisionRingBuffer:
         h_ctrl.poll = AsyncMock(return_value=_snap(soc=80.0, grid_power_w=None))
         v_ctrl.poll = AsyncMock(return_value=_snap(soc=50.0, grid_power_w=1000.0))
         await coord._run_cycle()
-        # Debounce: need second cycle for role to commit
+        # Debounce: need third cycle for role to commit (debounce_cycles=3)
+        await coord._run_cycle()
         await coord._run_cycle()
 
         decisions = coord.get_decisions()

@@ -409,7 +409,7 @@ class TestOrchestratorConfig:
         cfg = OrchestratorConfig()
         assert cfg.loop_interval_s == pytest.approx(5.0)
         assert cfg.hysteresis_w == 200
-        assert cfg.debounce_cycles == 2
+        assert cfg.debounce_cycles == 3
         assert cfg.stale_threshold_s == pytest.approx(30.0)
         assert cfg.max_offline_s == pytest.approx(60.0)
         assert cfg.victron_max_discharge_w == pytest.approx(10000.0)
