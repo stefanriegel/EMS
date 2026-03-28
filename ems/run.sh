@@ -104,6 +104,18 @@ _admin_hash=$(get_option 'admin_password_hash')
 # JWT_SECRET is generated automatically on first startup and persisted to
 # /config/.jwt_secret — no operator action required.
 
+# --- Control mode (supervisory / legacy) ---
+_control_mode=$(get_option 'control_mode')
+[ -n "$_control_mode" ] && export EMS_CONTROL_MODE="$_control_mode"
+_obs_interval=$(get_option 'observation_interval_s')
+[ -n "$_obs_interval" ] && export EMS_OBSERVATION_INTERVAL_S="$_obs_interval"
+_soc_bal_thresh=$(get_option 'soc_balance_threshold')
+[ -n "$_soc_bal_thresh" ] && export EMS_SOC_BALANCE_THRESHOLD_PCT="$_soc_bal_thresh"
+_soc_bal_hyst=$(get_option 'soc_balance_hysteresis')
+[ -n "$_soc_bal_hyst" ] && export EMS_SOC_BALANCE_HYSTERESIS_PCT="$_soc_bal_hyst"
+_min_soc_hyst=$(get_option 'min_soc_hysteresis')
+[ -n "$_min_soc_hyst" ] && export EMS_MIN_SOC_HYSTERESIS_PCT="$_min_soc_hyst"
+
 # --- Coordinator tuning (advanced, optional) ---
 _hw_db=$(get_option 'huawei_deadband_w')
 [ -n "$_hw_db" ] && export HUAWEI_DEADBAND_W="$_hw_db"

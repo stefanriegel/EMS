@@ -49,6 +49,12 @@ options:
   influxdb_database: "ems"
   influxdb_username: ""
   influxdb_password: ""
+  # --- Control mode ---
+  control_mode: supervisory
+  observation_interval_s: 5
+  soc_balance_threshold: 10
+  soc_balance_hysteresis: 5
+  min_soc_hysteresis: 5
   # --- Coordinator tuning (advanced) ---
   huawei_deadband_w: 200
   victron_deadband_w: 150
@@ -99,6 +105,12 @@ schema:
   influxdb_database: str
   influxdb_username: str
   influxdb_password: password
+  # --- Control mode ---
+  control_mode: "list(supervisory|legacy)?"
+  observation_interval_s: "int(2,60)?"
+  soc_balance_threshold: "int(5,30)?"
+  soc_balance_hysteresis: "int(2,15)?"
+  min_soc_hysteresis: "int(2,15)?"
   # --- Coordinator tuning (advanced) ---
   huawei_deadband_w: int?
   victron_deadband_w: int?
