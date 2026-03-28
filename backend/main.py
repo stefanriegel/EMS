@@ -51,7 +51,7 @@ from starlette.staticfiles import StaticFiles
 from backend.api import api_router
 from backend.auth import AdminConfig, AuthMiddleware, auth_router, ensure_jwt_secret
 from backend.ingress import IngressMiddleware
-from backend.config import HardwareValidationConfig, HuaweiConfig, InfluxConfig, ModelStoreConfig, OrchestratorConfig, SystemConfig, VictronConfig, EvccConfig, SchedulerConfig, EvccMqttConfig, HaMqttConfig, TelegramConfig, HaRestConfig, HaStatisticsConfig, MultiEntityHaConfig, OpenMeteoConfig
+from backend.config import HardwareValidationConfig, HuaweiConfig, InfluxConfig, ModelStoreConfig, OrchestratorConfig, SupervisoryConfig, SystemConfig, VictronConfig, EvccConfig, SchedulerConfig, EvccMqttConfig, HaMqttConfig, TelegramConfig, HaRestConfig, HaStatisticsConfig, MultiEntityHaConfig, OpenMeteoConfig
 from backend.weather_client import OpenMeteoClient
 from backend.supervisor_client import SupervisorClient
 from backend.ha_rest_client import MultiEntityHaClient
@@ -74,6 +74,7 @@ from backend.anomaly_detector import AnomalyDetector
 from backend.config import AnomalyDetectorConfig, CommissioningConfig, ModeManagerConfig
 from backend.huawei_mode_manager import HuaweiModeManager
 from backend.self_tuner import SelfTuner
+from backend.supervisor import Supervisor
 
 logger = logging.getLogger(__name__)
 
@@ -580,7 +581,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     device_id=0,
                 )
                 await emma_driver_instance.connect()
-                coordinator._emma_driver = emma_driver_instance
                 huawei_ctrl.set_emma_driver(emma_driver_instance)
                 logger.info(
                     "EMMA driver connected — host=%s:%d device_id=0",
@@ -620,128 +620,165 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         victron_ctrl.start_watchdog_guard()
         logger.info("Victron watchdog guard started")
 
-        coordinator = Coordinator(
-            huawei_ctrl=huawei_ctrl,
-            victron_ctrl=victron_ctrl,
-            sys_config=sys_cfg,
-            orch_config=orch_cfg,
-            writer=metrics_writer,
-            tariff_engine=tariff_engine,
-        )
+        # --- Control mode branching ---
+        supervisory_cfg = SupervisoryConfig.from_env()
+        logger.info("Control mode: %s", supervisory_cfg.control_mode)
 
-        # Health logger — always enabled, unconditionally wired to coordinator
-        from backend.health_logger import HealthLogger  # noqa: PLC0415
-        coordinator._health_logger = HealthLogger()
-        coordinator.set_consumption_forecaster(app.state.consumption_forecaster)
-        logger.info("Health logger enabled — writing to ems_health every 5 min")
-
-        # EMMA driver was connected above (before mode_manager.activate())
-        # Wire coordinator reference (already set on coordinator._emma_driver above if enabled)
-        if not emma_enabled:
-            logger.info("EMMA driver disabled — set EMMA_ENABLED=true to enable")
-
-        # --- Commissioning manager (staged rollout with shadow mode) ---
-        commissioning_cfg = CommissioningConfig.from_env()
-        if commissioning_cfg.enabled:
-            try:
-                from backend.commissioning import CommissioningManager  # noqa: PLC0415
-
-                commissioning_mgr = CommissioningManager(commissioning_cfg)
-                commissioning_mgr.load_or_init()
-                coordinator.set_commissioning_manager(commissioning_mgr)
-                app.state.commissioning_manager = commissioning_mgr
-                logger.info(
-                    "Commissioning manager: stage=%s shadow_mode=%s",
-                    commissioning_mgr.stage.value,
-                    commissioning_mgr.shadow_mode,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Commissioning manager failed to initialize: %s", exc)
-                app.state.commissioning_manager = None
-        else:
+        if supervisory_cfg.control_mode == "supervisory":
+            # --- Supervisory mode: observe + intervene ---
+            sup = Supervisor(
+                huawei_ctrl=huawei_ctrl,
+                victron_ctrl=victron_ctrl,
+                supervisory_config=supervisory_cfg,
+                orch_config=orch_cfg,
+                sys_config=sys_cfg,
+                writer=metrics_writer,
+            )
+            if weather_scheduler:
+                sup.set_scheduler(weather_scheduler)
+            app.state.supervisor = sup
             app.state.commissioning_manager = None
-            logger.info("Commissioning manager disabled")
 
-        await coordinator.start()
-        logger.info("Coordinator control loop started (replaces Orchestrator)")
-        coordinator.set_scheduler(weather_scheduler)
-        coordinator.set_supervisor_client(supervisor)
-        logger.info("Coordinator: scheduler wired for GRID_CHARGE slot detection")
+            if not emma_enabled:
+                logger.info("EMMA driver disabled — set EMMA_ENABLED=true to enable")
 
-        if anomaly_detector is not None:
-            coordinator.set_anomaly_detector(anomaly_detector)
-            logger.info("Coordinator: anomaly detector wired for per-cycle checks")
+            await sup.start()
+            logger.info("Supervisor control loop started (supervisory mode)")
 
-        # --- Self-tuner: bidirectional coordinator wiring ---
-        coordinator.set_self_tuner(self_tuner)
-        self_tuner.set_coordinator(coordinator)
-        logger.info("Coordinator: self-tuner wired for adaptive parameter tuning")
+            # Backward compat: API still reads app.state.orchestrator
+            app.state.orchestrator = None
 
-        # --- Cross-charge detector ---
-        from backend.cross_charge import CrossChargeDetector  # noqa: PLC0415
-
-        cross_charge_detector = CrossChargeDetector()
-        coordinator.set_cross_charge_detector(cross_charge_detector)
-        logger.info("Coordinator: cross-charge detector wired for per-cycle safety guard")
-
-        # --- VRM client (optional — skipped if VRM_TOKEN/VRM_SITE_ID not set) ---
-        from backend.config import VrmConfig, DessConfig  # noqa: PLC0415
-
-        vrm_cfg = VrmConfig.from_env()
-        if vrm_cfg.token and vrm_cfg.site_id:
-            from backend.vrm_client import VrmClient  # noqa: PLC0415
-
-            vrm_client = VrmClient(
-                token=vrm_cfg.token,
-                site_id=int(vrm_cfg.site_id),
-                poll_interval_s=vrm_cfg.poll_interval_s,
-            )
-            await vrm_client.start()
-            coordinator.set_vrm_client(vrm_client)
-            app.state.vrm_client = vrm_client
-            logger.info(
-                "VRM client started — site_id=%s poll=%ds",
-                vrm_cfg.site_id,
-                int(vrm_cfg.poll_interval_s),
-            )
         else:
-            app.state.vrm_client = None
-            logger.info("VRM client disabled — VRM_TOKEN/VRM_SITE_ID not set")
+            # --- Legacy mode: existing Coordinator path ---
+            app.state.supervisor = None
 
-        # --- DESS MQTT subscriber (optional — skipped if DESS_PORTAL_ID not set) ---
-        dess_cfg = DessConfig.from_env()
-        if dess_cfg.host and dess_cfg.portal_id:
-            from backend.dess_mqtt import DessMqttSubscriber  # noqa: PLC0415
-
-            dess_sub = DessMqttSubscriber(
-                host=dess_cfg.host,
-                port=dess_cfg.port,
-                portal_id=dess_cfg.portal_id,
+            coordinator = Coordinator(
+                huawei_ctrl=huawei_ctrl,
+                victron_ctrl=victron_ctrl,
+                sys_config=sys_cfg,
+                orch_config=orch_cfg,
+                writer=metrics_writer,
+                tariff_engine=tariff_engine,
             )
-            await dess_sub.connect()
-            coordinator.set_dess_subscriber(dess_sub)
-            app.state.dess_subscriber = dess_sub
-            logger.info(
-                "DESS MQTT subscriber connected — host=%s portal=%s",
-                dess_cfg.host,
-                dess_cfg.portal_id,
+
+            # Health logger — always enabled, unconditionally wired to coordinator
+            from backend.health_logger import HealthLogger  # noqa: PLC0415
+            coordinator._health_logger = HealthLogger()
+            coordinator.set_consumption_forecaster(app.state.consumption_forecaster)
+            logger.info("Health logger enabled — writing to ems_health every 5 min")
+
+            # EMMA driver was connected above (before mode_manager.activate())
+            if emma_driver_instance is not None:
+                coordinator._emma_driver = emma_driver_instance
+            if not emma_enabled:
+                logger.info("EMMA driver disabled — set EMMA_ENABLED=true to enable")
+
+            # --- Commissioning manager (staged rollout with shadow mode) ---
+            commissioning_cfg = CommissioningConfig.from_env()
+            if commissioning_cfg.enabled:
+                try:
+                    from backend.commissioning import CommissioningManager  # noqa: PLC0415
+
+                    commissioning_mgr = CommissioningManager(commissioning_cfg)
+                    commissioning_mgr.load_or_init()
+                    coordinator.set_commissioning_manager(commissioning_mgr)
+                    app.state.commissioning_manager = commissioning_mgr
+                    logger.info(
+                        "Commissioning manager: stage=%s shadow_mode=%s",
+                        commissioning_mgr.stage.value,
+                        commissioning_mgr.shadow_mode,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Commissioning manager failed to initialize: %s", exc)
+                    app.state.commissioning_manager = None
+            else:
+                app.state.commissioning_manager = None
+                logger.info("Commissioning manager disabled")
+
+            await coordinator.start()
+            logger.info("Coordinator control loop started (legacy mode)")
+            coordinator.set_scheduler(weather_scheduler)
+            coordinator.set_supervisor_client(supervisor)
+            logger.info("Coordinator: scheduler wired for GRID_CHARGE slot detection")
+
+            if anomaly_detector is not None:
+                coordinator.set_anomaly_detector(anomaly_detector)
+                logger.info("Coordinator: anomaly detector wired for per-cycle checks")
+
+            # --- Self-tuner: bidirectional coordinator wiring ---
+            coordinator.set_self_tuner(self_tuner)
+            self_tuner.set_coordinator(coordinator)
+            logger.info("Coordinator: self-tuner wired for adaptive parameter tuning")
+
+            # --- Cross-charge detector ---
+            from backend.cross_charge import CrossChargeDetector  # noqa: PLC0415
+
+            cross_charge_detector = CrossChargeDetector()
+            coordinator.set_cross_charge_detector(cross_charge_detector)
+            logger.info("Coordinator: cross-charge detector wired for per-cycle safety guard")
+
+            # --- VRM client (optional — skipped if VRM_TOKEN/VRM_SITE_ID not set) ---
+            from backend.config import VrmConfig, DessConfig  # noqa: PLC0415
+
+            vrm_cfg = VrmConfig.from_env()
+            if vrm_cfg.token and vrm_cfg.site_id:
+                from backend.vrm_client import VrmClient  # noqa: PLC0415
+
+                vrm_client = VrmClient(
+                    token=vrm_cfg.token,
+                    site_id=int(vrm_cfg.site_id),
+                    poll_interval_s=vrm_cfg.poll_interval_s,
+                )
+                await vrm_client.start()
+                coordinator.set_vrm_client(vrm_client)
+                app.state.vrm_client = vrm_client
+                logger.info(
+                    "VRM client started — site_id=%s poll=%ds",
+                    vrm_cfg.site_id,
+                    int(vrm_cfg.poll_interval_s),
+                )
+            else:
+                app.state.vrm_client = None
+                logger.info("VRM client disabled — VRM_TOKEN/VRM_SITE_ID not set")
+
+            # --- DESS MQTT subscriber (optional — skipped if DESS_PORTAL_ID not set) ---
+            dess_cfg = DessConfig.from_env()
+            if dess_cfg.host and dess_cfg.portal_id:
+                from backend.dess_mqtt import DessMqttSubscriber  # noqa: PLC0415
+
+                dess_sub = DessMqttSubscriber(
+                    host=dess_cfg.host,
+                    port=dess_cfg.port,
+                    portal_id=dess_cfg.portal_id,
+                )
+                await dess_sub.connect()
+                coordinator.set_dess_subscriber(dess_sub)
+                app.state.dess_subscriber = dess_sub
+                logger.info(
+                    "DESS MQTT subscriber connected — host=%s portal=%s",
+                    dess_cfg.host,
+                    dess_cfg.portal_id,
+                )
+            else:
+                app.state.dess_subscriber = None
+                logger.info("DESS subscriber disabled — DESS_PORTAL_ID not set")
+
+            # --- Export advisor (SCO-01) ---
+            from backend.export_advisor import ExportAdvisor  # noqa: PLC0415
+            export_advisor = ExportAdvisor(
+                tariff_engine=tariff_engine,
+                forecaster=consumption_forecaster,
+                sys_config=sys_cfg,
             )
-        else:
-            app.state.dess_subscriber = None
-            logger.info("DESS subscriber disabled — DESS_PORTAL_ID not set")
+            coordinator.set_export_advisor(export_advisor)
+            logger.info("Coordinator: ExportAdvisor wired for export/self-consume decisions")
 
-        # --- Export advisor (SCO-01) ---
-        from backend.export_advisor import ExportAdvisor  # noqa: PLC0415
-        export_advisor = ExportAdvisor(
-            tariff_engine=tariff_engine,
-            forecaster=consumption_forecaster,
-            sys_config=sys_cfg,
-        )
-        coordinator.set_export_advisor(export_advisor)
-        logger.info("Coordinator: ExportAdvisor wired for export/self-consume decisions")
+            app.state.orchestrator = coordinator  # backward compat: API uses same attribute name
 
-        app.state.orchestrator = coordinator  # backward compat: API uses same attribute name
         app.state.metrics_reader = metrics_reader
+
+        # Resolve active control object for service wiring below
+        _ctl = app.state.supervisor if app.state.supervisor is not None else app.state.orchestrator
 
         # --- EVCC MQTT driver (optional — skipped if host is not configured) ---
         evcc_mqtt_cfg = EvccMqttConfig.from_env()
@@ -753,7 +790,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 password=os.environ.get("EVCC_MQTT_PASSWORD", ""),
             )
             await evcc_driver.connect()
-            coordinator.set_evcc_monitor(evcc_driver)
+            if hasattr(_ctl, "set_evcc_monitor"):
+                _ctl.set_evcc_monitor(evcc_driver)
             app.state.evcc_driver = evcc_driver
             logger.info(
                 "EVCC MQTT driver connected — host=%s:%d", evcc_mqtt_cfg.host, evcc_mqtt_cfg.port
@@ -773,12 +811,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             )
             await ha_client.connect()
             app.state.ha_mqtt_client = ha_client
-            coordinator.set_ha_mqtt_client(ha_client)
-            ha_client.set_command_callback(coordinator._handle_ha_command)
+            if hasattr(_ctl, "set_ha_mqtt_client"):
+                _ctl.set_ha_mqtt_client(ha_client)
+            if hasattr(_ctl, "_handle_ha_command"):
+                ha_client.set_command_callback(_ctl._handle_ha_command)
             logger.info(
                 "HA MQTT client connecting — host=%s:%d", ha_mqtt_cfg.host, ha_mqtt_cfg.port
             )
-            logger.info("Coordinator: HA MQTT client wired (command callback registered)")
         except Exception as exc:  # noqa: BLE001
             logger.warning("HA MQTT client failed to connect — running without HA MQTT: %s", exc)
             app.state.ha_mqtt_client = None
@@ -796,8 +835,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.info("Telegram notifier disabled — TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set")
         app.state.notifier = notifier
         if notifier is not None:
-            coordinator.set_notifier(notifier)
-            logger.info("Coordinator: Telegram notifier wired")
+            if hasattr(_ctl, "set_notifier"):
+                _ctl.set_notifier(notifier)
+            logger.info("Notifier wired to active control loop")
 
         # --- HA REST client (multi-entity or single-entity fallback) ---
         ha_rest_cfg = HaRestConfig.from_env()
@@ -831,6 +871,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             exc,
         )
         app.state.orchestrator = None
+        app.state.supervisor = None
         app.state.scheduler = None
         app.state.sched_task = None
         app.state.intraday_task = None
@@ -855,6 +896,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if mode_manager is not None:
         await mode_manager.restore()
         logger.info("Huawei mode manager: restored to self-consumption")
+    sup = getattr(app.state, "supervisor", None)
+    if sup is not None:
+        logger.info("EMS shutting down — stopping supervisor")
+        await sup.stop()
     if app.state.orchestrator is not None:
         logger.info("EMS shutting down — stopping coordinator")
         await app.state.orchestrator.stop()
