@@ -188,15 +188,24 @@ def _health_status(state: Any) -> str:
 
 @api_router.get("/state")
 async def get_state(
+    request: Request,
     orchestrator: Coordinator = Depends(get_orchestrator),
 ) -> dict[str, Any]:
     """Return the current unified pool state snapshot.
 
+    In supervisory mode, returns the :class:`SupervisorState` instead.
+
     Raises
     ------
     HTTPException(503)
-        If the orchestrator has not yet completed its first poll cycle.
+        If neither the orchestrator nor supervisor has completed its first cycle.
     """
+    sup = getattr(request.app.state, "supervisor", None)
+    if sup is not None:
+        state = sup.get_state()
+        if state is None:
+            raise HTTPException(status_code=503, detail="Supervisor not ready")
+        return dataclasses.asdict(state)
     state = orchestrator.get_state()
     if state is None:
         raise HTTPException(status_code=503, detail="Coordinator not yet ready")
@@ -226,7 +235,11 @@ async def get_health(
             "uptime_s": float
         }
     """
-    state = orchestrator.get_state() if orchestrator is not None else None
+    sup = getattr(request.app.state, "supervisor", None)
+    if sup is not None:
+        state = sup.get_state()
+    else:
+        state = orchestrator.get_state() if orchestrator is not None else None
 
     # HA multi-entity client status
     ha_client = getattr(request.app.state, "ha_rest_client", None)
@@ -237,12 +250,28 @@ async def get_health(
         ha_entities_count = len(all_values)
         ha_entities_available = any(v is not None for v in all_values.values())
 
+    # Derive control_state from the appropriate state object
+    if state is not None and hasattr(state, "control_state"):
+        control_state_str = str(state.control_state)
+    elif state is not None and hasattr(state, "control_mode"):
+        control_state_str = state.control_mode
+    else:
+        control_state_str = "IDLE"
+
+    # Determine last_error from active control object
+    if sup is not None:
+        last_error = sup.get_last_error()
+    elif orchestrator is not None:
+        last_error = orchestrator.get_last_error()
+    else:
+        last_error = None
+
     result = {
         "status": _health_status(state),
         "huawei_available": state.huawei_available if state else False,
         "victron_available": state.victron_available if state else False,
-        "control_state": str(state.control_state) if state else "IDLE",
-        "last_error": orchestrator.get_last_error() if orchestrator is not None else None,
+        "control_state": control_state_str,
+        "last_error": last_error,
         "uptime_s": time.monotonic() - _start_time,
         "huawei_working_mode": orchestrator.get_working_mode() if orchestrator is not None else None,
         "ha_entities_count": ha_entities_count,
@@ -300,6 +329,26 @@ async def get_decisions_endpoint(
         raise HTTPException(status_code=503, detail="Coordinator not running")
     clamped = min(max(limit, 1), 100)
     return orchestrator.get_decisions(limit=clamped)
+
+
+@api_router.get("/interventions")
+async def get_interventions(
+    request: Request,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Return recent intervention records (supervisory mode only).
+
+    Query parameters
+    ----------------
+    limit
+        Maximum number of entries to return. Default 20, max 100.
+
+    Returns an empty list when the system is running in legacy mode.
+    """
+    sup = getattr(request.app.state, "supervisor", None)
+    if sup is not None:
+        return sup.get_interventions(limit=min(max(limit, 1), 100))
+    return []
 
 
 @api_router.get("/config")
@@ -1144,18 +1193,23 @@ async def ws_state(
             await ws.close(code=4401)
             return
 
-    orchestrator: Coordinator = ws.app.state.orchestrator
+    orchestrator = ws.app.state.orchestrator
+    sup = getattr(ws.app.state, "supervisor", None)
     tariff_engine = getattr(ws.app.state, "tariff_engine", None)
 
     await manager.connect(ws)
     try:
         while True:
             # --- Build pool snapshot ---
-            pool_state = orchestrator.get_state()
-            pool_dict = dataclasses.asdict(pool_state) if pool_state is not None else None
-
-            # --- Build device snapshot ---
-            devices_dict = orchestrator.get_device_snapshot()
+            if sup is not None:
+                pool_state = sup.get_state()
+                pool_dict = dataclasses.asdict(pool_state) if pool_state is not None else None
+                devices_dict = {}
+            else:
+                pool_state = orchestrator.get_state() if orchestrator else None
+                pool_dict = dataclasses.asdict(pool_state) if pool_state is not None else None
+                # --- Build device snapshot ---
+                devices_dict = orchestrator.get_device_snapshot() if orchestrator else {}
 
             # --- Build tariff snapshot ---
             tariff_dict = _build_tariff_dict(ws.app, tariff_engine)

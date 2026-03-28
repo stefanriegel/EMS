@@ -177,6 +177,25 @@ configuration:
       bcrypt.gensalt()).decode())". Leave blank to disable login.
       The session secret key is generated automatically.
 
+  # --- Control mode ---
+  control_mode:
+    name: Control Mode
+    description: >-
+      "supervisory" lets native battery controllers run autonomously with EMS guardrails.
+      "legacy" uses the original setpoint control loop.
+  observation_interval_s:
+    name: Observation Interval (seconds)
+    description: How often the EMS reads battery state.
+  soc_balance_threshold:
+    name: SoC Balance Threshold (%)
+    description: SoC difference between batteries that triggers balancing.
+  soc_balance_hysteresis:
+    name: SoC Balance Hysteresis (%)
+    description: SoC delta must drop this far below threshold to release balancing.
+  min_soc_hysteresis:
+    name: Min SoC Hysteresis (%)
+    description: SoC must recover above min + this value to resume discharge.
+
   # --- Coordinator tuning (advanced) ---
   huawei_deadband_w:
     name: Huawei Deadband (W)

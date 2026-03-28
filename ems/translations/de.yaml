@@ -177,6 +177,25 @@ configuration:
       bcrypt.gensalt()).decode())". Leer lassen für Login ohne Passwort.
       Der Sitzungsschlüssel wird automatisch generiert.
 
+  # --- Steuerungsmodus ---
+  control_mode:
+    name: Steuerungsmodus
+    description: >-
+      "supervisory" laesst die nativen Batterie-Controller autonom laufen, das EMS setzt nur Leitplanken.
+      "legacy" nutzt die urspruengliche Sollwert-Regelschleife.
+  observation_interval_s:
+    name: Beobachtungsintervall (Sekunden)
+    description: Wie oft das EMS den Batteriestatus liest.
+  soc_balance_threshold:
+    name: SoC-Ausgleichsschwelle (%)
+    description: SoC-Differenz zwischen Batterien, ab der Ausgleich ausgeloest wird.
+  soc_balance_hysteresis:
+    name: SoC-Ausgleichs-Hysterese (%)
+    description: SoC-Delta muss so weit unter den Schwellwert fallen, um den Ausgleich aufzuheben.
+  min_soc_hysteresis:
+    name: Min-SoC-Hysterese (%)
+    description: SoC muss ueber Min + diesen Wert steigen, um die Entladung fortzusetzen.
+
   # --- Koordinator-Feinabstimmung (erweitert) ---
   huawei_deadband_w:
     name: Huawei Totband (W)
