@@ -8,6 +8,37 @@
  */
 
 // ---------------------------------------------------------------------------
+// Supervisory mode types
+// ---------------------------------------------------------------------------
+
+export type BatteryState = "AUTONOMOUS" | "HELD" | "GRID_CHARGING";
+
+export interface InterventionEntry {
+  timestamp: string;
+  intervention_type: "min_soc_guard" | "cross_charge" | "grid_charge_window" | "soc_balance";
+  target_system: "huawei" | "victron";
+  action: BatteryState;
+  reason: string;
+}
+
+export interface SupervisorState {
+  pool_soc_pct: number;
+  huawei_soc_pct: number;
+  victron_soc_pct: number;
+  soc_delta: number;
+  huawei_state: BatteryState;
+  victron_state: BatteryState;
+  huawei_available: boolean;
+  victron_available: boolean;
+  true_consumption_w: number;
+  pv_power_w: number;
+  active_interventions: InterventionEntry[];
+  timestamp: number;
+  grid_charge_slot_active: boolean;
+  control_mode: "supervisory" | "legacy";
+}
+
+// ---------------------------------------------------------------------------
 // Pool state (UnifiedPoolState dataclass)
 // ---------------------------------------------------------------------------
 
