@@ -126,7 +126,7 @@ class TestLifespanWiring:
                 assert isinstance(app.state.notifier, TelegramNotifier)
 
     def test_evcc_monitor_injected_into_orchestrator(self):
-        with _lifespan_patches() as (mock_driver, _):
+        with _lifespan_patches(extra_env={"EMS_CONTROL_MODE": "legacy"}) as (mock_driver, _):
             with TestClient(app) as client:
                 assert app.state.orchestrator._evcc_monitor is mock_driver
 
