@@ -61,15 +61,6 @@ options:
   ha_statistics_entity_heat_pump: ""
   ha_statistics_entity_dhw: ""
   ha_ml_min_days: 14
-  # --- HA entity monitoring (multi-entity REST polling, all optional) ---
-  ha_entity_heat_pump: ""
-  ha_entity_cop: ""
-  ha_entity_outdoor_temp: ""
-  ha_entity_flow_temp: ""
-  ha_entity_return_temp: ""
-  ha_entity_hausverbrauch: ""
-  ha_entity_steuerbare: ""
-  ha_entity_base_load: ""
   # --- Feed-in tariff ---
   feed_in_rate_eur_kwh: 0.074
   # --- Seasonal strategy ---
@@ -108,15 +99,6 @@ schema:
   # --- EVCC (auto-discovered, override only) ---
   evcc_host: str?
   evcc_port: int?
-  # --- HA entity monitoring ---
-  ha_entity_heat_pump: str?
-  ha_entity_cop: str?
-  ha_entity_outdoor_temp: str?
-  ha_entity_flow_temp: str?
-  ha_entity_return_temp: str?
-  ha_entity_hausverbrauch: str?
-  ha_entity_steuerbare: str?
-  ha_entity_base_load: str?
   # --- ML Forecaster ---
   ha_db_path: str
   ha_statistics_entity_outdoor_temp: str

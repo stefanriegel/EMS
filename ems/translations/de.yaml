@@ -79,51 +79,6 @@ configuration:
       Leer lassen für Auto-Erkennung. Nur für externe EVCC-Installationen.
       Standard-EVCC-API-Port ist 7070.
 
-  # --- HA Entity Monitoring (Multi-Entity REST Polling) ---
-  ha_entity_heat_pump:
-    name: Waermepumpe Leistung Entity
-    description: >-
-      HA-Sensor-Entity-ID fuer die Waermepumpen-Leistungsaufnahme (W).
-      Beispiel: sensor.warmepumpe_total_active_power. Leer lassen zum Deaktivieren.
-  ha_entity_cop:
-    name: Waermepumpe COP Entity
-    description: >-
-      HA-Sensor-Entity-ID fuer die Leistungszahl der Waermepumpe.
-      Beispiel: sensor.ems_esp_boiler_current_coefficient_of_performance.
-      Leer lassen zum Deaktivieren.
-  ha_entity_outdoor_temp:
-    name: Aussentemperatur Entity
-    description: >-
-      HA-Sensor-Entity-ID fuer die Aussentemperatur (C).
-      Beispiel: sensor.ems_esp_boiler_aussentemperatur. Leer lassen zum Deaktivieren.
-  ha_entity_flow_temp:
-    name: Vorlauftemperatur Entity
-    description: >-
-      HA-Sensor-Entity-ID fuer die Heizungs-Vorlauftemperatur (C).
-      Beispiel: sensor.ems_esp_boiler_actual_flow_water_temperature.
-      Leer lassen zum Deaktivieren.
-  ha_entity_return_temp:
-    name: Ruecklauftemperatur Entity
-    description: >-
-      HA-Sensor-Entity-ID fuer die Heizungs-Ruecklauftemperatur (C).
-      Beispiel: sensor.ems_esp_boiler_return_temperature.
-      Leer lassen zum Deaktivieren.
-  ha_entity_hausverbrauch:
-    name: Gesamtverbrauch Entity
-    description: >-
-      HA-Sensor-Entity-ID fuer den Gesamtverbrauch des Haushalts (W).
-      Beispiel: sensor.hausverbrauch. Leer lassen zum Deaktivieren.
-  ha_entity_steuerbare:
-    name: Steuerbare Verbraucher Entity
-    description: >-
-      HA-Sensor-Entity-ID fuer steuerbare Verbraucher (W).
-      Beispiel: sensor.steuerbare_verbraucher. Leer lassen zum Deaktivieren.
-  ha_entity_base_load:
-    name: Grundlast Entity
-    description: >-
-      HA-Sensor-Entity-ID fuer die Grundlast (Gesamt minus steuerbare) (W).
-      Beispiel: sensor.hausverbrauch_abzgl_steuerbare. Leer lassen zum Deaktivieren.
-
   # --- ML Verbrauchsprognose ---
   ha_db_path:
     name: HA Datenbank-Pfad

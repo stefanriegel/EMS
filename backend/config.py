@@ -604,19 +604,11 @@ class MultiEntityHaConfig:
 
     entity_map: dict
 
-    # Maps env-var names → (field_name, default_entity_id).
-    # When the env var is set to a non-empty string, the entity is included.
-    # When absent or empty, the entity is skipped — no 404 log spam.
-    _ENV_ENTITY_MAP: ClassVar[list[tuple[str, str]]] = [
-        ("HA_ENTITY_HEAT_PUMP", "heat_pump_power_w"),
-        ("HA_ENTITY_COP", "cop"),
-        ("HA_ENTITY_OUTDOOR_TEMP", "outdoor_temp_c"),
-        ("HA_ENTITY_FLOW_TEMP", "flow_temp_c"),
-        ("HA_ENTITY_RETURN_TEMP", "return_temp_c"),
-        ("HA_ENTITY_HAUSVERBRAUCH", "hausverbrauch_w"),
-        ("HA_ENTITY_STEUERBARE", "steuerbare_w"),
-        ("HA_ENTITY_BASE_LOAD", "base_w"),
-    ]
+    # Entity map is intentionally empty — ha_entity_* REST monitoring config
+    # options have been removed from the add-on.  The class is retained so
+    # existing code and tests that construct entity maps directly continue to
+    # work.  Add entries here if new monitored entities are introduced.
+    _ENV_ENTITY_MAP: ClassVar[list[tuple[str, str]]] = []
 
     @classmethod
     def from_env(cls) -> "MultiEntityHaConfig":

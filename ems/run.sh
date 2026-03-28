@@ -58,24 +58,6 @@ _evcc_port=$(get_option 'evcc_port')
 [ -n "$_evcc_host" ] && export EVCC_HOST="$_evcc_host"
 [ -n "$_evcc_port" ] && export EVCC_PORT="$_evcc_port"
 
-# --- Multi-entity HA REST polling (all optional) ---
-_ha_ent_hp=$(get_option 'ha_entity_heat_pump')
-[ -n "$_ha_ent_hp" ] && export HA_ENTITY_HEAT_PUMP="$_ha_ent_hp"
-_ha_ent_cop=$(get_option 'ha_entity_cop')
-[ -n "$_ha_ent_cop" ] && export HA_ENTITY_COP="$_ha_ent_cop"
-_ha_ent_outdoor=$(get_option 'ha_entity_outdoor_temp')
-[ -n "$_ha_ent_outdoor" ] && export HA_ENTITY_OUTDOOR_TEMP="$_ha_ent_outdoor"
-_ha_ent_flow=$(get_option 'ha_entity_flow_temp')
-[ -n "$_ha_ent_flow" ] && export HA_ENTITY_FLOW_TEMP="$_ha_ent_flow"
-_ha_ent_return=$(get_option 'ha_entity_return_temp')
-[ -n "$_ha_ent_return" ] && export HA_ENTITY_RETURN_TEMP="$_ha_ent_return"
-_ha_ent_haus=$(get_option 'ha_entity_hausverbrauch')
-[ -n "$_ha_ent_haus" ] && export HA_ENTITY_HAUSVERBRAUCH="$_ha_ent_haus"
-_ha_ent_steuer=$(get_option 'ha_entity_steuerbare')
-[ -n "$_ha_ent_steuer" ] && export HA_ENTITY_STEUERBARE="$_ha_ent_steuer"
-_ha_ent_base=$(get_option 'ha_entity_base_load')
-[ -n "$_ha_ent_base" ] && export HA_ENTITY_BASE_LOAD="$_ha_ent_base"
-
 # --- Optional: ML consumption forecaster ---
 _ha_db=$(get_option 'ha_db_path')
 [ -n "$_ha_db" ] && export HA_DB_PATH="$_ha_db"
