@@ -33,6 +33,18 @@ const roleLabels: Record<string, string> = {
   GRID_CHARGE: "Grid Charge",
 };
 
+const batteryStateColors: Record<string, string> = {
+  AUTONOMOUS: "#22c55e",    // green
+  HELD: "#f59e0b",          // amber
+  GRID_CHARGING: "#06b6d4", // cyan
+};
+
+const batteryStateLabels: Record<string, string> = {
+  AUTONOMOUS: "Autonomous",
+  HELD: "Held",
+  GRID_CHARGING: "Grid Charging",
+};
+
 const statusColors: Record<string, string> = {
   NORMAL: "#22c55e",
   DEGRADED: "#f59e0b",
@@ -66,6 +78,11 @@ export function BatteryStatus({ pool, devices, connected }: Props) {
 
   const huaweiRole = pool?.huawei_role ?? "";
   const victronRole = pool?.victron_role ?? "";
+
+  // Check for supervisory mode fields
+  const isSupervisory = pool && "huawei_state" in pool;
+  const huaweiState = isSupervisory ? (pool as unknown as Record<string, string>)["huawei_state"] ?? "" : "";
+  const victronState = isSupervisory ? (pool as unknown as Record<string, string>)["victron_state"] ?? "" : "";
 
   const huaweiPower = devices?.huawei?.total_power_w ?? null;
   const victronPower = devices?.victron?.battery_power_w ?? null;
@@ -150,9 +167,16 @@ export function BatteryStatus({ pool, devices, connected }: Props) {
             </span>
             <span
               className="role-badge"
-              style={{ background: roleColors[huaweiRole] ?? "#6b7280" }}
+              style={{
+                background: isSupervisory
+                  ? (batteryStateColors[huaweiState] ?? "#6b7280")
+                  : (roleColors[huaweiRole] ?? "#6b7280"),
+              }}
             >
-              {roleLabels[huaweiRole] ?? "---"}{powerAnnotation(huaweiPower)}
+              {isSupervisory
+                ? (batteryStateLabels[huaweiState] ?? "---")
+                : (roleLabels[huaweiRole] ?? "---")}
+              {powerAnnotation(huaweiPower)}
             </span>
           </div>
 
@@ -199,9 +223,16 @@ export function BatteryStatus({ pool, devices, connected }: Props) {
             </span>
             <span
               className="role-badge"
-              style={{ background: roleColors[victronRole] ?? "#6b7280" }}
+              style={{
+                background: isSupervisory
+                  ? (batteryStateColors[victronState] ?? "#6b7280")
+                  : (roleColors[victronRole] ?? "#6b7280"),
+              }}
             >
-              {roleLabels[victronRole] ?? "---"}{powerAnnotation(victronPower)}
+              {isSupervisory
+                ? (batteryStateLabels[victronState] ?? "---")
+                : (roleLabels[victronRole] ?? "---")}
+              {powerAnnotation(victronPower)}
             </span>
           </div>
 

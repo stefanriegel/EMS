@@ -34,6 +34,10 @@ export function PoolOverview({ pool, connected }: Props) {
   const state = pool?.control_state ?? "IDLE";
   const stateColor = stateColors[state] ?? "#6b7280";
 
+  // Detect supervisory mode
+  const isSupervisory = pool && "control_mode" in pool && (pool as unknown as Record<string, string>)["control_mode"] === "supervisory";
+  const controlModeLabel = isSupervisory ? "Supervisory" : state;
+
   return (
     <section className="card pool-overview">
       {!connected && (
@@ -67,9 +71,9 @@ export function PoolOverview({ pool, connected }: Props) {
           <span className="metric-label">Mode</span>
           <span
             className="control-badge"
-            style={{ background: stateColor }}
+            style={{ background: isSupervisory ? "#8b5cf6" : stateColor }}
           >
-            {state}
+            {controlModeLabel}
           </span>
         </div>
       </div>
