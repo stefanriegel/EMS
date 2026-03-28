@@ -173,6 +173,13 @@ class Supervisor:
         )
         self._last_error = None
 
+        # --- InfluxDB writes (fire-and-forget) ---
+        if self._writer and self._state:
+            await self._writer.write_observation(self._state)
+            new_records = list(self._interventions)[-len(result.actions):]
+            for record in new_records:
+                await self._writer.write_intervention(record)
+
     async def _observe(self) -> Observation:
         h_snap = await self._h_ctrl.poll()
         v_snap = await self._v_ctrl.poll()

@@ -36,6 +36,7 @@ from backend.controller_model import ControllerSnapshot, CoordinatorState, Decis
 from backend.drivers.emma_driver import EmmaSnapshot
 from backend.health_logger import HealthSnapshot
 from backend.schedule_models import ChargeSchedule
+from backend.supervisor_model import InterventionRecord, SupervisorState
 from backend.unified_model import UnifiedPoolState
 
 logger = logging.getLogger(__name__)
@@ -472,3 +473,50 @@ class InfluxMetricsWriter:
             await self._write_lines([point.to_line()])
         except Exception as exc:  # noqa: BLE001
             logger.warning("influx health write failed: %s", exc)
+
+    async def write_observation(self, state: SupervisorState) -> None:
+        """Write an ``ems_observation`` point from a supervisory state snapshot.
+
+        Called every cycle in supervisory mode.  Tags encode battery states;
+        fields carry SoC and power measurements.
+
+        Fire-and-forget: any ``Exception`` is caught and logged as WARNING.
+        """
+        try:
+            point = (
+                _LineProtocolBuilder("ems_observation")
+                .tag("huawei_state", state.huawei_state.value)
+                .tag("victron_state", state.victron_state.value)
+                .field_float("pool_soc_pct", float(state.pool_soc_pct))
+                .field_float("huawei_soc_pct", float(state.huawei_soc_pct))
+                .field_float("victron_soc_pct", float(state.victron_soc_pct))
+                .field_float("soc_delta", float(state.soc_delta))
+                .field_float("true_consumption_w", float(state.true_consumption_w))
+                .field_float("pv_power_w", float(state.pv_power_w))
+                .time_ns(datetime.now(tz=timezone.utc))
+            )
+            await self._write_lines([point.to_line()])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("influx observation write failed: %s", exc)
+
+    async def write_intervention(self, record: InterventionRecord) -> None:
+        """Write an ``ems_intervention`` point from an intervention record.
+
+        Called only when an intervention is triggered.  Tags encode the
+        intervention type, target system, and action; the reason is a string
+        field.
+
+        Fire-and-forget: any ``Exception`` is caught and logged as WARNING.
+        """
+        try:
+            point = (
+                _LineProtocolBuilder("ems_intervention")
+                .tag("intervention_type", record.intervention_type)
+                .tag("target_system", record.target_system)
+                .tag("action", record.action.value)
+                .field_str("reason", record.reason)
+                .time_ns(datetime.now(tz=timezone.utc))
+            )
+            await self._write_lines([point.to_line()])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("influx intervention write failed: %s", exc)
