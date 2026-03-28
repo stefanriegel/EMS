@@ -196,23 +196,6 @@ configuration:
     name: Min SoC Hysteresis (%)
     description: SoC must recover above min + this value to resume discharge.
 
-  # --- Coordinator tuning (advanced) ---
-  huawei_deadband_w:
-    name: Huawei Deadband (W)
-    description: Minimum power change threshold for Huawei setpoints. Default 400 W.
-  victron_deadband_w:
-    name: Victron Deadband (W)
-    description: Minimum power change threshold for Victron setpoints. Default 150 W.
-  ramp_rate_w_per_cycle:
-    name: Ramp Rate (W/cycle)
-    description: Maximum setpoint change per control cycle. Default 500 W.
-  min_soc_pct_huawei:
-    name: Huawei Min SoC (%)
-    description: Minimum state-of-charge for Huawei battery. Default 10%.
-  min_soc_pct_victron:
-    name: Victron Min SoC (%)
-    description: Minimum state-of-charge for Victron battery. Default 15%.
-
   # --- Feed-in tariff ---
   feed_in_rate_eur_kwh:
     name: Feed-in Rate (EUR/kWh)

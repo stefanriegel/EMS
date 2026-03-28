@@ -116,18 +116,6 @@ _soc_bal_hyst=$(get_option 'soc_balance_hysteresis')
 _min_soc_hyst=$(get_option 'min_soc_hysteresis')
 [ -n "$_min_soc_hyst" ] && export EMS_MIN_SOC_HYSTERESIS_PCT="$_min_soc_hyst"
 
-# --- Coordinator tuning (advanced, optional) ---
-_hw_db=$(get_option 'huawei_deadband_w')
-[ -n "$_hw_db" ] && export HUAWEI_DEADBAND_W="$_hw_db"
-_vic_db=$(get_option 'victron_deadband_w')
-[ -n "$_vic_db" ] && export VICTRON_DEADBAND_W="$_vic_db"
-_ramp=$(get_option 'ramp_rate_w_per_cycle')
-[ -n "$_ramp" ] && export RAMP_RATE_W_PER_CYCLE="$_ramp"
-_min_hw=$(get_option 'min_soc_pct_huawei')
-[ -n "$_min_hw" ] && export MIN_SOC_PCT_HUAWEI="$_min_hw"
-_min_vic=$(get_option 'min_soc_pct_victron')
-[ -n "$_min_vic" ] && export MIN_SOC_PCT_VICTRON="$_min_vic"
-
 # --- Feed-in tariff ---
 _feed_in=$(get_option 'feed_in_rate_eur_kwh')
 [ -n "$_feed_in" ] && export FEED_IN_RATE_EUR_KWH="$_feed_in"

@@ -55,12 +55,6 @@ options:
   soc_balance_threshold: 10
   soc_balance_hysteresis: 5
   min_soc_hysteresis: 5
-  # --- Coordinator tuning (advanced) ---
-  huawei_deadband_w: 200
-  victron_deadband_w: 150
-  ramp_rate_w_per_cycle: 500
-  min_soc_pct_huawei: 10
-  min_soc_pct_victron: 15
   # --- ML Forecaster: HA DB + entity IDs ---
   ha_db_path: "/config/home-assistant_v2.db"
   ha_statistics_entity_outdoor_temp: ""
@@ -111,12 +105,6 @@ schema:
   soc_balance_threshold: "int(5,30)?"
   soc_balance_hysteresis: "int(2,15)?"
   min_soc_hysteresis: "int(2,15)?"
-  # --- Coordinator tuning (advanced) ---
-  huawei_deadband_w: int?
-  victron_deadband_w: int?
-  ramp_rate_w_per_cycle: int?
-  min_soc_pct_huawei: int?
-  min_soc_pct_victron: int?
   # --- EVCC (auto-discovered, override only) ---
   evcc_host: str?
   evcc_port: int?

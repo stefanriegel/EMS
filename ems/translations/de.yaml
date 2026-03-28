@@ -196,23 +196,6 @@ configuration:
     name: Min-SoC-Hysterese (%)
     description: SoC muss ueber Min + diesen Wert steigen, um die Entladung fortzusetzen.
 
-  # --- Koordinator-Feinabstimmung (erweitert) ---
-  huawei_deadband_w:
-    name: Huawei Totband (W)
-    description: Minimale Leistungsaenderung fuer Huawei-Sollwerte. Standard 400 W.
-  victron_deadband_w:
-    name: Victron Totband (W)
-    description: Minimale Leistungsaenderung fuer Victron-Sollwerte. Standard 150 W.
-  ramp_rate_w_per_cycle:
-    name: Rampenrate (W/Zyklus)
-    description: Maximale Sollwertaenderung pro Steuerzyklus. Standard 500 W.
-  min_soc_pct_huawei:
-    name: Huawei Min SoC (%)
-    description: Mindest-Ladezustand fuer Huawei-Batterie. Standard 10%.
-  min_soc_pct_victron:
-    name: Victron Min SoC (%)
-    description: Mindest-Ladezustand fuer Victron-Batterie. Standard 15%.
-
   # --- Einspeiseverguetung ---
   feed_in_rate_eur_kwh:
     name: Einspeiseverguetung (EUR/kWh)
